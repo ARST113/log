@@ -1,58 +1,71 @@
 (function(){
-    // Вставляем стили для анимации фонового постера
+    'use strict';
+
+    // Вставляем CSS для оформления постера, как в старом интерфейсе
     const style = `
-    .card__background {
-        transition: all 0.6s ease !important;
-        z-index: 1 !important;
+    /* Исходные стили для фонового постера (старый интерфейс) */
+    .full-start__background {
+        transition: all 0.6s ease;
+        /* Здесь можно задать начальные размеры, если необходимо */
     }
-    .card__background.expanded {
-        width: 100vw !important;
-        height: 100vh !important;
-        border-radius: 0 !important;
+    /* Класс, который развернёт фон до полного экрана */
+    .full-start__background.expanded {
+        width: 100vw;
+        height: 100vh;
+        border-radius: 0;
     }
     `;
     const styleTag = document.createElement('style');
     styleTag.textContent = style;
     document.head.appendChild(styleTag);
 
-    // Основной функционал плагина
-    const Plugin = {
+    // Плагин, который будет применяться к элементу фонового постера
+    const PluginOldPoster = {
         target: null,
 
-        // Инициализация — наблюдаем за появлением фонового элемента
+        // Инициализация – наблюдаем за появлением фонового элемента в DOM
         init() {
             this.observeBackground();
         },
 
-        // Используем MutationObserver для отслеживания появления элемента с классом .card__background
+        // Функция наблюдения за DOM: ищем элемент с классом .full-start__background
         observeBackground() {
             const observer = new MutationObserver(() => {
-                const bg = document.querySelector('.card__background');
+                // Ищем фон, используемый в старом интерфейсе (логика из кода трейлера)
+                const bg = document.querySelector('.full-start__background');
                 if (bg && bg !== this.target) {
                     this.target = bg;
-                    // Автоматически расширяем фон при появлении элемента в карточке
+                    // Если элемент ранее был скрыт (например, через класс nodisplay), удаляем его
+                    if (this.target.classList.contains('nodisplay')) {
+                        this.target.classList.remove('nodisplay');
+                    }
+                    // Добавляем класс expanded, чтобы фон развернулся полноэкранно
                     this.target.classList.add('expanded');
                 }
             });
             observer.observe(document.body, { childList: true, subtree: true });
         },
 
-        // Методы для программного управления (при необходимости)
+        // Дополнительные методы для программного управления при необходимости
         expand() {
-            if (this.target) this.target.classList.add('expanded');
+            if (this.target) {
+                this.target.classList.add('expanded');
+            }
         },
         collapse() {
-            if (this.target) this.target.classList.remove('expanded');
+            if (this.target) {
+                this.target.classList.remove('expanded');
+            }
         }
     };
 
-    // Регистрируем плагин в пространстве Lampa
+    // Регистрируем плагин в пространстве Lampa.Plugin, т.к. новый интерфейс для нас подходит
     if (!window.Lampa) window.Lampa = {};
     if (!Lampa.Plugin) Lampa.Plugin = {};
-    Lampa.Plugin.AutoBackgroundExpand = Plugin;
+    Lampa.Plugin.OldPosterExpand = PluginOldPoster;
 
     // Автоинициализация плагина после загрузки DOM
     document.addEventListener('DOMContentLoaded', () => {
-        Lampa.Plugin.AutoBackgroundExpand.init();
+        Lampa.Plugin.OldPosterExpand.init();
     });
 })();
