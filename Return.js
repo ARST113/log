@@ -1,64 +1,62 @@
-// ==UserScript==
-// @name         Return Continue Watch
-// @version      1.0.0
-// @description  Add continue watch button in Lampa
-// ==/UserScript==
+(function () {
+    console.log('[Return] Старт выполнения плагина');
 
-console.log('[Return] Плагин загружен и начал выполнение');
+    // Проверка готовности Lampa
+    function waitForLampaReady() {
+        if (window.appready || window.Lampa?.Storage) {
+            console.log('[Return] Lampa готова');
 
-function initContinueWatchButton() {
-    console.log('[Return] Инициализация кнопки продолжить');
+            // Устанавливаем флаг
+            window.plugin_continue_watch_ready = true;
 
-    Lampa.Listener.follow('full', function(event) {
-        if (event.type !== 'complite') return;
-
-        const movie = event.data.movie;
-        const cardButtons = document.querySelector('.full-start-new__buttons');
-
-        console.log('[Return] Обнаружена карточка фильма:', movie?.title || movie?.name || 'неизвестно');
-
-        if (!movie || !cardButtons) {
-            console.warn('[Return] Не найдены данные фильма или кнопки');
-            return;
+            // Запуск логики плагина
+            setupContinueButton();
+        } else {
+            console.log('[Return] Ожидаем Lampa...');
+            setTimeout(waitForLampaReady, 1000);
         }
+    }
 
-        // Проверка продолжения торрента
-        const saved = Lampa.Storage.get('parser_torrents_view', []);
-        const progress = saved.find(t => t.id === movie.id);
+    // Логика добавления кнопки "Продолжить просмотр"
+    function setupContinueButton() {
+        console.log('[Return] Запускаем логику кнопки "Продолжить просмотр"');
 
-        if (!progress) {
-            console.log('[Return] Нет сохранённого прогресса просмотра');
-            return;
-        }
+        const lastTorrent = Lampa.Storage.get('parser_torrent_view');
+        console.log('[Return] Последний просмотренный торрент:', lastTorrent);
 
-        console.log('[Return] Обнаружен сохранённый прогресс — добавляем кнопку');
+        if (lastTorrent) {
+            Lampa.Listener.follow('full', function (event) {
+                if (event.type === 'complite' && event.data?.movie?.id === lastTorrent.id) {
+                    console.log('[Return] Совпадение ID! Добавляем кнопку "Продолжить просмотр"...');
 
-        const btn = document.createElement('div');
-        btn.className = 'full-start__button selector';
-        btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg><span>Продолжить</span>`;
+                    let button = document.createElement('div');
+                    button.classList.add('selector', 'button--continue');
+                    button.innerHTML = `
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M8 5v14l11-7z"/></svg>
+                        <span>Продолжить просмотр</span>
+                    `;
 
-        btn.addEventListener('click', () => {
-            console.log('[Return] Нажата кнопка «Продолжить»');
-            Lampa.Player.play({
-                url: progress.file,
-                title: movie.title || movie.name,
-                timeline: progress.time || 0
+                    button.addEventListener('click', () => {
+                        console.log('[Return] Нажата кнопка "Продолжить просмотр"');
+                        Lampa.Player.play({
+                            title: lastTorrent.title,
+                            url: lastTorrent.url
+                        });
+                    });
+
+                    let buttonsContainer = document.querySelector('.full-start__buttons');
+                    if (buttonsContainer) {
+                        buttonsContainer.prepend(button);
+                        console.log('[Return] Кнопка добавлена на страницу');
+                    } else {
+                        console.log('[Return] Не найден контейнер для кнопок');
+                    }
+                }
             });
-        });
-
-        cardButtons.insertBefore(btn, cardButtons.firstChild);
-    });
-}
-
-if (window.appready) {
-    console.log('[Return] Lampa уже готова');
-    initContinueWatchButton();
-} else {
-    console.log('[Return] Ожидаем готовность Lampa...');
-    Lampa.Listener.follow('app', function(e) {
-        if (e.type === 'ready') {
-            console.log('[Return] Lampa готова — запускаем');
-            initContinueWatchButton();
+        } else {
+            console.log('[Return] Торрент в хранилище не найден');
         }
-    });
-}
+    }
+
+    waitForLampaReady();
+})();
