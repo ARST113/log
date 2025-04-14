@@ -5,7 +5,7 @@
 
 (function() {
     // Configuration
-    const MAX_HISTORY_ITEMS = 10; // Maximum number of items to store in history
+    const MAX_HISTORY_ITEMS = 1000; // Maximum number of items to store in history
     const STORAGE_KEY = 'continue_watching'; // Storage key for history items
 
     /**
