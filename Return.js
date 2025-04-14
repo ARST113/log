@@ -1,88 +1,128 @@
 /**
- * Continue Watching Widget
- * This plugin creates a widget on the main page showing the last viewed items
+ * Продолжить просмотр - виджет
+ * Создает виджет на главной странице, показывающий последние просмотренные элементы
+ * При клике запускает воспроизведение сразу с сохраненной позиции
  */
 
 (function() {
-    // Configuration
-    const MAX_HISTORY_ITEMS = 1000; // Maximum number of items to store in history
-    const STORAGE_KEY = 'continue_watching'; // Storage key for history items
+    // Конфигурация
+    const MAX_HISTORY_ITEMS = 10; // Максимальное количество элементов в истории
+    const STORAGE_KEY = 'continue_watching'; // Ключ для хранения в Storage
 
     /**
-     * Save the current item to the continue watching history
-     * @param {Object} card - The card object containing metadata about the viewed item
-     * @param {Object} params - Additional parameters like current address
+     * Сохраняет текущий элемент в историю просмотров
+     * @param {Object} card - Объект карточки с метаданными о просматриваемом элементе
+     * @param {Object} params - Дополнительные параметры, такие как текущий адрес
      */
     function saveToHistory(card, params) {
         if (!card || !card.id) return;
         
-        // Get current history or initialize empty array
+        // Получаем текущую историю или инициализируем пустой массив
         let history = Lampa.Storage.get(STORAGE_KEY, []);
         
-        // Create history item
+        // Создаем элемент истории
         const historyItem = {
             id: card.id,
-            title: card.title || card.name || 'Unknown',
+            title: card.title || card.name || 'Неизвестно',
             poster: card.poster || card.img || '',
             timestamp: Date.now(),
             time: card.timeline ? card.timeline.time : 0,
             duration: card.timeline ? card.timeline.duration : 0,
             address: params ? params.url || '' : '',
-            card: card // Store the original card object
+            card: card // Сохраняем оригинальный объект карточки
         };
         
-        // Remove this item if it already exists (to prevent duplicates)
+        // Удаляем этот элемент, если он уже существует (для предотвращения дубликатов)
         history = history.filter(item => item.id !== historyItem.id);
         
-        // Add new item to the beginning of the array
+        // Добавляем новый элемент в начало массива
         history.unshift(historyItem);
         
-        // Limit the history size
+        // Ограничиваем размер истории
         if (history.length > MAX_HISTORY_ITEMS) {
             history = history.slice(0, MAX_HISTORY_ITEMS);
         }
         
-        // Save to Storage
+        // Сохраняем в Storage
         Lampa.Storage.set(STORAGE_KEY, history);
     }
     
     /**
-     * Get all items from history
-     * @returns {Array} History items
+     * Получаем все элементы из истории
+     * @returns {Array} Элементы истории
      */
     function getHistoryItems() {
         return Lampa.Storage.get(STORAGE_KEY, []);
     }
     
     /**
-     * Format time for display
-     * @param {Number} seconds - Time in seconds
-     * @returns {String} Formatted time
+     * Форматирует время для отображения
+     * @param {Number} seconds - Время в секундах
+     * @returns {String} Отформатированное время
      */
     function formatTime(seconds) {
         return Lampa.Utils.secondsToTime(seconds);
     }
     
     /**
-     * Calculate progress percentage
-     * @param {Number} time - Current time in seconds
-     * @param {Number} duration - Total duration in seconds
-     * @returns {Number} Progress percentage (0-100)
+     * Вычисляет процент прогресса
+     * @param {Number} time - Текущее время в секундах
+     * @param {Number} duration - Общая продолжительность в секундах
+     * @returns {Number} Процент прогресса (0-100)
      */
     function calculateProgress(time, duration) {
         if (!duration || duration === 0) return 0;
         let progress = (time / duration) * 100;
-        return Math.min(100, Math.max(0, progress)); // Clamp between 0-100
+        return Math.min(100, Math.max(0, progress)); // Ограничиваем между 0-100
     }
     
     /**
-     * Create the continue watching widget for the home page
+     * Воспроизвести видео с сохраненной позиции
+     * @param {Object} item - Элемент истории просмотра
+     */
+    function playVideo(item) {
+        if (!item || !item.card) return;
+        
+        // Создаем объект для плеера
+        const playData = {
+            url: item.card.url || item.card.season ? undefined : item.card.link,
+            title: item.title,
+            timeline: {
+                time: item.time,
+                duration: item.duration
+            }
+        };
+        
+        // Добавляем необходимые поля из карточки
+        if (item.card.quality) playData.quality = item.card.quality;
+        if (item.card.subtitles) playData.subtitles = item.card.subtitles;
+        if (item.card.translate) playData.translate = item.card.translate;
+        if (item.card.playlist) playData.playlist = item.card.playlist;
+        if (item.card.url) playData.url = item.card.url;
+        
+        // Для сериалов (если есть season и episode)
+        if (item.card.season) {
+            // Если это сериал, копируем все данные из карточки для корректного воспроизведения
+            Object.assign(playData, item.card);
+        }
+        
+        // Запуск плеера
+        Lampa.Player.play(playData);
+        
+        // Сообщаем что мы запустили видео из виджета продолжения просмотра
+        Lampa.Player.callback(function() {
+            Lampa.Controller.toggle('content');
+        });
+    }
+    
+    /**
+     * Создает виджет продолжения просмотра для главной страницы
      */
     function createWidget() {
-        // Register the widget
+        // Регистрируем виджет
         Lampa.Listener.follow('app', function(e) {
             if (e.type === 'ready') {
-                // Add the widget to the home page
+                // Добавляем виджет на главную страницу
                 const continueWatchingWidget = {
                     title: 'Продолжить просмотр',
                     tag: 'continue_watching',
@@ -97,7 +137,7 @@
                     }
                 });
                 
-                // Add widget to home page
+                // Добавляем виджет на главную страницу
                 Lampa.Listener.follow('app.ready', function() {
                     Lampa.Component.add('continue_watching', continueWatchingWidget);
                 });
@@ -106,8 +146,8 @@
     }
     
     /**
-     * Render history items in the widget
-     * @param {HTMLElement} container - Container to render items in
+     * Отрисовка элементов истории в виджете
+     * @param {HTMLElement} container - Контейнер для отрисовки элементов
      */
     function renderItems(container) {
         const items = getHistoryItems();
@@ -124,7 +164,7 @@
             const timeString = formatTime(item.time) + (item.duration ? ' / ' + formatTime(item.duration) : '');
             
             html += `
-                <div class="continue-item" data-id="${item.id}" data-address="${item.address}">
+                <div class="continue-item" data-id="${item.id}">
                     <div class="continue-poster">
                         <img src="${item.poster}" alt="${item.title}">
                         <div class="continue-progress">
@@ -140,34 +180,26 @@
         html += '</div>';
         container.innerHTML = html;
         
-        // Add event listeners to items
+        // Добавляем обработчики событий к элементам
         const itemElements = container.querySelectorAll('.continue-item');
         itemElements.forEach((element) => {
             element.addEventListener('click', function() {
                 const id = this.dataset.id;
-                const address = this.dataset.address;
                 const item = items.find(i => i.id === id);
                 
                 if (item && item.card) {
-                    // Open the card
-                    Lampa.Activity.push({
-                        url: address,
-                        component: 'full',
-                        id: id,
-                        card: item.card,
-                        method: 'tv',
-                        source: 'continue_watching'
-                    });
+                    // Сразу запускаем воспроизведение с сохраненной позиции
+                    playVideo(item);
                 }
             });
         });
     }
     
     /**
-     * Initialize the plugin
+     * Инициализация плагина
      */
     function init() {
-        // Add styles for the widget
+        // Добавляем стили для виджета
         const style = document.createElement('style');
         style.textContent = `
             .continue-watching .items-container {
@@ -232,24 +264,24 @@
         `;
         document.head.appendChild(style);
         
-        // Hook into player events to save history
+        // Подписываемся на события плеера для сохранения истории
         Lampa.Listener.follow('player', function(e) {
             if (e.type === 'destroy') {
-                // Player was closed, save the current card and time
+                // Плеер был закрыт, сохраняем текущую карточку и время
                 if (e.object && e.object.card) {
                     saveToHistory(e.object.card, e.object.params);
                 }
             }
         });
         
-        // Create the widget
+        // Создаем виджет
         createWidget();
         
-        // Add Storage sync
+        // Добавляем синхронизацию Storage
         Lampa.Storage.sync(STORAGE_KEY, 'array_object_id');
     }
     
-    // Run initialization when app is ready
+    // Запускаем инициализацию, когда приложение готово
     Lampa.Listener.follow('app', function(e) {
         if (e.type === 'ready') {
             init();
