@@ -1,51 +1,98 @@
-// 1. Добавляем перевод для заглушки
-Lampa.Lang.add({
-    stub_title: {
-        ru: 'Заглушка',
-        uk: 'Заглушка',
-        en: 'Stub',
-        zh: '存根',
-        bg: 'Заглушка'
-    },
-    stub_message: {
-        ru: 'Функция в разработке',
-        uk: 'Функція в розробці',
-        en: 'Feature in development',
-        zh: '功能开发中',
-        bg: 'Функцията се разработва'
-    }
-});
+(function(){
+    'use strict';
+    
+    // Добавляем переводы
+    Lampa.Lang.add({
+        continue_title: {
+            ru: 'Продолжить',
+            uk: 'Продовжити',
+            en: 'Continue',
+            zh: '继续',
+            bg: 'Продължи'
+        },
+        continue_message: {
+            ru: 'Возобновить просмотр с последней позиции',
+            uk: 'Відновити перегляд з останньої позиції',
+            en: 'Resume from last position',
+            zh: '从上次位置继续',
+            bg: 'Продължи от последна позиция'
+        }
+    });
 
-// 2. Создаем шаблон кнопки
-const stubButton = `<div class="full-start__button selector view--stub" data-subtitle="v1.0">
-    <svg height="30" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-    </svg>
-    <span>#{stub_title}</span>
-</div>`;
+    console.log('[EnhancedPlugin] Плагин продолжения просмотра загружен');
+    
+    function initEnhancedPlugin() {
+        Lampa.Listener.follow('full', function(e) {
+            if(e.type === 'complite'){
+                setTimeout(function(){
+                    try {
+                        const fullContainer = e.object.activity.render();
+                        const cardInterfaceType = Lampa.Storage.get('card_interface_type') || 'old';
+                        let target;
+                        
+                        // Определяем позицию для вставки
+                        if(cardInterfaceType === 'new'){
+                            target = fullContainer.find('.button--play');
+                        } else {
+                            target = fullContainer.find('.view--torrent');
+                        }
+                        
+                        // Создаем кнопку с локализацией
+                        const btnHtml = `
+                        <div class="full-start__button selector view--continue enhanced--button" 
+                             title="${Lampa.Lang.translate('continue_message')}"
+                             data-subtitle="v2.1">
+                            <div class="selector__icon">
+                                <svg height="24" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/>
+                                </svg>
+                            </div>
+                            <div class="selector__text">#{continue_title}</div>
+                        </div>`;
+                        
+                        const $btn = $(Lampa.Lang.translate(btnHtml));
 
-// 3. Добавляем кнопку в интерфейс
-Lampa.Listener.follow('full', (e) => {
-    if(e.type == 'complite') {
-        let btn = $(Lampa.Lang.translate(stubButton));
-        
-        // 4. Обработчик клика
-        btn.on('hover:enter', () => {
-            Lampa.Modal.open({
-                title: Lampa.Lang.translate('stub_title'),
-                html: `<div class="settings-param">
-                    <div class="settings-param__value" style="text-align:center;padding:20px">
-                        ${Lampa.Lang.translate('stub_message')}
-                    </div>
-                </div>`,
-                onBack: () => Lampa.Modal.close(),
-                size: 'medium'
-            });
+                        // Обработчик клика
+                        $btn.on('hover:enter', function(evt) {
+                            evt.preventDefault();
+                            evt.stopPropagation();
+                            
+                            // Получаем данные о текущем контенте
+                            const item = e.object.item || {};
+                            const savedPosition = Lampa.Storage.get('video_progress_' + item.id) || 0;
+
+                            if(savedPosition > 0) {
+                                Lampa.Player.play({
+                                    url: item.url,
+                                    quality: item.quality,
+                                    title: item.title,
+                                    torrent_hash: item.id,
+                                    timeline: savedPosition
+                                });
+                            } else {
+                                Lampa.Noty.show(Lampa.Lang.translate('online_query_start') + 
+                                ` "${item.title}" ` + 
+                                Lampa.Lang.translate('online_query_end'));
+                            }
+                        });
+
+                        // Вставка в интерфейс
+                        if(target && target.length) {
+                            target.before($btn);
+                            console.log('[EnhancedPlugin] Кнопка добавлена');
+                        }
+                    } catch(err) {
+                        console.error('[EnhancedPlugin] Ошибка:', err);
+                    }
+                }, 150);
+            }
         });
-
-        // 5. Вставляем после кнопки "Торрент"
-        e.object.activity.render()
-            .find('.view--torrent')
-            .after(btn);
     }
-});
+
+    // Инициализация
+    if(window.Lampa) {
+        initEnhancedPlugin();
+    } else {
+        document.addEventListener('lampa:start', initEnhancedPlugin);
+    }
+})();
