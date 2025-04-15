@@ -1,7 +1,7 @@
 (function(){
     'use strict';
-    
-    // Добавляем переводы
+
+    // Добавляем переводы из кода 1
     Lampa.Lang.add({
         continue_title: {
             ru: 'Продолжить',
@@ -19,29 +19,29 @@
         }
     });
 
-    console.log('[EnhancedPlugin] Плагин продолжения просмотра загружен');
-    
-    function initEnhancedPlugin() {
+    console.log('[MergedPlugin] Плагин объединённой кнопки загружен');
+
+    function initMergedPlugin() {
+        // Отслеживаем событие формирования полной карточки
         Lampa.Listener.follow('full', function(e) {
-            if(e.type === 'complite'){
-                setTimeout(function(){
+            if (e.type === 'complite') {
+                setTimeout(function() {
                     try {
                         const fullContainer = e.object.activity.render();
                         const cardInterfaceType = Lampa.Storage.get('card_interface_type') || 'old';
-                        let target;
                         
-                        // Определяем позицию для вставки
-                        if(cardInterfaceType === 'new'){
+                        // Определяем куда вставлять кнопку
+                        let target;
+                        if (cardInterfaceType === 'new') {
                             target = fullContainer.find('.button--play');
                         } else {
                             target = fullContainer.find('.view--torrent');
                         }
-                        
-                        // Создаем кнопку с локализацией
+
+                        // Создаем единую кнопку
                         const btnHtml = `
-                        <div class="full-start__button selector view--continue enhanced--button" 
-                             title="${Lampa.Lang.translate('continue_message')}"
-                             data-subtitle="v2.1">
+                        <div class="full-start__button selector view--continue merged--button" 
+                             title="${Lampa.Lang.translate('continue_message')}">
                             <div class="selector__icon">
                                 <svg height="24" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/>
@@ -49,50 +49,52 @@
                             </div>
                             <div class="selector__text">#{continue_title}</div>
                         </div>`;
-                        
+
+                        // Применяем переводы и превращаем в jQuery-элемент
                         const $btn = $(Lampa.Lang.translate(btnHtml));
 
-                        // Обработчик клика
+                        // Обработчик клика (hover:enter для Lampa)
                         $btn.on('hover:enter', function(evt) {
                             evt.preventDefault();
                             evt.stopPropagation();
-                            
-                            // Получаем данные о текущем контенте
+
+                            // Получаем данные о текущем контенте — url, качество, название и т.д.
                             const item = e.object.item || {};
+                            // Смотрим, есть ли у нас сохранённая позиция
                             const savedPosition = Lampa.Storage.get('video_progress_' + item.id) || 0;
 
-                            if(savedPosition > 0) {
-                                Lampa.Player.play({
-                                    url: item.url,
-                                    quality: item.quality,
-                                    title: item.title,
-                                    torrent_hash: item.id,
-                                    timeline: savedPosition
-                                });
-                            } else {
-                                Lampa.Noty.show(Lampa.Lang.translate('online_query_start') + 
-                                ` "${item.title}" ` + 
-                                Lampa.Lang.translate('online_query_end'));
-                            }
+                            // Запускаем плеер — здесь совмещён подход из кода 2
+                            Lampa.Player.play({
+                                url: item.url || '',
+                                quality: item.quality || {},
+                                title: item.title || 'Без названия',
+                                torrent_hash: item.id,
+                                // Если позиция есть, стартуем с неё, иначе — 0
+                                timeline: savedPosition
+                            });
                         });
 
-                        // Вставка в интерфейс
-                        if(target && target.length) {
+                        // Вставляем кнопку перед целевым элементом
+                        if (target && target.length) {
                             target.before($btn);
-                            console.log('[EnhancedPlugin] Кнопка добавлена');
+                            console.log('[MergedPlugin] Кнопка «Продолжить» вставлена');
+                        } else {
+                            console.warn('[MergedPlugin] Не найден контейнер для кнопки');
                         }
-                    } catch(err) {
-                        console.error('[EnhancedPlugin] Ошибка:', err);
+                    } catch (err) {
+                        console.error('[MergedPlugin] Ошибка вставки кнопки:', err);
                     }
                 }, 150);
             }
         });
     }
 
-    // Инициализация
-    if(window.Lampa) {
-        initEnhancedPlugin();
+    // Инициализируем плагин
+    if (window.Lampa) {
+        console.log('[MergedPlugin] Lampa доступна, инициализация...');
+        initMergedPlugin();
     } else {
-        document.addEventListener('lampa:start', initEnhancedPlugin);
+        console.log('[MergedPlugin] Ждем событие lampa:start...');
+        document.addEventListener('lampa:start', initMergedPlugin);
     }
 })();
