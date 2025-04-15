@@ -1,7 +1,7 @@
 (function(){
     'use strict';
 
-    // Добавляем переводы из кода 1
+    // Добавляем переводы для кнопки «Продолжить»
     Lampa.Lang.add({
         continue_title: {
             ru: 'Продолжить',
@@ -19,65 +19,72 @@
         }
     });
 
-    console.log('[MergedPlugin] Плагин объединённой кнопки загружен');
+    console.log('[MergedPlugin] Плагин Return.js загружен');
 
     function initMergedPlugin() {
-        // Отслеживаем событие формирования полной карточки
+        // Подписываемся на событие формирования полной карточки деталей
         Lampa.Listener.follow('full', function(e) {
             if (e.type === 'complite') {
+                // Задержка 150 мс для гарантии полной отрисовки DOM
                 setTimeout(function() {
                     try {
+                        // Получаем корневой элемент страницы деталей
                         const fullContainer = e.object.activity.render();
+                        // Определяем тип интерфейса – новый или старый
                         const cardInterfaceType = Lampa.Storage.get('card_interface_type') || 'old';
-                        
-                        // Определяем куда вставлять кнопку
+
+                        // Выбираем целевой контейнер для вставки кнопок
+                        // Для нового интерфейса целевой элемент — .button--play,
+                        // для старого — .view--torrent (аналог SorterPlugin)
                         let target;
                         if (cardInterfaceType === 'new') {
                             target = fullContainer.find('.button--play');
                         } else {
                             target = fullContainer.find('.view--torrent');
                         }
+                        console.log('[MergedPlugin] Найден целевой контейнер:', target.length);
 
-                        // Создаем единую кнопку
+                        // Формируем HTML для кнопки "Продолжить"
+                        // Здесь используется перевод: #{continue_title} и атрибут title с переводом 'continue_message'
                         const btnHtml = `
                         <div class="full-start__button selector view--continue merged--button" 
                              title="${Lampa.Lang.translate('continue_message')}">
                             <div class="selector__icon">
-                                <svg height="24" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/>
-                                </svg>
+                                <img src="https://raw.githubusercontent.com/ARST113/log/refs/heads/main/cinema-film-movies-add-svgrepo-com.svg" 
+                                     alt="${Lampa.Lang.translate('continue_title')}" width="24" height="24" style="vertical-align: middle; margin-right: 5px;">
                             </div>
-                            <div class="selector__text">#{continue_title}</div>
+                            <div class="selector__text">${Lampa.Lang.translate('continue_title')}</div>
                         </div>`;
 
-                        // Применяем переводы и превращаем в jQuery-элемент
-                        const $btn = $(Lampa.Lang.translate(btnHtml));
+                        // Преобразуем HTML в jQuery-элемент
+                        const $btn = $(btnHtml);
 
-                        // Обработчик клика (hover:enter для Lampa)
+                        // Обработчик клика (в Лампе вместо "click" часто используют "hover:enter")
                         $btn.on('hover:enter', function(evt) {
                             evt.preventDefault();
                             evt.stopPropagation();
-
-                            // Получаем данные о текущем контенте — url, качество, название и т.д.
+                            console.log('[MergedPlugin] Кнопка "Продолжить" нажата');
+                            
+                            // Получаем объект с данными о текущем контенте из страницы деталей
                             const item = e.object.item || {};
-                            // Смотрим, есть ли у нас сохранённая позиция
+                            // Читаем сохранённую позицию воспроизведения для данного контента 
+                            // (ключ video_progress_ID, где ID берется из item.id)
                             const savedPosition = Lampa.Storage.get('video_progress_' + item.id) || 0;
 
-                            // Запускаем плеер — здесь совмещён подход из кода 2
+                            // Запускаем плеер с уже сформированными данными
                             Lampa.Player.play({
                                 url: item.url || '',
                                 quality: item.quality || {},
                                 title: item.title || 'Без названия',
                                 torrent_hash: item.id,
-                                // Если позиция есть, стартуем с неё, иначе — 0
                                 timeline: savedPosition
                             });
                         });
 
-                        // Вставляем кнопку перед целевым элементом
+                        // Если целевой контейнер найден, вставляем кнопку перед ним
                         if (target && target.length) {
                             target.before($btn);
-                            console.log('[MergedPlugin] Кнопка «Продолжить» вставлена');
+                            console.log('[MergedPlugin] Кнопка "Продолжить" вставлена');
                         } else {
                             console.warn('[MergedPlugin] Не найден контейнер для кнопки');
                         }
@@ -89,12 +96,12 @@
         });
     }
 
-    // Инициализируем плагин
+    // Инициализируем плагин, если Lampa уже доступна, иначе ждем событие lampa:start
     if (window.Lampa) {
         console.log('[MergedPlugin] Lampa доступна, инициализация...');
         initMergedPlugin();
     } else {
-        console.log('[MergedPlugin] Ждем событие lampa:start...');
+        console.log('[MergedPlugin] Lampa не доступна, ждем lampa:start...');
         document.addEventListener('lampa:start', initMergedPlugin);
     }
 })();
