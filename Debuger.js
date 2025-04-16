@@ -19,23 +19,19 @@
         }
     });
 
-    console.log('[MergedPlugin] Плагин Return.js загружен');
+    console.log('[MergedPlugin] Плагин Return.js (MergedPlugin) загружен');
 
     function initMergedPlugin() {
         // Подписываемся на событие формирования полной карточки деталей
         Lampa.Listener.follow('full', function(e) {
             if (e.type === 'complite') {
-                // Задержка 150 мс для гарантии полной отрисовки DOM
                 setTimeout(function() {
                     try {
                         // Получаем корневой элемент страницы деталей
                         const fullContainer = e.object.activity.render();
-                        // Определяем тип интерфейса – новый или старый
                         const cardInterfaceType = Lampa.Storage.get('card_interface_type') || 'old';
 
-                        // Выбираем целевой контейнер для вставки кнопок
-                        // Для нового интерфейса целевой элемент — .button--play,
-                        // для старого — .view--torrent (аналог SorterPlugin)
+                        // Определяем целевой контейнер для вставки кнопки
                         let target;
                         if (cardInterfaceType === 'new') {
                             target = fullContainer.find('.button--play');
@@ -44,8 +40,7 @@
                         }
                         console.log('[MergedPlugin] Найден целевой контейнер:', target.length);
 
-                        // Формируем HTML для кнопки "Продолжить"
-                        // Здесь используется перевод: #{continue_title} и атрибут title с переводом 'continue_message'
+                        // Формируем HTML для кнопки "Продолжить" с использованием переводов
                         const btnHtml = `
                         <div class="full-start__button selector view--continue merged--button" 
                              title="${Lampa.Lang.translate('continue_message')}">
@@ -56,32 +51,32 @@
                             <div class="selector__text">${Lampa.Lang.translate('continue_title')}</div>
                         </div>`;
 
-                        // Преобразуем HTML в jQuery-элемент
                         const $btn = $(btnHtml);
 
-                        // Обработчик клика (в Лампе вместо "click" часто используют "hover:enter")
+                        // Обработчик клика: запускает плеер с параметрами, включая сохранённую позицию из "file_view"
                         $btn.on('hover:enter', function(evt) {
                             evt.preventDefault();
                             evt.stopPropagation();
                             console.log('[MergedPlugin] Кнопка "Продолжить" нажата');
-                            
-                            // Получаем объект с данными о текущем контенте из страницы деталей
-                            const item = e.object.item || {};
-                            // Читаем сохранённую позицию воспроизведения для данного контента 
-                            // (ключ video_progress_ID, где ID берется из item.id)
-                            const savedPosition = Lampa.Storage.get('video_progress_' + item.id) || 0;
 
-                            // Запускаем плеер с уже сформированными данными
+                            // Получаем данные о текущем контенте из объекта деталей
+                            const item = e.object.item || {};
+                            // Читаем объект прогресса, хранящийся в "file_view"
+                            const progress = Lampa.Storage.get('file_view') || {};
+                            // Если для текущего item.id есть сохранённые данные, берем поле time, иначе 0
+                            const timeline = progress[String(item.id)] ? progress[String(item.id)].time : 0;
+                            console.log('[MergedPlugin] item.id:', item.id, 'timeline:', timeline);
+
                             Lampa.Player.play({
                                 url: item.url || '',
                                 quality: item.quality || {},
                                 title: item.title || 'Без названия',
                                 torrent_hash: item.id,
-                                timeline: savedPosition
+                                timeline: timeline
                             });
                         });
 
-                        // Если целевой контейнер найден, вставляем кнопку перед ним
+                        // Вставляем кнопку перед целевым элементом
                         if (target && target.length) {
                             target.before($btn);
                             console.log('[MergedPlugin] Кнопка "Продолжить" вставлена');
@@ -96,7 +91,7 @@
         });
     }
 
-    // Инициализируем плагин, если Lampa уже доступна, иначе ждем событие lampa:start
+    // Инициализация: если объект Lampa доступен, сразу запускаем, иначе ждём события lampa:start
     if (window.Lampa) {
         console.log('[MergedPlugin] Lampa доступна, инициализация...');
         initMergedPlugin();
