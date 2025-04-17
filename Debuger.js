@@ -1,76 +1,92 @@
-;(function(){
-    'use strict';
-    console.log('[ResumeV3] start');
+// ==UserScript==
+// @name         Lampa – Resume (с сохранением torrent_hash)
+// @version      0.1
+// @author       you
+// @match        *://*/*
+// ==/UserScript==
 
-    /* ---------- CRC‑таблица (одна на сессию) ---------- */
-    const crcTable = window.__crcT || (() => {
-        const t = new Uint32Array(256);
-        for(let n=0;n<256;n++){
-            let c=n; for(let k=0;k<8;k++) c = (c&1)?(0xEDB88320^(c>>>1)):(c>>>1);
-            t[n]=c>>>0;
-        }
-        return (window.__crcT = t);
-    })();
-    const crc32 = s=>{
-        let crc=-1;
-        for(let i=0;i<s.length;i++)
-            crc = (crc>>>8)^crcTable[(crc^s.charCodeAt(i))&0xFF];
-        return (crc^-1)>>>0;
-    };
+(() => {
+  'use strict';
 
-    /* ---------- вставка кнопки ---------- */
-    function addBtn(full){
-        const $wrap = full.find('.full-start-new__buttons');
-        if(!$wrap.length){ console.warn('[ResumeV3] .full-start-new__buttons not found'); return; }
-        if($wrap.find('.resume-btn').length) return;          // уже есть
-
-        const $btn = $(`
-          <div class="full-start__button selector resume-btn" style="margin-left:auto">
-            <svg width="26" height="26" viewBox="0 0 24 24"><path fill="#fff"
-              d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg>
-            <span>Продолжить</span>
-          </div>`);
-
-        /* --- логика resume --- */
-        $btn.on('hover:enter', ()=>{                // корректное событие Лампы
-            try{
-                const cur = Lampa.Activity.active().item || {};
-                const hash   = cur.hash;            // SHA1‑hex infoHash
-                const index  = cur.file || 1;       // индекс файла в торренте
-                if(!hash){ Lampa.Noty.show('Нет хеша — не могу продолжить'); return;}
-                const crcKey = crc32(hash + ':' + index);
-                const fv = JSON.parse(localStorage.getItem('file_view')||'{}');
-                const rec = fv[crcKey];
-                if(!rec){
-                    Lampa.Noty.show('Нет сохранённого прогресса');
-                    return;
-                }
-                console.log('[ResumeV3] CRC',crcKey,'→',rec);
-
-                /* --- воспроизведение --- */
-                Lampa.Player.play({
-                    url       : cur.url,
-                    timeline  : rec.time,
-                    title     : cur.title     || 'Continue',
-                    quality   : cur.quality   || {},
-                    subtitles : cur.subtitles || []
-                });
-            }catch(e){ console.error('[ResumeV3]',e); }
-        });
-
-        $wrap.append($btn);
-        console.log('[ResumeV3] кнопка добавлена');
+  /******************************************************************
+   * 0. CRC‑32 (компактная) – нужна один раз, не меняйте
+   ******************************************************************/
+  const crc32 = s => {
+    let crc = -1;
+    for (let i = 0; i < s.length; i++) {
+      crc ^= s.charCodeAt(i);
+      for (let k = 0; k < 8; k++)
+        crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
     }
+    return (crc ^ -1) >>> 0;
+  };
 
-    /* ---------- инициализация ---------- */
-    function init(){
-        Lampa.Listener.follow('full', e=>{
-            if(e.type==='complite'){
-                setTimeout(()=>addBtn(e.object.activity.render()),80);
-            }
-        });
+  /******************************************************************
+   * 1. Сохраняем hex‑hash при ПЕРВОМ запуске плеера
+   ******************************************************************/
+  Lampa.Listener.follow('play', e => {
+    if (!e?.data?.torrent_hash) return;
+
+    const key   = buildKey(e.data);            // «634649:movie» или «1399:S02E05»
+    const store = Lampa.Storage.get('resume_hashes', {});
+    if (!store[key]) {                         // не перезаписываем – достаточно 1 раз
+      store[key] = e.data.torrent_hash;
+      Lampa.Storage.set('resume_hashes', store);
+      console.log('[Resume] сохранён hash для', key);
     }
+  });
 
-    if(window.Lampa) init();
-    else window.addEventListener('lampa:start', init);
+  /******************************************************************
+   * 2. Когда формируется полная карточка – ищем позицию
+   ******************************************************************/
+  Lampa.Listener.follow('full', e => {
+    if (e.type !== 'complite') return;
+
+    const item = e.object.item;                // данные карточки
+    const key  = buildKey(item);
+    const hex  = (Lampa.Storage.get('resume_hashes', {})[key]) || null;
+    if (!hex) return;                          // hash ещё не знаем → нечего продолжать
+
+    const crc  = crc32(hex);
+    const fv   = Lampa.Storage.get('file_view', {});
+    if (!(crc in fv)) return;                  // человек не смотрел или почистил кэш
+
+    const pos  = fv[crc].time || 0;
+    insertResumeButton(e.object.activity.render(), pos); // рендерим кнопку
+  });
+
+  /******************************************************************
+   * 3. Вспомогательные функции
+   ******************************************************************/
+  function buildKey(item){
+    // сериал → id + сезон/эпизод, фильм → id + 'movie'
+    if (item.number)
+      return `${item.id}:S${item.season.toString().padStart(2,'0')}E${item.number.toString().padStart(2,'0')}`;
+    return `${item.id}:${item.media_type || 'movie'}`;
+  }
+
+  function insertResumeButton($cardRoot, seconds){
+    if (!$cardRoot) return;
+    // куда вставлять – подбирайте селектор под свою тему/версию
+    const $actions = $cardRoot.find('.full-start__buttons , .info__actions').first();
+    if (!$actions.length) return console.warn('[Resume] не найден контейнер кнопок');
+
+    const $btn = $(`
+      <div class="full-start__button selector view--continue resume--btn">
+        <div class="selector__text">Продолжить&nbsp;${formatTime(seconds)}</div>
+      </div>`);
+
+    $btn.on('click', () => {
+      console.log('[Resume] Play from', seconds);
+      // дублируем самый обычный клик по «Play» – Lampa сама подтянет нужный link
+      $actions.find('.view--torrent,.button--play').first().trigger('click');
+      // после старта плеера Lampa возьмёт позицию из file_view и перемотает
+    });
+
+    $actions.prepend($btn);
+  }
+
+  const formatTime = s => new Date(s*1000).toISOString().substr(s >= 3600 ? 11 : 14, 8);
+
+  console.log('[Resume] плагин инициализирован');
 })();
