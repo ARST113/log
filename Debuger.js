@@ -1,96 +1,130 @@
 (function(){
-  'use strict';
+    'use strict';
 
-  console.log('Continue‑view plugin loaded');
+    console.log('[ReturnPlugin] плагин Return.js загружен');
 
-  // Регистрируем себя (необязательно)
-  Lampa.Manifest.plugins = Lampa.Manifest.plugins || [];
-  Lampa.Manifest.plugins.push({
-    type:        'addon',
-    version:     '1.0.0',
-    name:        'Продолжить просмотр',
-    description: 'Кнопка возобновления просмотра на последней позиции'
-  });
+    /**
+     * Сохраняет последний запущенный файл (torrent) под ключом таймлайна контента
+     */
+    function saveLastFile(data) {
+        if (!data || !data.torrent_hash) return;
 
-  // Локализация
-  Lampa.Lang.add({ continue: { ru: 'Продолжить просмотр', en: 'Continue' } });
+        // Берём активную карточку из Lampa.Activity
+        var card = Lampa.Activity.active().card || {};
+        // Определяем базовую строку для хеша
+        var base = card.number_of_seasons
+            ? card.original_name
+            : card.original_title;
+        if (!base) return;
 
-  // Стили кнопки
-  var css = '\
-    .view--continue { \
-      background-color: #15bdff; \
-      color: white; \
-      border-radius: 0.3em; \
-      padding: 0.5em 1em; \
-      margin-left: 0.5em; \
-      display: inline-block; \
-    }\
-    .view--continue.focus, .view--continue:hover { \
-      background-color: #0d8ad1; \
-    }';
-  $('head').append('<style>' + css + '</style>');
+        var key = Lampa.Utils.hash(base);
+        // Читаем мапу из localStorage, добавляем новый entry и сохраняем обратно
+        var map = Lampa.Storage.get('resume_file', {});
+        map[key] = data;
+        Lampa.Storage.set('resume_file', map);
+        console.log('[ReturnPlugin] resume_file saved for', key, data);
+    }
 
-  /**
-   * Добавляет кнопку после .view--torrent
-   * @param {jQuery} btnEl — элемент .view--torrent
-   * @param {Object} card  — объект карточки, может содержать torrent_hash или id
-   */
-  function addContinueButton(btnEl, card) {
-    var views = Lampa.Storage.get('file_view', {});
-    // ключ резюме: сначала torrent_hash (для торрентов), иначе id (для карточек фильмов)
-    // ключ резюме: используем id файла (в file_view ключи — это id)
-    // для resumption lookup используем тот же hash что и Timeline
-    // timeline key: for movies use hash of original_title (same as Lampa.Timeline.view);
-    // for serials it would be hash of season+episode+original_title (not handled here)
-    var title = card.original_title || card.title || '';    
-    var key = Lampa.Utils.hash(title);
-    console.log('addContinueButton called, use key:', key);
-    if(!key) return;
+    // Подписываемся на событие запуска плеера, чтобы сохранить file
+    Lampa.Player.listener.follow('start', saveLastFile);
 
-    var v = views[key];
-    console.log('resume data for', key, v);
 
-    // условия: есть прогресс между 0 и 100, кнопка ещё не вставлена
-    if(!v || v.percent <= 0 || v.percent >= 100) return;
-    if(btnEl.siblings('.view--continue').length) return;
+    /**
+     * Вставляет кнопку «Продолжить просмотр» на полной карточке
+     */
+    function initReturnPlugin() {
+        Lampa.Listener.follow('full', function(e) {
+            if (e.type !== 'complite') return;
 
-    // создаём кнопку
-    var btn = $('<div class="selector view--continue">'+ Lampa.Lang.translate('continue') +'</div>');
-    // подпись с таймкодом
-    btn.attr('data-subtitle',
-      Lampa.Utils.secondsToTime(v.time, true) + ' / ' +
-      Lampa.Utils.secondsToTime(v.duration, true)
-    );
-    // обработчик
-    btn.on('hover:enter click', function(){
-      console.log('Continuing playback at', v.time);
-      Lampa.Player.play(Object.assign({}, card, {
-        timeline: { time: v.time, duration: v.duration }
-      }));
-    });
+            // небольшая задержка, чтобы DOM успел обновиться
+            setTimeout(function(){
+                try {
+                    var fullContainer = e.object.activity.render();
 
-    btnEl.after(btn);
-  }
+                    // На старом интерфейсе кнопка «Смотреть» имеет класс .view--torrent
+                    var target = fullContainer.find('.view--torrent');
+                    console.log('[ReturnPlugin] full event fired, .view--torrent elements:', target.length);
 
-  // Слушаем открытие полной карточки и вставляем кнопку
-  Lampa.Listener.follow('full', function(e){
-    if(e.type !== 'complite') return;
-    var render     = e.object.activity.render();
-    var torrentBtn = render.find('.view--torrent');
-    console.log('full event fired, .view--torrent elements:', torrentBtn.length);
-    if(!torrentBtn.length) return;
+                    if (!target.length) {
+                        console.warn('[ReturnPlugin] Целевой контейнер для кнопки не найден');
+                        return;
+                    }
 
-    addContinueButton(torrentBtn, e.data.movie);
-  });
+                    // Берём карточку из e.data.movie (или fallback e.object.item)
+                    var card = e.data.movie || e.object.item || {};
+                    var base = card.number_of_seasons
+                        ? card.original_name
+                        : card.original_title;
+                    if (!base) return;
 
-  // Ручной тест в консоли: вызов window._testContinue()
-  window._testContinue = function(){
-    var torrentBtn = $('.view--torrent');
-    var movie = Lampa.Activity.active().card || {};
-    console.log('TEST addContinueButton args:', torrentBtn, movie);
-    addContinueButton(torrentBtn, movie);
-    console.log('After test, .view--continue count:', $('.view--continue').length);
-  };
-  console.log('Continue‑view: _testContinue() ready');
+                    var key = Lampa.Utils.hash(base);
+                    console.log('[ReturnPlugin] looking for resume data for key:', key);
+
+                    // Читаем прогресс и сохранённые file
+                    var views    = Lampa.Storage.get('file_view', {});
+                    var resume   = views[key];
+                    var filesMap = Lampa.Storage.get('resume_file', {});
+                    var file     = filesMap[key];
+
+                    if (!resume || resume.percent <= 0 || resume.percent >= 100) {
+                        console.warn('[ReturnPlugin] нет прогресса для resume:', resume);
+                        return;
+                    }
+                    if (!file) {
+                        console.warn('[ReturnPlugin] нет сохранённого файла для resume:', file);
+                        return;
+                    }
+
+                    // Не дублировать кнопку
+                    if ( target.siblings('.view--continue').length ) {
+                        console.log('[ReturnPlugin] кнопка уже вставлена');
+                        return;
+                    }
+
+                    // Собираем HTML кнопки
+                    var btnHtml = `
+                        <div class="full-start__button selector view--continue return--button" title="Продолжить просмотр">
+                            <div class="selector__icon">
+                                <img src="https://raw.githubusercontent.com/ARST113/log/refs/heads/main/cinema-film-movies-add-svgrepo-com.svg"
+                                     alt="Продолжить" width="24" height="24" style="vertical-align: middle;">
+                            </div>
+                            <div class="selector__text">
+                                Продолжить (${Lampa.Utils.secondsToTime(resume.time, true)})
+                            </div>
+                        </div>`;
+                    var $btn = $(btnHtml);
+
+                    // Обработчик клика / hover:enter
+                    $btn.on('hover:enter click', function(evt){
+                        evt.preventDefault();
+                        evt.stopPropagation();
+                        console.log('[ReturnPlugin] кнопка "Продолжить" нажата, запускаем плеер с resume');
+                        Lampa.Player.play(Object.assign({}, file, {
+                            timeline: {
+                                time:     resume.time,
+                                duration: resume.duration
+                            }
+                        }));
+                    });
+
+                    // Вставляем кнопку перед кнопкой "Смотреть"
+                    target.before($btn);
+                    console.log('[ReturnPlugin] кнопка "Продолжить" успешно вставлена');
+
+                } catch (err) {
+                    console.error('[ReturnPlugin] Ошибка при вставке кнопки:', err);
+                }
+            }, 100);
+        });
+    }
+
+    // Инициализация: если Lampa уже доступна — сразу, иначе ждём события lampa:start
+    if (window.Lampa) {
+        console.log('[ReturnPlugin] Lampa доступна, инициализируем плагин');
+        initReturnPlugin();
+    } else {
+        console.log('[ReturnPlugin] Lampa не доступна, ждём lampa:start');
+        document.addEventListener('lampa:start', initReturnPlugin);
+    }
 
 })();
