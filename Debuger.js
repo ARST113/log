@@ -38,7 +38,12 @@
   function addContinueButton(btnEl, card) {
     var views = Lampa.Storage.get('file_view', {});
     // ключ резюме: сначала torrent_hash (для торрентов), иначе id (для карточек фильмов)
-    var key = card.torrent_hash || card.id;
+    // ключ резюме: используем id файла (в file_view ключи — это id)
+    // для resumption lookup используем тот же hash что и Timeline
+    // timeline key: for movies use hash of original_title (same as Lampa.Timeline.view);
+    // for serials it would be hash of season+episode+original_title (not handled here)
+    var title = card.original_title || card.title || '';    
+    var key = Lampa.Utils.hash(title);
     console.log('addContinueButton called, use key:', key);
     if(!key) return;
 
