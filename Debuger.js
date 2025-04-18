@@ -1,155 +1,121 @@
-/*
- * Lampa Resume‑Hash Plugin
- * -----------------------
- * Сохраняет torrent‑hash + позицию просмотра и показывает кнопку «Продолжить»
- * в карточке фильма/серии.  Полностью переписанная версия без крэш‑ов buildKey.
- */
+;(function(){
+  // Регистрация плагина в Lampa
+  const plugin = {
+    name: 'MyTorrentPlugin',         // уникальное имя плагина
+    version: '1.0',
+    icon: 'magnet',                  // иконка в списке источников
+    searchOnStart: false,            // отключаем автопоиск при загрузке
 
-(function(){
-    /**
-     * Имя ключа в Lampa.Storage
-     * Формат value:
-     * {
-     *   [key:string]: {
-     *      hash: string,
-     *      position: number,   // секунд
-     *      updated:  number    // Date.now()
-     *   }
-     * }
-     */
-    const STORAGE_FIELD = 'resume_hashes';
-
-    /**
-     * Безопасно достаём объект из Storage
-     */
-    function getStorage(){
-        const raw = Lampa.Storage.get(STORAGE_FIELD, '{}');
-        try{
-            // V1 плагина сохранял массив – на всякий случай преобразуем
-            if(Array.isArray(raw)) return {};
-            return typeof raw === 'string' ? JSON.parse(raw) : raw || {};
-        }catch(e){
-            console.warn('[Resume] broken storage – reset', e);
-            return {};
+    // Поиск по ключевому слову
+    search(page, query, callback) {
+      Lampa.Utils.log('MyTorrentPlugin', 'search', query);
+      const url = `https://your.api/search?q=${encodeURIComponent(query)}&page=${page}`;
+      $.get({
+        url,
+        dataType: 'json',
+        timeout: 15000
+      }).done(data => {
+        if(!data || !data.results || !data.results.length){
+          Lampa.Noty.show('Ничего не найдено');
+          return;
         }
-    }
+        // Преобразуем ответ API в единый формат
+        const items = data.results.map(item => ({
+          title: item.title,
+          year:  item.year,
+          torrent: item.magnet,      // magnet-ссылка или URL .torrent
+          infoHash: item.hash,
+          poster: item.poster
+        }));
+        callback(items, data.pages);
+      }).fail(err => {
+        Lampa.Utils.log('MyTorrentPlugin', 'search fail', err);
+        Lampa.Noty.show(`Ошибка поиска: ${err.statusText || err}`);
+      });
+    },
 
-    /**
-     * Сохраняем состояние обратно
-     */
-    function setStorage(obj){
-        Lampa.Storage.set(STORAGE_FIELD, JSON.stringify(obj), true);
-    }
+    // Получение деталей (необязательно, можно сразу играть)
+    find(item, callback) {
+      Lampa.Utils.log('MyTorrentPlugin', 'find', item);
+      callback(item);
+    },
 
-    /**
-     * Формируем ключ – одинаково для фильма и эпизода.
-     *  - Для фильма:     <id>
-     *  - Для сериала:    <id>:<season>:<episode>
-     */
-    function buildKey(meta){
-        if(!meta) return 'unknown';
+    // Основной метод запуска плеера
+    play(item) {
+      Lampa.Utils.log('MyTorrentPlugin', 'play item', item);
 
-        /*
-         * 1. Универсальный идентификатор карточки.
-         *    Для кинопоиска —  kp_id, для tmdb — id, для торрентов может быть torrent_id.
-         */
-        const id = meta.id || meta.kp_id || meta.torrent_id || meta.hash || meta.url || 'u';
+      // Базовые проверки
+      if(!item || (!item.torrent && !item.infoHash)){
+        Lampa.Noty.show('Нет ссылки на торрент или magnet');
+        return;
+      }
 
-        // Фильм → простой ключ
-        if(meta.season === undefined) return String(id);
+      // Сохраним хэш в Storage для возможности повторных попыток
+      if(item.infoHash){
+        Lampa.Storage.set('my_plugin_last_hash', item.infoHash);
+      }
 
-        // Эпизод сериала
-        const season  = Number(meta.season  ?? 0);
-        const episode = Number(meta.number  ?? meta.episode ?? 0);
+      // Выбор URL
+      const torrentUrl = item.torrent || `magnet:?xt=urn:btih:${item.infoHash}`;
 
-        return `${id}:${season}:${episode}`;
-    }
+      // Запросим сам torrent-файл (если это прямой URL), или сразу генерируем playlist из magnet
+      if(torrentUrl.startsWith('http')) {
+        $.get({
+          url: torrentUrl,
+          timeout: 15000,
+          xhrFields: { responseType: 'arraybuffer' }
+        }).done(data => {
+          Lampa.Utils.log('MyTorrentPlugin', 'torrent downloaded', data);
 
-    /**
-     * Сохраняем текущий хэш + позицию просмотра
-     */
-    function saveProgress(meta, hash, seconds){
-        if(!hash) return;
+          if(!data || data.byteLength === 0){
+            Lampa.Noty.show('Файл .torrent пуст или недоступен');
+            return;
+          }
 
-        const store = getStorage();
-        const key   = buildKey(meta);
+          // Здесь вам понадобится парсер .torrent, например parse-torrent.js
+          // const parsed = parseTorrent(data);
+          // if(!parsed.files || !parsed.files.length){
+          //   Lampa.Noty.show('Не удалось распарсить торрент');
+          //   return;
+          // }
+          //
+          // const playlist = parsed.files.map(file => ({
+          //   title: file.name,
+          //   url: URL.createObjectURL(new Blob([data])),
+          //   size: file.length
+          // }));
 
-        store[key] = {
-            hash:     hash,
-            position: Math.floor(seconds),
-            updated:  Date.now()
-        };
+          // Для упрощения сделаем одну запись (все данные в одном потоке)
+          const playlist = [{
+            title: item.title + (item.year ? ` (${item.year})` : ''),
+            url: URL.createObjectURL(new Blob([data])),
+            torrent_hash: item.infoHash
+          }];
 
-        setStorage(store);
-        console.debug('[Resume] saved', key, store[key]);
-    }
-
-    /**
-     * Берём сохранённую позицию (если есть)
-     */
-    function getProgress(meta){
-        const store = getStorage();
-        const key   = buildKey(meta);
-        return store[key];
-    }
-
-    /* -------------------------------------------------------------------- */
-    /*  Подписываемся на события проигрывателя                               */
-    /* -------------------------------------------------------------------- */
-
-    Lampa.Subscribe.play(function(data){
-        // data содержит meta‑инфу и timeline
-        const meta  = data.card || data.original_card || {};
-        const hash  = data.torrent_hash || data.hash;
-        const view  = data.timeline; // Lampa.Timeline.view
-
-        // 1) Момент запуска — сохраняем 0, чтобы знать, что этот хэш вообще есть
-        saveProgress(meta, hash, 0);
-
-        // 2) Слушаем прогресс
-        if(view){
-            // Раз в ~5 сек приходит событие update
-            view.on('update', (time)=>{
-                saveProgress(meta, hash, time);
-            });
-
-            // Финальный «stop» — точно найдёт последнюю позицию
-            view.on('stop', (time)=>{
-                saveProgress(meta, hash, time);
-            });
-        }
-    });
-
-    /* -------------------------------------------------------------------- */
-    /*  Добавляем кнопку «Продолжить» в карточку                             */
-    /* -------------------------------------------------------------------- */
-
-    Lampa.Listener.subscribe('full', function(e){
-        if(e.type !== 'open') return;
-
-        const card = e.card; // объект карточки (Full)
-        const meta = card.data || {};
-        const resume = getProgress(meta);
-
-        if(!resume || !resume.hash) return; // ничего не сохраняли
-
-        const label = Lampa.Utils.secondsToTime(resume.position, true);
-
-        card.addButton({
-            title:      'Продолжить',
-            subtitle:   label,
-            icon:       'play',
-            id:         'resume',
-            action:     ()=>{
-                Lampa.Player.play({
-                    url:        resume.hash,        // hash → url прокси‑плеера
-                    torrent_hash: resume.hash,
-                    card:       meta,
-                    timeline:   {time: resume.position}
-                });
-            }
+          // Запускаем плеер
+          Lampa.Player.play({
+            title:       item.title,
+            poster:      item.poster,
+            torrent_hash:item.infoHash,
+            playlist:    playlist
+          });
+        }).fail(err => {
+          Lampa.Utils.log('MyTorrentPlugin', 'torrent download fail', err);
+          Lampa.Noty.show(`Не удалось загрузить торрент: ${err.statusText || err}`);
         });
-    });
+      }
+      else {
+        // magnet-ссылка: сразу пускаем
+        Lampa.Player.play({
+          title:        item.title,
+          poster:       item.poster,
+          url:          torrentUrl,
+          torrent_hash: item.infoHash
+        });
+      }
+    }
+  };
 
-    console.log('%cLampa Resume‑Hash plugin loaded', 'background:#2E8B57;color:#fff;padding:2px 4px');
+  // Регистрируем плагин как источник в Lampa
+  Lampa.Source.add(plugin);
 })();
