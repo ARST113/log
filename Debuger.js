@@ -2,7 +2,7 @@
   'use strict';
 
   //
-  // 1) Стилевой блок: иконка белая по‑умолчанию, чёрная при фокусе/hover
+  // ——— 1. CSS для кнопки — белая иконка по‑умолчанию, чёрная при hover/focus
   //
   Lampa.Template.add('return_css', `
     <style>
@@ -19,34 +19,39 @@
   $('body').append(Lampa.Template.get('return_css', {}, true));
 
   //
-  // 2) Переопределяем Player.play, чтобы сохранять resume_file под тем же ключом, что и file_view
+  // ——— 2. Переопределим Player.play, чтобы сохранять resume_file под одинаковым ключом
   //
   const origPlay = Lampa.Player.play;
   Lampa.Player.play = function(data){
     try {
-      const card = Lampa.Activity.active().card || {};
+      // если в data есть поле card — берём его
+      const card = data.card || Lampa.Activity.active().card || {};
+      // одинаковая логика хеша, что и у Lampa.Timeline
       const base = card.number_of_seasons
-        ? card.original_name
-        : (card.original_title || card.title || card.name || '');
+        ? (card.original_name  || card.title || '')
+        : (card.original_title || card.title || '');
       const key = Lampa.Utils.hash(base);
+
       const map = Lampa.Storage.get('resume_file', {});
       map[key] = data;
       Lampa.Storage.set('resume_file', map);
+
       console.log('[ReturnPlugin] resume_file saved for key=', key, data);
     }
-    catch(e){
-      console.error('[ReturnPlugin] save resume_file error', e);
+    catch(err){
+      console.error('[ReturnPlugin] save resume_file error', err);
     }
+
+    // вызываем оригинал
     return origPlay.call(this, data);
   };
 
   //
-  // 3) Основная функция: вставка кнопки в full-view
+  // ——— 3. Функция вставки кнопки и её обработчик
   //
   function initReturnPlugin(){
     Lampa.Listener.follow('full', function(e){
       if(e.type === 'complite'){
-        // чуть задержим, чтобы DOM точно сформировался
         setTimeout(function(){
           try {
             const fullContainer = e.object.activity.render();
@@ -55,7 +60,6 @@
               ? fullContainer.find('.button--play')
               : fullContainer.find('.view--torrent');
 
-            // HTML нашей кнопки
             const btnHtml = `
               <div class="full-start__button selector view--continue return--button" title="Продолжить просмотр">
                 <div class="selector__icon">
@@ -63,24 +67,22 @@
                        alt="▶▶" width="24" height="24" style="vertical-align: middle;">
                 </div>
                 <div class="selector__text">Продолжить</div>
-              </div>
-            `;
+              </div>`;
             const $btn = $(btnHtml);
 
-            // Обработчик нажатия / hover:enter
             $btn.on('hover:enter click', function(evt){
               evt.preventDefault();
               evt.stopPropagation();
               console.log('[ReturnPlugin] Continue clicked');
 
-              // вычисляем тот же ключ, что и в переписанном Player.play
+              // вычисляем ключ точно так же
               const card = Lampa.Activity.active().card || {};
               const base = card.number_of_seasons
-                ? card.original_name
-                : (card.original_title || card.title || card.name || '');
+                ? (card.original_name  || card.title || '')
+                : (card.original_title || card.title || '');
               const key = Lampa.Utils.hash(base);
 
-              const views  = Lampa.Storage.get('file_view', {});
+              const views  = Lampa.Storage.get('file_view',   {});
               const resume = views[key];
               const files  = Lampa.Storage.get('resume_file', {});
               const file   = files[key];
@@ -90,7 +92,7 @@
                 return;
               }
 
-              // стартуем плеер с таймлайном
+              // и запускаем плеер с таймлайном
               Lampa.Player.play(Object.assign({}, file, {
                 timeline: {
                   time:     resume.time,
@@ -114,7 +116,7 @@
     });
   }
 
-  // 4) Инициализация
+  // ——— 4. Инициализируем
   if(window.Lampa){
     initReturnPlugin();
   } else {
