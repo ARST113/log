@@ -1,79 +1,122 @@
-(function(){
-    'use strict';
-    
-    console.log('[ReturnPlugin] плагин Return.js загружен');
-    
-    function initReturnPlugin() {
-        // Подписываемся на событие "full", которое срабатывает при формировании полной страницы деталей
-        Lampa.Listener.follow('full', function(e) {
-            if(e.type === 'complite'){
-                // Задержка для гарантии, что DOM полностью сформирован
-                setTimeout(function(){
-                    try {
-                        // Получаем корневой элемент карточки деталей
-                        var fullContainer = e.object.activity.render();
-                        
-                        // Определяем тип интерфейса (новый или старый)
-                        // Для нового интерфейса кнопки находятся в .button--play, для старого — в .view--torrent
-                        var cardInterfaceType = Lampa.Storage.get('card_interface_type') || 'old';
-                        var target;
-                        if(cardInterfaceType === 'new'){
-                            target = fullContainer.find('.button--play');
-                        } else {
-                            target = fullContainer.find('.view--torrent');
-                        }
-                        console.log('[ReturnPlugin] Найден целевой контейнер:', target);
-                        
-                        // Создаем HTML для кнопки "Продолжить"
-                        var btnHtml = `
-                        <div class="full-start__button selector view--continue return--button" title="Продолжить просмотр">
-                            <div class="selector__icon">
-                                <img src="https://raw.githubusercontent.com/ARST113/log/refs/heads/main/cinema-film-movies-add-svgrepo-com.svg" 
-                                     alt="Продолжить" width="24" height="24" style="vertical-align: middle;">
-                            </div>
-                            <div class="selector__text">Продолжить</div>
-                        </div>`;
-                        var $btn = $(btnHtml);
-                        
-                        // Вешаем обработчик клика на кнопку
-                        $btn.on('click', function(evt) {
-                            evt.preventDefault();
-                            evt.stopPropagation();
-                            console.log('[ReturnPlugin] Кнопка "Продолжить" нажата');
-                            
-                            // Запускаем плеер с данными текущего контента.
-                            // Здесь используется объект e.object.item, содержащий информацию о контенте,
-                            // например: url, quality, title и id.
-                            Lampa.Player.play({
-                                url: e.object.item.url || '',
-                                quality: e.object.item.quality || {},
-                                title: e.object.item.title || 'Без названия',
-                                torrent_hash: e.object.item.id,
-                                timeline: 0  // При необходимости можно заменить на сохранённую позицию
-                            });
-                        });
-                        
-                        // Вставляем нашу кнопку перед целевым элементом
-                        if(target && target.length) {
-                            target.before($btn);
-                            console.log('[ReturnPlugin] Кнопка "Продолжить" успешно вставлена');
-                        } else {
-                            console.warn('[ReturnPlugin] Целевой контейнер для кнопки не найден');
-                        }
-                    } catch(err) {
-                        console.error('[ReturnPlugin] Ошибка при вставке кнопки:', err);
-                    }
-                }, 100); // Задержка 100 мс
-            }
+;(function(){
+  'use strict';
+  
+  // 1) Переопределяем Player.play, чтобы сохранять под правильным ключом
+  (function(){
+    const origPlay = Lampa.Player.play;
+    Lampa.Player.play = function(data){
+      // вычисляем ключ: 1) по timeline.hash, 2) fallback — по base
+      const key = data.timeline && data.timeline.hash
+                ? String(data.timeline.hash)
+                : String(Lampa.Utils.hash(
+                    (data.card && data.card.original_title)
+                    || (data.card && data.card.original_name)
+                    || data.title || ''
+                  ));
+      
+      // сохраняем «data» под этим же ключом
+      try {
+        const map = Lampa.Storage.get('resume_file', {});
+        map[key] = data;
+        Lampa.Storage.set('resume_file', map);
+        console.log('[ReturnPlugin] saved resume_file →', key, data);
+      } catch(e){
+        console.error('[ReturnPlugin] save resume_file error', e);
+      }
+      
+      // дальше оригинальная логика
+      return origPlay.call(this, data);
+    };
+    console.log('[ReturnPlugin] Player.play wrapped');
+  })();
+  
+  // 2) Вставляем кнопку и отвечаем на клик
+  function insertButton(){
+    Lampa.Listener.follow('full', e => {
+      if(e.type !== 'complite') return;
+      setTimeout(() => {
+        const root = e.object.activity.render();
+        // target — либо старая .view--torrent, либо новая .button--play
+        const target = root.find('.view--torrent, .button--play');
+        
+        if(!target.length || target.siblings('.view--continue').length) return;
+        
+        const btn = $(`
+          <div class="full-start__button selector view--continue return--button" title="Продолжить просмотр">
+            <div class="selector__icon">
+              <img src="https://raw.githubusercontent.com/ARST113/log/refs/heads/main/cinema-film-movies-add-svgrepo-com.svg"
+                   width="24" height="24" alt="▶▶">
+            </div>
+            <div class="selector__text">Продолжить</div>
+          </div>
+        `);
+        
+        btn.on('hover:enter click', evt => {
+          evt.preventDefault();
+          evt.stopPropagation();
+          
+          // вычисляем два ключа: timelineHash и baseHash
+          const card = Lampa.Activity.active().card || {};
+          const baseHash = String(Lampa.Utils.hash(
+            card.original_title || card.original_name || card.title || card.name || ''
+          ));
+          
+          // timelineHash мы можем достать из уже существующего timeline (если лента рисовалась ранее)
+          // или из e.object.item.timeline
+          let timelineHash = '';
+          if(e.object.item && e.object.item.timeline && e.object.item.timeline.hash){
+            timelineHash = String(e.object.item.timeline.hash);
+          } else {
+            // ещё можно принудительно создать:
+            // const tl = Lampa.Timeline.view(baseHash);
+            // timelineHash = String(tl.hash);
+          }
+          
+          // теперь пробуем взять resume и data под этим ключом
+          const views = Lampa.Storage.get('file_view', {});
+          const files = Lampa.Storage.get('resume_file', {});
+          
+          let resume = timelineHash && views[timelineHash]
+                     ? views[timelineHash]
+                     : views[baseHash];
+          
+          let data   = timelineHash && files[timelineHash]
+                     ? files[timelineHash]
+                     : files[baseHash];
+          
+          // если под timelineHash ничего нет, а под baseHash есть — всё ок
+          // если же под baseHash ничего нет, но есть под старым card.id — можно сделать аналогичный фоллбэк,
+          // но для большинства torrent-сценариев достаточно этих двух.
+          
+          if(!resume || !data){
+            return console.warn('[ReturnPlugin] нет данных для авто‑старта (hash):', {
+              timelineHash, baseHash, resume, data
+            });
+          }
+          
+          // восстанавливаем Timeline
+          const timeline = data.timeline || Lampa.Timeline.view(
+            timelineHash || baseHash
+          );
+          timeline.time     = resume.time;
+          timeline.duration = resume.duration;
+          Lampa.Timeline.update(timeline);
+          
+          console.log('[ReturnPlugin] launching with key →',
+            timelineHash || baseHash, resume);
+          
+          // и наконец автозапуск
+          Lampa.Player.play(Object.assign({}, data, { timeline }));
         });
-    }
-    
-    // Инициализируем плагин сразу, если объект Lampa уже доступен, или ждем событие lampa:start
-    if(window.Lampa) {
-        console.log('[ReturnPlugin] Lampa доступна, инициализируем плагин');
-        initReturnPlugin();
-    } else {
-        console.log('[ReturnPlugin] Lampa не доступна, ждем lampa:start');
-        document.addEventListener('lampa:start', initReturnPlugin);
-    }
+        
+        target.before(btn);
+        console.log('[ReturnPlugin] button inserted');
+      }, 100);
+    });
+  }
+  
+  if(window.Lampa) insertButton();
+  else document.addEventListener('lampa:start', insertButton);
+
+  console.log('[ReturnPlugin] initialized');
 })();
