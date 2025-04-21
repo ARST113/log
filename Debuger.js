@@ -1,129 +1,139 @@
-(function(){
+;(function(){
   'use strict';
 
-  // Удаляем старые экземпляры кнопки
-  $('.return--button').remove();
-
-  // Вставляем стили
-  const css = `
-    /* default: прозрачный фон, белый текст и иконка */
-    .return--button {
-      background-color: transparent !important;
-      color: #fff !important;
-      border: none !important;
-      padding: 0.5em 1em !important;
-    }
-    .return--button .selector__icon {
-      margin-right: 0.5em !important;
-    }
-    .return--button img {
-      filter: invert(100%) !important; /* иконка белая */
-    }
-
-    /* hover/focus: белый фон, чёрный текст и иконка, чёрная рамка */
-    .return--button:hover,
-    .return--button.focus {
-      background-color: #fff !important;
-      color: #000 !important;
-      border: 1px solid #000 !important;
-    }
-    .return--button:hover img,
-    .return--button.focus img {
-      filter: none !important; /* иконка чёрная */
-    }
-  `;
-  $('head').append(`<style>${css}</style>`);
-
-  // Оборачиваем Player.play, чтобы сохранять data под ключом
+  // 1) Оборачиваем Player.play, чтобы сохранять под разными ключами
   (function(){
     const origPlay = Lampa.Player.play;
     Lampa.Player.play = function(data){
-      // вычисляем ключ: сначала timeline.hash, затем базовый hash от названия
-      const tlHash = data.timeline && data.timeline.hash
-                    ? String(data.timeline.hash)
-                    : '';
-      const baseHash = String(
-        Lampa.Utils.hash(
-          (data.card && (data.card.original_title || data.card.original_name))
-          || data.title || ''
-        )
-      );
-      const key = tlHash || baseHash;
+      const card = data.card || Lampa.Activity.active().card || {};
+      const base = card.original_title
+                 || card.original_name
+                 || card.title
+                 || card.name
+                 || '';
+
+      // если это эпизод сериала — хешируем "сезон:серия:название"
+      let keySeed;
+      if(data.season != null && data.episode != null){
+        keySeed = `${data.season}:${data.episode}:${base}`;
+      }
+      // иначе — как раньше
+      else if(data.timeline && data.timeline.hash){
+        keySeed = String(data.timeline.hash);
+      } else {
+        keySeed = base;
+      }
+      const key = String(Lampa.Utils.hash(keySeed));
+
+      // сохраняем позицию
       try {
         const map = Lampa.Storage.get('resume_file', {});
         map[key] = data;
         Lampa.Storage.set('resume_file', map);
-        console.log('[ReturnPlugin] resume_file saved →', key, data);
-      } catch(e) {
-        console.error('[ReturnPlugin] save error', e);
+        console.log('[ReturnPlugin] saved resume_file →', key, data);
+      } catch(e){
+        console.error('[ReturnPlugin] save resume_file error', e);
       }
+
       return origPlay.call(this, data);
     };
     console.log('[ReturnPlugin] Player.play wrapped');
   })();
 
-  // Вставляем кнопку на full-странице
-  function insertButton(){
-    Lampa.Listener.follow('full', e => {
-      if(e.type !== 'complite') return;
-      setTimeout(() => {
-        const root = e.object.activity.render();
-        if(root.find('.return--button').length) return;
+  // 2) Функция вставки кнопки
+  function insertButton(root){
+    if(root.find('.view--continue').length) return;
 
-        const target = root.find('.view--torrent, .button--play');
-        if(!target.length) return;
+    const btn = $(`
+      <div class="full-start__button selector view--continue return--button" title="Продолжить просмотр">
+        <div class="selector__icon">
+          <!-- чёрная SVG‑иконка -->
+          <svg width="24" height="24" viewBox="0 0 24 24">
+            <path d="M4 4h4v16H4V4zm6 8l10 6V6l-10 6z" fill="currentColor"/>
+          </svg>
+        </div>
+        <div class="selector__text">Продолжить</div>
+      </div>
+    `);
 
-        const btn = $(
-          `<div class="full-start__button selector view--continue return--button" title="Продолжить">
-             <div class="selector__icon">
-               <img src="https://raw.githubusercontent.com/ARST113/log/refs/heads/main/cinema-film-movies-add-svgrepo-com.svg"
-                    width="24" height="24" alt="">
-             </div>
-             <div class="selector__text">Продолжить</div>
-           </div>`
-        );
+    // стили для кнопки
+    btn.css({
+      'margin-left': '0.5em'
+    }).on('hover:focus hover:enter', function(){
+      btn.toggleClass('focus');
+    }).on('hover:enter click', function(e){
+      e.preventDefault(); e.stopPropagation();
 
-        btn.on('hover:enter click', evt => {
-          evt.preventDefault(); evt.stopPropagation();
+      // вычисляем тот же keySeed
+      const card = Lampa.Activity.active().card || {};
+      const base = card.original_title
+                 || card.original_name
+                 || card.title
+                 || card.name
+                 || '';
 
-          const card = Lampa.Activity.active().card || {};
-          const baseHash = String(
-            Lampa.Utils.hash(
-              card.original_title||card.original_name||card.title||card.name||''
-            )
-          );
-          let tlHash = '';
-          if(e.object.item && e.object.item.timeline && e.object.item.timeline.hash) {
-            tlHash = String(e.object.item.timeline.hash);
-          }
-          const key = tlHash || baseHash;
+      // если это сериал — сез/сер берём из item
+      let season, episode;
+      const item = Lampa.Activity.active().activity.object && Lampa.Activity.active().activity.object.item;
+      if(item){
+        season  = item.season;
+        episode = item.episode;
+      }
 
-          const views = Lampa.Storage.get('file_view', {});
-          const files = Lampa.Storage.get('resume_file', {});
-          const resume = views[key];
-          const data   = files[key];
-          if(!resume || !data) {
-            console.warn('[ReturnPlugin] нет данных для key=', key);
-            return;
-          }
+      let keySeed;
+      if(season != null && episode != null){
+        keySeed = `${season}:${episode}:${base}`;
+      } else {
+        // fallback — timeline.hash или base
+        const tl = item && item.timeline;
+        keySeed = tl && tl.hash ? String(tl.hash) : base;
+      }
+      const key = String(Lampa.Utils.hash(keySeed));
 
-          // восстанавливаем timeline и запускаем
-          const tl = data.timeline || Lampa.Timeline.view(key);
-          tl.time     = resume.time;
-          tl.duration = resume.duration;
-          Lampa.Timeline.update(tl);
+      const fv = Lampa.Storage.get('file_view', {});
+      const rf = Lampa.Storage.get('resume_file', {});
+      const resume = fv[key];
+      const data   = rf[key];
 
-          Lampa.Player.play(Object.assign({}, data, {timeline: tl}));
-        });
+      if(!resume || !data){
+        console.warn('[ReturnPlugin] нет сохранённых данных для ключа', key);
+        return;
+      }
 
-        target.before(btn);
-        console.log('[ReturnPlugin] button inserted');
-      }, 100);
+      // восстанавливаем timeline
+      const timeline = data.timeline || { hash: key };
+      timeline.time     = resume.time;
+      timeline.duration = resume.duration;
+      Lampa.Timeline.update(timeline);
+
+      console.log('[ReturnPlugin] auto‑play with key →', key, resume);
+      Lampa.Player.play(Object.assign({}, data, { timeline }));
     });
+
+    // вставляем перед ▶ кнопкой
+    const target = root.find('.view--torrent, .button--play').first();
+    if(target.length) target.before(btn);
   }
 
-  if(window.Lampa) insertButton();
-  else document.addEventListener('lampa:start', insertButton);
+  // 3) Вешаем на событие отрисовки full‑view
+  Lampa.Listener.follow('full', function(e){
+    if(e.type === 'complite'){
+      setTimeout(()=>{
+        const root = e.object.activity.render();
+        insertButton(root);
+      },50);
+    }
+  });
+
+  // 4) И аналогично — на отрисовку списка «Торрент» (lampac)
+  Lampa.Listener.follow('lampac', function(e){
+    if(e.type === 'complite'){
+      setTimeout(()=>{
+        const root = $('.activity--lampac'); // корень онлайн‑компонента
+        insertButton(root);
+      },50);
+    }
+  });
 
   console.log('[ReturnPlugin] initialized');
 })();
