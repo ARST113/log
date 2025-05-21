@@ -1,52 +1,36 @@
-// Паспорт (опционально, но удобно для списка «Расширения»)
-var PosterUpscaleInfo = {
+// === Poster Intercept (mobile) v1.0.0 ===============================
+var PosterInterceptInfo = {
     type:        'other',
-    component:   'poster_upscale',
-    version:     '1.0.1',
-    author:      'your-github-or-nick',
-    name:        'Poster Upscale (mobile)',
-    description: 'Загружает полноразмерный постер на мобильных устройствах'
+    component:   'poster_intercept',
+    version:     '1.0.0',
+    author:      'your-nick',
+    name:        'Poster Intercept (mobile)',
+    description: 'Заставляет Lampa запрашивать w780/w1280 постер в карточке'
 };
 
 (function () {
     'use strict';
 
-    const TARGET_WIDTH = window.devicePixelRatio >= 2 ? 1280 : 780;
-
-    function isMobile() {
-        return Lampa.Platform && (Lampa.Platform.is('android') || Lampa.Platform.is('ios'));
+    // работаем только на телефонах / планшетах
+    if (!Lampa.Platform || !(Lampa.Platform.is('android') || Lampa.Platform.is('ios'))) {
+        return;
     }
 
-    function upscalePoster($img) {
-        let src = $img.attr('src') || $img.attr('data-src');
-        if (!src || !/\/w\d+\//.test(src)) return;
+    // подменяем сразу после инициализации Template
+    const waitTemplate = setInterval(() => {
+        if (window.Template && Template.getPoster) {
+            clearInterval(waitTemplate);
 
-        const bigger = src.replace(/\/w\d+\//, `/w${TARGET_WIDTH}/`);
-        if (bigger === src) return;
+            const original = Template.getPoster;
+            const BIG = window.devicePixelRatio >= 2 ? 'w1280' : 'w780';
 
-        // Откат на случай 404
-        $img.one('error', () => {
-            console.warn('[PosterUpscalePlugin] 404, возвращаю прежний постер');
-            $img.attr('src', src).attr('data-src', src);
-        });
+            Template.getPoster = function (path, size) {
+                // апскейлим только когда запрашивают «средний» плакат
+                if (size === 'w342' || size === 'w500') size = BIG;
+                return original.call(this, path, size);
+            };
 
-        $img
-            .attr('src', bigger)
-            .attr('data-src', bigger)
-            .removeClass('lazyload')
-            .addClass('loaded');
-    }
-
-    function handleFullCard(e) {
-        if (e.type !== 'complite' || !isMobile()) return;
-        setTimeout(() => {
-            const $root = e.object.activity.render ? e.object.activity.render() : $(e.object);
-            let $img = $root.find('.full-start-new__poster img.full--poster');
-            if (!$img.length) $img = $root.find('.full-start__poster img.full--poster');
-            if ($img.length) upscalePoster($img);
-        }, 25);
-    }
-
-    Lampa.Listener.follow('full', handleFullCard);
-    console.log('[PosterUpscalePlugin] init; target width =', TARGET_WIDTH);
+            console.log('[PosterIntercept] активен, target =', BIG);
+        }
+    }, 10); // проверка каждые 10 мс, обычно хватает < 100 мс
 })();
