@@ -86,11 +86,12 @@
         const year = parseInt((releaseYear + '').substring(0, 4));
         const originalTitle = itemData.original_title || itemData.original_name;
         
-        // ЗАМЕНИТЕ API КЛЮЧ НА СВОЙ!
+        // ВАШ API КЛЮЧ
         const apiConfig = {
             url: 'https://kinopoiskapiunofficial.tech/',
             headers: {
-                'X-API-KEY': 'ВАШ_API_КЛЮЧ' // Получите на kinopoiskapiunofficial.tech
+                'X-API-KEY': '70207698-ad1b-447f-af7f-c2c005911693',
+                'Content-Type': 'application/json'
             }
         };
         
@@ -117,6 +118,7 @@
                     processSearchResults([]);
                 }
             }, function() {
+                console.log('Ошибка поиска Кинопоиск');
                 callback('0.0');
             }, true, {
                 headers: apiConfig.headers
@@ -179,6 +181,7 @@
                     request.clear();
                     request.timeout(15000);
                     request.silent(apiConfig.url + 'api/v2.2/films/' + filmId, function(filmData) {
+                        console.log('Данные фильма:', filmData);
                         const cachedData = setCachedKpRating(itemData.id, {
                             kp: filmData.ratingKinopoisk || 0,
                             imdb: filmData.ratingImdb || 0,
@@ -189,6 +192,7 @@
                         const rating = source === 'kp' ? cachedData.kp : cachedData.imdb;
                         callback(rating ? parseFloat(rating).toFixed(1) : '0.0');
                     }, function() {
+                        console.log('Ошибка получения данных фильма');
                         callback('0.0');
                     }, true, {
                         headers: apiConfig.headers
@@ -280,10 +284,10 @@
     
     // Инициализация плагина
     function initPlugin() {
-        // УБРАНА ПРОВЕРКА ВЕРСИИ
         if (window.plugin_rating_loaded) return;
         window.plugin_rating_loaded = true;
         
+        console.log('Плагин рейтингов запущен');
         addSettings();
         
         // Стили для отображения рейтингов
@@ -337,6 +341,8 @@
                 processCard(event.data);
             }
         });
+        
+        console.log('Плагин рейтингов инициализирован');
     }
     
     // Запуск плагина
