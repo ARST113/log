@@ -86,10 +86,11 @@
         const year = parseInt((releaseYear + '').substring(0, 4));
         const originalTitle = itemData.original_title || itemData.original_name;
         
+        // ЗАМЕНИТЕ API КЛЮЧ НА СВОЙ!
         const apiConfig = {
             url: 'https://kinopoiskapiunofficial.tech/',
             headers: {
-                'X-API-KEY': '8c8e1a50-6322-4135-8875-5d40a5420d86'
+                'X-API-KEY': 'ВАШ_API_КЛЮЧ' // Получите на kinopoiskapiunofficial.tech
             }
         };
         
@@ -133,8 +134,6 @@
                 return;
             }
             
-            let foundByTitle = false;
-            
             // Добавляем временное поле года
             results.forEach(function(item) {
                 const itemYear = item.start_date || item.year || '0000';
@@ -153,7 +152,6 @@
                 
                 if (titleFiltered.length) {
                     filteredResults = titleFiltered;
-                    foundByTitle = true;
                 }
             }
             
@@ -223,17 +221,17 @@
         const ratingSource = Lampa.Storage.get('rating_source', 'tmdb');
         const ratingElement = cardElement.querySelector('.card__vote');
         
-        if (ratingElement) {
-            ratingElement.className = 'card__vote rate--' + ratingSource;
-            
-            if (ratingSource === 'tmdb') {
-                const originalText = ratingElement.textContent;
-                ratingElement.innerHTML = originalText + '<span class="source--name">TMDB</span>';
-                return;
-            }
-            
-            ratingElement.innerHTML = '';
+        if (!ratingElement) return;
+        
+        ratingElement.className = 'card__vote rate--' + ratingSource;
+        
+        if (ratingSource === 'tmdb') {
+            // Оставляем оригинальный TMDB рейтинг
+            return;
         }
+        
+        // Для KP и IMDB очищаем и показываем загрузку
+        ratingElement.innerHTML = '...';
         
         if (ratingSource === 'kp' || ratingSource === 'imdb') {
             getKpRating(cardData, function(rating) {
@@ -272,17 +270,17 @@
             },
             onChange: function(value) {
                 Lampa.Storage.set('rating_source', value);
+                // Перезагружаем страницу для применения изменений
+                setTimeout(function() {
+                    location.reload();
+                }, 500);
             }
         });
     }
     
     // Инициализация плагина
     function initPlugin() {
-        if (Lampa.Manifest.get().version !== '1.0.0') {
-            Lampa.Noty.show('Этот плагин работает только с определенной версией Lampa');
-            return;
-        }
-        
+        // УБРАНА ПРОВЕРКА ВЕРСИИ
         if (window.plugin_rating_loaded) return;
         window.plugin_rating_loaded = true;
         
