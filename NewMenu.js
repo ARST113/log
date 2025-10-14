@@ -272,7 +272,7 @@ function injectStyles(){if(document.getElementById('lhead-style')) return;
 var css=`
 .lhead{position:fixed;top:0;left:0;width:100%;z-index:15}
 .lhead__body{padding:0.95em 2.22em;display:flex;align-items:center;}
-.lhead__logo{width:2.7em;flex-shrink:0;margin-left:1em;margin-right:1em;}
+.lhead__logo{width:2.7em;flex-shrink:0;margin-left:1em;margin-right:1.7rem;}
 .lhead__actions{display:flex;flex:1 1 0;min-width:0;}
 .lhead__right{display:flex;align-items:center;gap:1.2em;flex-shrink:0;}
 .lhead__right-item>svg{width:2em;height:2em;}
