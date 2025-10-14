@@ -4,8 +4,6 @@ var CFG_KEY = "lhead_menu_cfg";
 var PLUGIN_NAME = "Новое меню";
 var PLUGIN_ENABLED_KEY = 'lhead_enabled';
 
-// --------- оснавная логика и оформление из ПЕРВОГО кода
-
 function getDefaultPanelList() {
     var src = scanLeftMenu();
     var needed = ["Фильмы", "Сериалы", "Аниме", "Избранное", "История", "Настройки"];
@@ -74,7 +72,7 @@ function initPlugin() {
   buildMenuFromConfig($head, readCfg());
   enforceSpacing($head);
   bindRoutesStatic($head);
-  installSearchModeWatcher(); // --------- ВАЖНО: логику скрытия меню берём именно из ВТОРОГО кода
+  installSearchModeWatcher();
 }
 function cleanupPlugin(){
   try{
@@ -208,6 +206,12 @@ var css=`
   .lhead__ico, .lhead__ico svg,.lhead__ico img{width:1.55em;height:1.55em;}
   .lhead__label{max-width:0!important;opacity:0!important;margin-left:0!important;}
 }
+@media (orientation: portrait) {
+  .lhead__logo,
+  .lhead__right-item.open--search {
+    display: none !important;
+  }
+}
 .lhead-modal{position:fixed;inset:0;z-index:2100;background:rgba(0,0,0,.62);display:flex;align-items:center;justify-content:center}
 .lhead-modal__box{width:min(1130px,99vw);max-height:94vh;overflow:auto;background:#23232a;border-radius:13px;padding:30px 26px 24px;color:#fff}
 .lhead-modal__title{font-size:25px;margin-bottom:22px;font-weight:700;}
@@ -324,8 +328,7 @@ function openConfigUI(){
   });
 }
 
-// --------- ЛОГИКА скрытия меню при поиске (только из ВТОРОГО кода)
-
+// --- ЛОГИКА скрытия меню при поиске (через .lhead-native--on)
 function isSearchActive(){
     return!!(document.querySelector('.search')||document.querySelector('.search-box')||document.body.classList.contains('search--active')||document.body.classList.contains('active--search'));
 }
