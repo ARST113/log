@@ -1,8 +1,10 @@
-(function() {
-"use strict";
+Lampa.Platform.tv();
+
+(function () {
+'use strict';
 // SVG и название для "Фильмы"
 var MOVIE_SVG = `<svg width="24" height="24" fill="none" viewBox="0 0 24 24"><path d="M9 22H15C20 22 22 20 22 15V9C22 4 20 2 15 2H9C4 2 2 4 2 9V15C2 20 4 22 9 22Z" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.1 12V10.52C9.1 8.61 10.45 7.84 12.1 8.79L13.38 9.53L14.66 10.27C16.31 11.22 16.31 12.78 14.66 13.73L13.38 14.47L12.1 15.21C10.45 16.16 9.1 15.38 9.1 13.48V12Z" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-var TV_SVG = `<svg width="24" height="24" fill="none" viewBox="0 0 24 24"><path d="M7.26 2h9.47c.65 0 1.23.02 1.75.09C21.25 2.4 22 3.7 22 7.26v6.32c0 3.56-.75 4.86-3.52 5.16-.52.07-1.09.08-1.76.08H7.26c-.65 0-1.23-.02-1.75-.08C2.74 18.44 2 17.14 2 13.58V7.26c0-3.56.74-4.86 3.51-5.17.52-.07 1.1-.09 1.75-.09Z" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.58 8.32h3.68M6.74 14.11h10.53M7 22h10M7.19 8.3h.01M10.49 8.3h.01" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+var TV_SVG    = `<svg width="24" height="24" fill="none" viewBox="0 0 24 24"><path d="M7.26 2h9.47c.65 0 1.23.02 1.75.09C21.25 2.4 22 3.7 22 7.26v6.32c0 3.56-.75 4.86-3.52 5.16-.52.07-1.09.08-1.76.08H7.26c-.65 0-1.23-.02-1.75-.08C2.74 18.44 2 17.14 2 13.58V7.26c0-3.56.74-4.86 3.51-5.17.52-.07 1.1-.09 1.75-.09Z" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.58 8.32h3.68M6.74 14.11h10.53M7 22h10M7.19 8.3h.01M10.49 8.3h.01" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 function emulateSidebarClick(title){
     var items = document.querySelectorAll('.menu__item, .selector');
@@ -15,7 +17,6 @@ function emulateSidebarClick(title){
     return false;
 }
 
-// Вставка пунктов в nav-bar
 function addItem(action, label, svg) {
   var bar = document.querySelector('.navigation-bar__body');
   if (!bar || bar.querySelector('.navigation-bar__item[data-action="'+action+'"]')) return;
@@ -23,19 +24,17 @@ function addItem(action, label, svg) {
   div.className = "navigation-bar__item";
   div.setAttribute("data-action",action);
   div.innerHTML = `<div class="navigation-bar__icon">${svg}</div><div class="navigation-bar__label">${label}</div>`;
-  // ставим перед поиском, если есть
   var search = bar.querySelector('.navigation-bar__item[data-action="search"]');
   if(search) bar.insertBefore(div, search);
   else bar.appendChild(div);
-  // Клик — имитируем логический клик по боковому меню
   div.addEventListener('click', function(){
     emulateSidebarClick(label);
   });
 }
 
-// Автозапуск после инициализации DOM
 setTimeout(function() {
-  addItem("movie","Фильмы",MOVIE_SVG);
-  addItem("tv","Сериалы",TV_SVG);
+  addItem("movie", "Фильмы", MOVIE_SVG);
+  addItem("tv", "Сериалы", TV_SVG);
 }, 500);
+
 })();
