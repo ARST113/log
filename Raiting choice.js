@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const PLUGIN_NAME = 'rating_unified_v16_nolampa';
+  const PLUGIN_NAME = 'rating_unified_v16_nolampa_rotating_darktmdb';
   const DEBUG = true;
 
   const log = (...a) => DEBUG && console.log('[rating]', ...a);
@@ -25,7 +25,7 @@
     return `${base}${sep}${key}=${encodeURIComponent(val)}`;
   };
 
-  // ---------- Совместимость: настройки ----------
+  // ---------- Настройки (селект) ----------
   function addSettingsSelect({ name, values, def, title, descr, onChange }) {
     if (Lampa?.SettingsApi?.addParam) {
       Lampa.SettingsApi.addParam({
@@ -48,9 +48,84 @@
     log('⚠️ Settings API not found — using Storage only.');
   }
 
+  // ---------- Ротация ключей KinopoiskUnofficial ----------
+  const API_KEYS = [
+    '2a4a0808-81a3-40ae-b0d3-e11335ede616',
+    '8c8e1a50-6322-4135-8875-5d40a5420d86'
+  ];
+  const KEY_COOLDOWN_MS = 12 * 60 * 1000; // 12 минут
+
+  let kpKeyState = {
+    idx: Number(Lampa.Storage.get('kp_key_idx', 0)) % API_KEYS.length,
+    cooldowns: (() => {
+      try { return JSON.parse(Lampa.Storage.get('kp_key_cooldowns', '{}')) || {}; }
+      catch(e){ return {}; }
+    })()
+  };
+
+  function isOnCooldown(i) {
+    const until = kpKeyState.cooldowns[i] || 0;
+    return Date.now() < until;
+  }
+  function markCooldown(i, retryAfterMs) {
+    const until = Date.now() + (retryAfterMs || KEY_COOLDOWN_MS);
+    kpKeyState.cooldowns[i] = until;
+    try { Lampa.Storage.set('kp_key_cooldowns', JSON.stringify(kpKeyState.cooldowns)); } catch(e){}
+  }
+  function saveKeyIndex(i) {
+    kpKeyState.idx = i;
+    try { Lampa.Storage.set('kp_key_idx', i); } catch(e){}
+  }
+  function pickStartIndex() {
+    for (let step = 0; step < API_KEYS.length; step++) {
+      const i = (kpKeyState.idx + step) % API_KEYS.length;
+      if (!isOnCooldown(i)) return i;
+    }
+    return kpKeyState.idx;
+  }
+
+  function kpSilent(req, url, onOk, onFail) {
+    let start = pickStartIndex();
+    let attempt = 0;
+
+    const tryOnce = () => {
+      if (attempt >= API_KEYS.length) {
+        onFail && onFail();
+        return;
+      }
+      const i = (start + attempt) % API_KEYS.length;
+      const key = API_KEYS[i];
+
+      req.clear();
+      req.timeout(15000);
+      req.silent(url, function success(json) {
+        saveKeyIndex(i);
+        onOk && onOk(json);
+      }, function error(a, c) {
+        const status =
+          (a && a.status) || (c && c.status) ||
+          (typeof a === 'number' ? a : 0);
+        if (status === 429 || status === 403) {
+          markCooldown(i, KEY_COOLDOWN_MS);
+        }
+        attempt++;
+        tryOnce();
+      }, false, { headers: { 'X-API-KEY': key } });
+    };
+
+    tryOnce();
+  }
+
+  function kpFetchJson(url) {
+    const req = makeRequest();
+    return new Promise((resolve, reject) => {
+      kpSilent(req, url, resolve, reject);
+    });
+  }
+
   // ---------- Ключи кэшей ----------
   const CACHE_KP = 'kp_rating';
-  const CACHE_DISPLAY = 'rating_display_cache'; // лёгкий кэш визуального значения
+  const CACHE_DISPLAY = 'rating_display_cache';
 
   // ---------- Память процесса ----------
   const memory = {
@@ -60,11 +135,6 @@
 
   // ---------- Нормализация ----------
   const cleanTitle = str => (str || '').replace(/[\s.,:;’'`!?]+/g, ' ').trim();
-  const normalizeTitle = str => cleanTitle(String(str).toLowerCase()
-    .replace(/[\-\u2010-\u2015\u2E3A\u2E3B\uFE58\uFE63\uFF0D]+/g, '-')
-    .replace(/ё/g, 'е')
-  );
-  const partialMatch = (a, b) => typeof a === 'string' && typeof b === 'string' && normalizeTitle(a).includes(normalizeTitle(b));
 
   // ---------- Работа с Lampa.Storage.cache ----------
   function storageCacheGet(name, max, empty) {
@@ -79,14 +149,13 @@
     cache[key] = payload;
     Lampa.Storage.set(CACHE_DISPLAY, cache);
   }
-
   function readKP(id) {
     const cache = storageCacheGet(CACHE_KP, 1000, {});
     const rec = cache[id];
     if (!rec) return null;
     const month = 30 * 24 * 3600 * 1000;
     if (!rec.timestamp || Date.now() - rec.timestamp > month) return null;
-    return rec; // {kp, imdb, timestamp}
+    return rec;
   }
   function writeKP(id, data) {
     const cache = storageCacheGet(CACHE_KP, 1000, {});
@@ -96,15 +165,10 @@
 
   // ---------- Источник ----------
   const VALID_SOURCES = ['tmdb','kp','imdb'];
-  function sanitizeSource(val) {
-    if (!VALID_SOURCES.includes(val)) return 'tmdb';
-    return val;
-  }
+  function sanitizeSource(val) { return VALID_SOURCES.includes(val) ? val : 'tmdb'; }
   function getSource() {
-    try {
-      const v = Lampa.Storage.get('rating_source', 'tmdb');
-      return sanitizeSource(v);
-    } catch (e) { return 'tmdb'; }
+    try { return sanitizeSource(Lampa.Storage.get('rating_source', 'tmdb')); }
+    catch (e) { return 'tmdb'; }
   }
 
   // ---------- TMDB (быстро, без сети) ----------
@@ -119,7 +183,7 @@
     return '0.0';
   }
 
-  // ---------- Kinopoisk/IMDB (сеть) ----------
+  // ---------- Kinopoisk/IMDB (через ротацию ключей) ----------
   function prepareSearchTitle(q) {
     return cleanTitle(q)
       .replace(/^[ \/\\]+/, '')
@@ -138,16 +202,11 @@
         return resolve(v ? String(parseFloat(v).toFixed(1)) : '0.0');
       }
 
-      const req = makeRequest();
-      req.timeout(15000);
-
       const base = 'https://kinopoiskapiunofficial.tech/';
-      const headers = { 'X-API-KEY': '8c8e1a50-6322-4135-8875-5d40a5420d86' };
-
-      const searchTitle = prepareSearchTitle(item.title || item.name || '');
+      const searchTitle = (item.title || item.name || '').trim();
       const release = (item.release_date || item.first_air_date || item.first_release_date || '0000') + '';
       const year = parseInt(release.substring(0,4) || '0', 10);
-      const orig = item.original_title || item.original_name;
+      const orig = (item.original_title || item.original_name || '').toLowerCase();
 
       function choose(results) {
         if (!results || !results.length) {
@@ -162,11 +221,11 @@
         let cards = results;
 
         if (orig) {
-          const t = cards.filter(r =>
-            partialMatch(r.nameOriginal || r.nameEn, orig) ||
-            partialMatch(r.en_title || r.nameEn, orig) ||
-            partialMatch(r.nameRu || r.ru_title || r.name, orig)
-          );
+          const t = cards.filter(r => {
+            const a = (r.nameOriginal || r.nameEn || r.en_title || '').toLowerCase();
+            const b = (r.nameRu || r.ru_title || r.name || '').toLowerCase();
+            return a.includes(orig) || b.includes(orig);
+          });
           if (t.length) cards = t;
         }
 
@@ -184,44 +243,39 @@
         }
 
         const detailsUrl = base + 'api/v2.2/films/' + filmId;
-        req.clear();
-        req.timeout(15000);
-        req.silent(detailsUrl, (data) => {
+        kpFetchJson(detailsUrl).then((data)=>{
           const kp = data?.ratingKinopoisk || 0;
           const imdb = data?.ratingImdb || 0;
           writeKP(item.id, { kp, imdb });
-          memory.values.set(item.id, { ...(memory.values.get(item.id)||{}), kp: kp?String(kp):'0.0', imdb: imdb?String(imdb):'0.0', ts: Date.now() });
           const src = getSource();
           const val = src === 'kp' ? kp : imdb;
           resolve(val ? String(parseFloat(val).toFixed(1)) : '0.0');
-        }, () => {
+        }).catch(()=>{
           writeKP(item.id, { kp: 0, imdb: 0 });
           resolve('0.0');
-        }, false, { headers });
+        });
       }
 
-      // сначала imdbId, потом по названию
       if (item.imdb_id) {
         const url = addParam(base + 'api/v2.2/films', 'imdbId', item.imdb_id);
-        req.silent(url, (json) => {
+        kpFetchJson(url).then(json=>{
           choose(json?.items || json?.films || []);
-        }, () => {
-          const u2 = addParam(base + 'api/v2.1/films/search-by-keyword', 'keyword', searchTitle);
-          req.clear();
-          req.silent(u2, (json) => {
+        }).catch(()=>{
+          const u2 = addParam(base + 'api/v2.1/films/search-by-keyword', 'keyword', prepareSearchTitle(searchTitle));
+          kpFetchJson(u2).then(json=>{
             choose(json?.items || json?.films || []);
-          }, () => resolve('0.0'), false, { headers });
-        }, false, { headers });
+          }).catch(()=> resolve('0.0'));
+        });
       } else {
-        const url = addParam(base + 'api/v2.1/films/search-by-keyword', 'keyword', searchTitle);
-        req.silent(url, (json) => {
+        const url = addParam(base + 'api/v2.1/films/search-by-keyword', 'keyword', prepareSearchTitle(searchTitle));
+        kpFetchJson(url).then(json=>{
           choose(json?.items || json?.films || []);
-        }, () => resolve('0.0'), false, { headers });
+        }).catch(()=> resolve('0.0'));
       }
     });
   }
 
-  // ---------- Стили (только TMDB/KP/IMDB) ----------
+  // ---------- Стили (тёмный TMDB + логотипы-место) ----------
   function ensureStyles() {
     if (window[PLUGIN_NAME + '_styles']) return;
     window[PLUGIN_NAME + '_styles'] = true;
@@ -234,19 +288,22 @@
       }
       .card__vote .source--name{
         display:inline-block;flex-shrink:0;
-        height:18px;line-height:18px;
-        width:48px;
+        height:18px;line-height:18px;width:48px;
         background-repeat:no-repeat;background-position:center;background-size:contain;
         opacity:.95
       }
 
-      .rate--tmdb{background:linear-gradient(90deg,#90cea1,#01b4e4);color:#fff}
+      .rate--tmdb{
+        background:#0D253F; /* тёмный фон как на скрине TMDB */
+        color:#fff;
+        box-shadow:0 0 0 1px rgba(255,255,255,.06),0 2px 6px rgba(0,0,0,.38);
+      }
       .rate--kp{background:#ff5500;color:#fff}
       .rate--imdb{background:#f5c518;color:#000}
 
-      @media (min-width:481px){
-        .card__vote .source--name{ height:20px }
-      }
+      .card__vote .rating-value{ text-shadow:0 1px 1px rgba(0,0,0,.7) }
+
+      @media (min-width:481px){ .card__vote .source--name{ height:20px } }
     `;
     const st = document.createElement('style');
     st.id = 'rating-core-style';
@@ -257,11 +314,9 @@
   // ---------- Иконки брендов (URL) + Storage ----------
   const BRAND_ICONS_KEY = 'rating_brand_icon_urls_v1';
 
-  // applyBrandIcons({ tmdb, kp, imdb })
   function applyBrandIcons(urls) {
     try {
       const current = (Lampa.Storage.get(BRAND_ICONS_KEY, {}) || {});
-      // оставляем только нужные ключи
       const saved = {
         tmdb: urls.tmdb ?? current.tmdb,
         kp:   urls.kp   ?? current.kp,
@@ -283,7 +338,6 @@
       st.textContent = css;
       document.head.appendChild(st);
 
-      // лёгкое обновление уже отрисованных бейджей
       document.querySelectorAll('.card .card__vote .source--name').forEach(badge=>{
         badge.style.transform = 'translateZ(0)';
         requestAnimationFrame(()=>{ badge.style.transform = ''; });
@@ -301,10 +355,7 @@
   })();
 
   // ---------- Применение рейтинга к карточке ----------
-  function displayCacheKey(item, source) {
-    // без Lampa тип нам не нужен, кэшируем просто по id+source
-    return `${item.id}:${source}`;
-  }
+  function displayCacheKey(item, source) { return `${item.id}:${source}`; }
 
   function applyRatingToCard($card, item, value, source) {
     if (!$card?.querySelector) return;
@@ -320,7 +371,6 @@
       <span class="source--name" title="${source.toUpperCase()}"></span>
     `;
 
-    // Persist для восстановления
     $card.dataset.ratingValue = safe;
     $card.dataset.ratingSource = source;
 
@@ -380,7 +430,6 @@
 
     ensureStyles();
 
-    // Санитизируем возможное старое значение 'lampa'
     let source = getSource();
     if (!VALID_SOURCES.includes(source)) {
       source = 'tmdb';
@@ -391,17 +440,14 @@
     const badge = node.querySelector('.card__vote');
     if (!badge) return;
 
-    // быстрый путь
     if (tryApplyFromLocal(node, data, source)) return;
 
-    // TMDB — без сети
     if (source === 'tmdb') {
       const v = getTmdbRating(data);
       applyRatingToCard(node, data, v, 'tmdb');
       return;
     }
 
-    // сеть с кешированием (KP/IMDB)
     try {
       const val = await fetchKpOrImdb(data);
       applyRatingToCard(node, data, val, source);
@@ -454,7 +500,6 @@
         try { Lampa.Storage.set('rating_source', val); } catch (e) {}
         if (Lampa?.Noty) Lampa.Noty.show(`Рейтинг: ${String(val).toUpperCase()}`);
 
-        // форс-перерисовка видимых карточек
         document.querySelectorAll('.card').forEach((c) => {
           delete c.dataset.ratingValue;
           delete c.dataset.ratingSource;
@@ -471,18 +516,14 @@
     window[PLUGIN_NAME + '_inited'] = true;
 
     try {
-      // миграция: если в хранилище был 'lampa' — заменить на 'tmdb'
       try {
         const cur = Lampa.Storage.get('rating_source', 'tmdb');
-        if (!VALID_SOURCES.includes(cur)) {
-          Lampa.Storage.set('rating_source', 'tmdb');
-        }
+        if (!VALID_SOURCES.includes(cur)) Lampa.Storage.set('rating_source', 'tmdb');
       } catch(e){}
 
       addSettingsUI();
       hookCardEvents();
 
-      // первичная обработка уже присутствующих карточек
       setTimeout(() => {
         document.querySelectorAll('.card').forEach((c) => processCardNode(c));
       }, 300);
