@@ -1,683 +1,523 @@
-(function() {
-    'use strict';
-    
-    console.log('🎯 Загрузка плагина рейтингов Lampa v9 (исправленный TMDB)...');
-    
-    const DEBUG = true;
-    
-    function log(message, data = null) {
-        if (DEBUG) {
-            const timestamp = new Date().toLocaleTimeString();
-            if (data) {
-                console.log(`[${timestamp}] 🔹 ${message}`, data);
-            } else {
-                console.log(`[${timestamp}] 🔹 ${message}`);
-            }
-        }
-    }
-    
-    let processedCards = new WeakSet();
-    const requestAttempts = new Map();
-    const MAX_ATTEMPTS = 3;
-    const ATTEMPT_DELAYS = [0, 5000, 15000];
+(function () {
+  'use strict';
 
-    // Функции нормализации
-    function cleanTitle(str) {
-        return str.replace(/[\s.,:;’'`!?]+/g, ' ').trim();
-    }
-    
-    function kpCleanTitle(str) {
-        return cleanTitle(str)
-            .replace(/^[ \/\\]+/, '')
-            .replace(/[ \/\\]+$/, '')
-            .replace(/\+( *[+\/\\])+/g, '+')
-            .replace(/([+\/\\] *)+\+/g, '+')
-            .replace(/( *[\/\\]+ *)+/g, '+');
-    }
-    
-    function normalizeTitle(str) {
-        return cleanTitle(str.toLowerCase()
-            .replace(/[\-\u2010-\u2015\u2E3A\u2E3B\uFE58\uFE63\uFF0D]+/g, '-')
-            .replace(/ё/g, 'е'));
-    }
-    
-    function exactMatch(title1, title2) {
-        return typeof title1 === 'string' && typeof title2 === 'string' && 
-               normalizeTitle(title1) === normalizeTitle(title2);
-    }
-    
-    function partialMatch(title, searchTitle) {
-        return typeof title === 'string' && typeof searchTitle === 'string' && 
-               normalizeTitle(title).indexOf(normalizeTitle(searchTitle)) !== -1;
-    }
-    
-    // Кэширование рейтингов
-    function getCachedRating(id) {
-        const timestamp = new Date().getTime();
-        const cache = Lampa.Storage.cache('kp_rating', 500, {});
-        
-        if (cache[id]) {
-            if (timestamp - cache[id].timestamp > 60 * 60 * 24 * 30 * 1000) {
-                delete cache[id];
-                Lampa.Storage.set('kp_rating', cache);
-                return false;
-            }
-        } else {
-            return false;
-        }
-        return cache;
-    }
-    
-    function setCachedRating(id, data) {
-        const timestamp = new Date().getTime();
-        const cache = Lampa.Storage.cache('kp_rating', 500, {});
-        
-        if (!cache[id]) {
-            cache[id] = data;
-            Lampa.Storage.set('kp_rating', cache);
-        } else {
-            if (timestamp - cache[id].timestamp > 60 * 60 * 24 * 30 * 1000) {
-                data.timestamp = timestamp;
-                cache[id] = data;
-                Lampa.Storage.set('kp_rating', cache);
-            } else {
-                data = cache[id];
-            }
-        }
-        return data;
-    }
-    
-    // Управление попытками запросов
-    function getAttemptCount(cardId) {
-        return requestAttempts.get(cardId) || 0;
-    }
-    
-    function incrementAttempt(cardId) {
-        const count = getAttemptCount(cardId) + 1;
-        requestAttempts.set(cardId, count);
-        return count;
-    }
-    
-    function shouldRetry(cardId, rating) {
-        return (rating === '0.0' || rating === '—') && getAttemptCount(cardId) < MAX_ATTEMPTS;
-    }
-    
-    function scheduleRetry(cardId, cardData, callback) {
-        const attempt = getAttemptCount(cardId);
-        const delay = ATTEMPT_DELAYS[attempt] || 30000;
-        
-        log(`🔄 Запланирована повторная попытка #${attempt + 1} для "${cardData.title}" через ${delay}мс`);
-        
-        setTimeout(() => {
-            log(`🔄 Выполняется повторная попытка #${attempt + 1} для "${cardData.title}"`);
-            getKpRating(cardData, callback, true);
-        }, delay);
-    }
-    
-    // Получение реального рейтинга TMDB из данных карточки
-    function getTmdbRating(cardData) {
-        // Пробуем разные источники рейтинга TMDB из данных карточки
-        let rating = '0.0';
-        
-        // Основные поля с рейтингом TMDB
-        if (cardData.vote_average && cardData.vote_average > 0) {
-            rating = parseFloat(cardData.vote_average).toFixed(1);
-            log(`✅ TMDB рейтинг из vote_average: ${rating}`);
-        }
-        else if (cardData.rating && cardData.rating > 0) {
-            rating = parseFloat(cardData.rating).toFixed(1);
-            log(`✅ TMDB рейтинг из rating: ${rating}`);
-        }
-        else if (cardData.vote_count && cardData.vote_count > 0) {
-            // Если есть голоса, но нет рейтинга, показываем что контент популярен
-            rating = '5.0';
-            log(`✅ TMDB: есть голоса (${cardData.vote_count}), устанавливаем базовый рейтинг`);
-        }
-        else {
-            // Анализируем другие поля чтобы определить популярность
-            if (cardData.popularity && cardData.popularity > 10) {
-                rating = '6.0';
-                log(`✅ TMDB: высокая популярность (${cardData.popularity}), устанавливаем рейтинг 6.0`);
-            }
-            else if (cardData.release_date) {
-                // Новый контент получает базовый рейтинг
-                const releaseYear = new Date(cardData.release_date).getFullYear();
-                const currentYear = new Date().getFullYear();
-                if (currentYear - releaseYear <= 2) {
-                    rating = '5.5';
-                    log(`✅ TMDB: новый контент (${releaseYear}), устанавливаем рейтинг 5.5`);
-                }
-            }
-        }
-        
-        return rating;
-    }
-    
-    // Получение рейтинга Кинопоиска/IMDB
-    function getKpRating(itemData, callback, isRetry = false) {
-        if (!isRetry) {
-            requestAttempts.set(itemData.id, 0);
-        }
-        
-        const attempt = incrementAttempt(itemData.id);
-        log(`📡 Запрос рейтинга для: "${itemData.title || itemData.name}" (попытка ${attempt}/${MAX_ATTEMPTS})`);
-        
-        const cached = getCachedRating(itemData.id);
-        if (cached && cached[itemData.id]) {
-            const source = Lampa.Storage.get('rating_source', 'tmdb');
-            const rating = source === 'kp' ? cached[itemData.id].kp : cached[itemData.id].imdb;
-            
-            if (shouldRetry(itemData.id, rating)) {
-                log(`🔄 Кэшированный рейтинг 0, пробуем повторный запрос`);
-                scheduleRetry(itemData.id, itemData, callback);
-                return;
-            }
-            
-            log(`✅ Кэш ${source.toUpperCase()}: ${rating}`);
-            callback(rating);
-            return;
-        }
-        
-        const network = new Lampa.Reguest();
-        const clean_title = kpCleanTitle(itemData.title || itemData.name);
-        const search_date = itemData.release_date || itemData.first_air_date || itemData.last_air_date || '0000';
-        const search_year = parseInt((search_date + '').slice(0, 4));
-        const orig = itemData.original_title || itemData.original_name;
-        
-        const params = {
-            headers: {
-                'X-API-KEY': '8c8e1a50-6322-4135-8875-5d40a5420d86'
-            }
-        };
-        
-        function searchFilm() {
-            let url = 'https://kinopoiskapiunofficial.tech/';
-            let url_by_title = Lampa.Utils.addUrlComponent(url + 'api/v2.1/films/search-by-keyword', 'keyword=' + encodeURIComponent(clean_title));
-            
-            if (itemData.imdb_id) {
-                url = Lampa.Utils.addUrlComponent(url + 'api/v2.2/films', 'imdbId=' + encodeURIComponent(itemData.imdb_id));
-                log(`🔍 Поиск по IMDB ID: ${itemData.imdb_id}`);
-            } else {
-                url = url_by_title;
-                log(`🔍 Поиск по названию: ${clean_title}`);
-            }
-            
-            network.clear();
-            network.timeout(15000);
-            network.silent(url, function(json) {
-                if (json.items && json.items.length) {
-                    chooseFilm(json.items);
-                } else if (json.films && json.films.length) {
-                    chooseFilm(json.films);
-                } else if (url !== url_by_title) {
-                    network.clear();
-                    network.timeout(15000);
-                    network.silent(url_by_title, function(json) {
-                        if (json.items && json.items.length) {
-                            chooseFilm(json.items);
-                        } else if (json.films && json.films.length) {
-                            chooseFilm(json.films);
-                        } else {
-                            chooseFilm([]);
-                        }
-                    }, function(a, c) {
-                        log(`❌ Ошибка поиска по названию`, network.errorDecode(a, c));
-                        chooseFilm([]);
-                    }, false, {
-                        headers: params.headers
-                    });
-                } else {
-                    chooseFilm([]);
-                }
-            }, function(a, c) {
-                log(`❌ Ошибка поиска`, network.errorDecode(a, c));
-                chooseFilm([]);
-            }, false, {
-                headers: params.headers
-            });
-        }
-        
-        function chooseFilm(items) {
-            if (items && items.length) {
-                let is_sure = false;
-                let is_imdb = false;
-                
-                items.forEach(function(c) {
-                    const year = c.start_date || c.year || '0000';
-                    c.tmp_year = parseInt((year + '').slice(0, 4));
-                });
-                
-                let cards = items;
-                
-                if (itemData.imdb_id) {
-                    const tmp = items.filter(function(elem) {
-                        return (elem.imdb_id || elem.imdbId) == itemData.imdb_id;
-                    });
-                    if (tmp.length) {
-                        cards = tmp;
-                        is_sure = true;
-                        is_imdb = true;
-                    }
-                }
-                
-                if (orig) {
-                    const _tmp = cards.filter(function(elem) {
-                        return partialMatch(elem.nameOriginal || elem.orig_title, orig) || 
-                               partialMatch(elem.nameEn || elem.en_title, orig) || 
-                               partialMatch(elem.nameRu || elem.ru_title || elem.name, orig);
-                    });
-                    if (_tmp.length) {
-                        cards = _tmp;
-                        is_sure = true;
-                    }
-                }
-                
-                if (itemData.title) {
-                    const _tmp2 = cards.filter(function(elem) {
-                        return partialMatch(elem.nameRu || elem.ru_title || elem.name, itemData.title) || 
-                               partialMatch(elem.nameEn || elem.en_title, itemData.title) || 
-                               partialMatch(elem.nameOriginal || elem.orig_title, itemData.title);
-                    });
-                    if (_tmp2.length) {
-                        cards = _tmp2;
-                        is_sure = true;
-                    }
-                }
-                
-                if (cards.length > 1 && search_year) {
-                    let _tmp3 = cards.filter(function(c) {
-                        return c.tmp_year == search_year;
-                    });
-                    if (!_tmp3.length) {
-                        _tmp3 = cards.filter(function(c) {
-                            return c.tmp_year && c.tmp_year > search_year - 2 && c.tmp_year < search_year + 2;
-                        });
-                    }
-                    if (_tmp3.length) cards = _tmp3;
-                }
-                
-                if (cards.length == 1 && is_sure && !is_imdb) {
-                    if (search_year && cards[0].tmp_year) {
-                        is_sure = cards[0].tmp_year > search_year - 2 && cards[0].tmp_year < search_year + 2;
-                    }
-                    if (is_sure) {
-                        is_sure = false;
-                        if (orig) {
-                            is_sure |= exactMatch(cards[0].nameOriginal || cards[0].orig_title, orig) || 
-                                      exactMatch(cards[0].nameEn || cards[0].en_title, orig) || 
-                                      exactMatch(cards[0].nameRu || cards[0].ru_title || cards[0].name, orig);
-                        }
-                        if (itemData.title) {
-                            is_sure |= exactMatch(cards[0].nameRu || cards[0].ru_title || cards[0].name, itemData.title) || 
-                                      exactMatch(cards[0].nameEn || cards[0].en_title, itemData.title) || 
-                                      exactMatch(cards[0].nameOriginal || cards[0].orig_title, itemData.title);
-                        }
-                    }
-                }
-                
-                if (cards.length == 1 && is_sure) {
-                    const id = cards[0].filmId || cards[0].kinopoisk_id || cards[0].kinopoiskId || cards[0].kp_id;
-                    log(`🎬 Найден фильм: ${cards[0].nameRu || cards[0].name} (ID: ${id})`);
-                    
-                    network.clear();
-                    network.timeout(15000);
-                    network.silent('https://kinopoiskapiunofficial.tech/api/v2.2/films/' + id, function(data) {
-                        const ratingData = {
-                            kp: data.ratingKinopoisk || '0.0',
-                            imdb: data.ratingImdb || '0.0'
-                        };
-                        
-                        const cachedData = setCachedRating(itemData.id, {
-                            kp: ratingData.kp,
-                            imdb: ratingData.imdb,
-                            timestamp: new Date().getTime()
-                        });
-                        
-                        const source = Lampa.Storage.get('rating_source', 'tmdb');
-                        const rating = source === 'kp' ? cachedData.kp : cachedData.imdb;
-                        
-                        if (shouldRetry(itemData.id, rating)) {
-                            log(`🔄 Получен рейтинг 0, пробуем повторный запрос`);
-                            scheduleRetry(itemData.id, itemData, callback);
-                        } else {
-                            log(`✅ Рейтинг ${source.toUpperCase()} получен: ${rating} (после ${attempt} попыток)`);
-                            callback(rating);
-                        }
-                    }, function(a, c) {
-                        log(`❌ Ошибка получения деталей фильма`, network.errorDecode(a, c));
-                        
-                        if (shouldRetry(itemData.id, '0.0')) {
-                            log(`🔄 Ошибка запроса, пробуем повторный запрос`);
-                            scheduleRetry(itemData.id, itemData, callback);
-                        } else {
-                            const cachedData = setCachedRating(itemData.id, {
-                                kp: '0.0',
-                                imdb: '0.0',
-                                timestamp: new Date().getTime()
-                            });
-                            callback('0.0');
-                        }
-                    }, false, {
-                        headers: params.headers
-                    });
-                } else {
-                    log(`❌ Не найдено точного совпадения`);
-                    
-                    if (shouldRetry(itemData.id, '0.0')) {
-                        log(`🔄 Не найдено совпадений, пробуем повторный запрос`);
-                        scheduleRetry(itemData.id, itemData, callback);
-                    } else {
-                        const cachedData = setCachedRating(itemData.id, {
-                            kp: '0.0',
-                            imdb: '0.0',
-                            timestamp: new Date().getTime()
-                        });
-                        callback('0.0');
-                    }
-                }
-            } else {
-                log(`❌ Нет результатов поиска`);
-                
-                if (shouldRetry(itemData.id, '0.0')) {
-                    log(`🔄 Нет результатов, пробуем повторный запрос`);
-                    scheduleRetry(itemData.id, itemData, callback);
-                } else {
-                    const cachedData = setCachedRating(itemData.id, {
-                        kp: '0.0',
-                        imdb: '0.0',
-                        timestamp: new Date().getTime()
-                    });
-                    callback('0.0');
-                }
-            }
-        }
-        
-        searchFilm();
-    }
-    
-    // Получение рейтинга Lampa
-    function getLampaRating(itemData, callback, isRetry = false) {
-        if (!isRetry) {
-            requestAttempts.set('lampa_' + itemData.id, 0);
-        }
-        
-        const attempt = incrementAttempt('lampa_' + itemData.id);
-        log(`📡 Запрос рейтинга Lampa для: "${itemData.title || itemData.name}" (попытка ${attempt}/${MAX_ATTEMPTS})`);
-        
-        const cached = getCachedRating('lampa_' + itemData.id);
-        if (cached && cached['lampa_' + itemData.id]) {
-            const rating = cached['lampa_' + itemData.id].rating;
-            
-            if (shouldRetry('lampa_' + itemData.id, rating)) {
-                log(`🔄 Кэшированный рейтинг Lampa 0, пробуем повторный запрос`);
-                scheduleRetry('lampa_' + itemData.id, itemData, callback);
-                return;
-            }
-            
-            log(`✅ Кэш Lampa: ${rating}`);
-            callback(rating);
-            return;
-        }
-        
-        let type = 'movie';
-        if (itemData.number_of_seasons || itemData.first_air_date || itemData.original_name) {
-            type = 'tv';
-        }
-        
-        const cacheKey = type + '_' + itemData.id;
-        const url = 'http://cub.bylampa.online/api/reactions/get/' + cacheKey;
-        const network = new Lampa.Reguest();
-        
-        network.timeout(10000);
-        network.silent(url, function(response) {
-            let rating = '0.0';
-            
-            if (response && response.result) {
-                const items = response.items || response.result;
-                let likes = 0;
-                let dislikes = 0;
-                
-                items.forEach(function(reaction) {
-                    if (reaction.type === 'like' || reaction.type === 'love') {
-                        likes += parseInt(reaction.count, 10);
-                    }
-                    if (reaction.type === 'dislike' || reaction.type === 'hate' || reaction.type === 'bore') {
-                        dislikes += parseInt(reaction.count, 10);
-                    }
-                });
-                
-                const calculatedRating = likes + dislikes > 0 ? likes / (likes + dislikes) * 10 : 0;
-                rating = calculatedRating.toFixed(1);
-            }
-            
-            setCachedRating('lampa_' + itemData.id, { rating: rating });
-            
-            if (shouldRetry('lampa_' + itemData.id, rating)) {
-                log(`🔄 Получен рейтинг Lampa 0, пробуем повторный запрос`);
-                scheduleRetry('lampa_' + itemData.id, itemData, callback);
-            } else {
-                log(`✅ Рейтинг Lampa получен: ${rating} (после ${attempt} попыток)`);
-                callback(rating);
-            }
-        }, function(error) {
-            log(`❌ Ошибка Lampa API`, error);
-            
-            if (shouldRetry('lampa_' + itemData.id, '0.0')) {
-                log(`🔄 Ошибка запроса Lampa, пробуем повторный запрос`);
-                scheduleRetry('lampa_' + itemData.id, itemData, callback);
-            } else {
-                setCachedRating('lampa_' + itemData.id, { rating: '0.0' });
-                callback('0.0');
-            }
-        });
-    }
-    
-    // Обработка карточек с исправленным TMDB
-    function processCard(cardElement) {
-        if (!cardElement || !cardElement.querySelector) return;
-        if (processedCards.has(cardElement)) return;
-        
-        const cardData = cardElement.card_data;
-        if (!cardData || !cardData.id) return;
-        
-        const ratingSource = Lampa.Storage.get('rating_source', 'tmdb');
-        const ratingElement = cardElement.querySelector('.card__vote');
-        
-        if (!ratingElement) return;
+  const PLUGIN_NAME = 'rating_unified_v16_nolampa';
+  const DEBUG = true;
 
-        log(`🎯 Обработка: "${cardData.title || cardData.name}" (${ratingSource})`);
-        
-        // Очищаем элемент
-        ratingElement.innerHTML = '';
-        ratingElement.className = 'card__vote';
-        
-        if (ratingSource === 'tmdb') {
-            // Получаем реальный рейтинг TMDB из данных карточки
-            const rating = getTmdbRating(cardData);
-            const displayRating = rating === '0.0' ? '—' : rating;
-            
-            ratingElement.innerHTML = `
-                <span class="rating-value">${displayRating}</span>
-                <span class="rating-source">TMDB</span>
-            `;
-            ratingElement.className = 'card__vote card__vote--tmdb';
-            
-            processedCards.add(cardElement);
-            log(`✅ TMDB рейтинг установлен: ${displayRating} для "${cardData.title}"`);
-            return;
+  const log = (...a) => DEBUG && console.log('[rating]', ...a);
+
+  // ---------- Совместимость: Request / Reguest ----------
+  function makeRequest() {
+    const Ctor = Lampa?.Request || Lampa?.Reguest;
+    if (!Ctor) throw new Error('Neither Lampa.Request nor Lampa.Reguest found');
+    return new Ctor();
+  }
+
+  // ---------- Совместимость: addUrl helpers ----------
+  const addParam = (base, key, val) => {
+    try {
+      if (Lampa?.Utils && (Lampa.Utils.addUrlComponent || Lampa.Utils.addUrlParam)) {
+        const fn = Lampa.Utils.addUrlComponent || Lampa.Utils.addUrlParam;
+        return fn(base, `${key}=${encodeURIComponent(val)}`);
+      }
+    } catch (e) {}
+    const sep = base.includes('?') ? '&' : '?';
+    return `${base}${sep}${key}=${encodeURIComponent(val)}`;
+  };
+
+  // ---------- Совместимость: настройки ----------
+  function addSettingsSelect({ name, values, def, title, descr, onChange }) {
+    if (Lampa?.SettingsApi?.addParam) {
+      Lampa.SettingsApi.addParam({
+        component: 'interface',
+        param: { name, type: 'select', values, default: def },
+        field: { name: title, description: descr },
+        onChange
+      });
+      return;
+    }
+    if (Lampa?.Settings?.listener?.add) {
+      Lampa.Settings.listener.add({
+        component: 'main',
+        param: { name, type: 'select', values, default: def },
+        field: { name: title, description: descr },
+        onChange
+      });
+      return;
+    }
+    log('⚠️ Settings API not found — using Storage only.');
+  }
+
+  // ---------- Ключи кэшей ----------
+  const CACHE_KP = 'kp_rating';
+  const CACHE_DISPLAY = 'rating_display_cache'; // лёгкий кэш визуального значения
+
+  // ---------- Память процесса ----------
+  const memory = {
+    values: new Map(),             // id -> { kp, imdb, ts }
+    nodesProcessed: new WeakSet(), // DOM-узлы карточек
+  };
+
+  // ---------- Нормализация ----------
+  const cleanTitle = str => (str || '').replace(/[\s.,:;’'`!?]+/g, ' ').trim();
+  const normalizeTitle = str => cleanTitle(String(str).toLowerCase()
+    .replace(/[\-\u2010-\u2015\u2E3A\u2E3B\uFE58\uFE63\uFF0D]+/g, '-')
+    .replace(/ё/g, 'е')
+  );
+  const partialMatch = (a, b) => typeof a === 'string' && typeof b === 'string' && normalizeTitle(a).includes(normalizeTitle(b));
+
+  // ---------- Работа с Lampa.Storage.cache ----------
+  function storageCacheGet(name, max, empty) {
+    try { return Lampa.Storage.cache(name, max, empty); }
+    catch (e) { return empty || {}; }
+  }
+  function displayCacheRead() {
+    return storageCacheGet(CACHE_DISPLAY, 1000, {});
+  }
+  function displayCacheWrite(key, payload) {
+    const cache = storageCacheGet(CACHE_DISPLAY, 1000, {});
+    cache[key] = payload;
+    Lampa.Storage.set(CACHE_DISPLAY, cache);
+  }
+
+  function readKP(id) {
+    const cache = storageCacheGet(CACHE_KP, 1000, {});
+    const rec = cache[id];
+    if (!rec) return null;
+    const month = 30 * 24 * 3600 * 1000;
+    if (!rec.timestamp || Date.now() - rec.timestamp > month) return null;
+    return rec; // {kp, imdb, timestamp}
+  }
+  function writeKP(id, data) {
+    const cache = storageCacheGet(CACHE_KP, 1000, {});
+    cache[id] = { ...data, timestamp: Date.now() };
+    Lampa.Storage.set(CACHE_KP, cache);
+  }
+
+  // ---------- Источник ----------
+  const VALID_SOURCES = ['tmdb','kp','imdb'];
+  function sanitizeSource(val) {
+    if (!VALID_SOURCES.includes(val)) return 'tmdb';
+    return val;
+  }
+  function getSource() {
+    try {
+      const v = Lampa.Storage.get('rating_source', 'tmdb');
+      return sanitizeSource(v);
+    } catch (e) { return 'tmdb'; }
+  }
+
+  // ---------- TMDB (быстро, без сети) ----------
+  function getTmdbRating(card) {
+    if (card?.vote_average > 0) return String(parseFloat(card.vote_average).toFixed(1));
+    if (card?.rating > 0) return String(parseFloat(card.rating).toFixed(1));
+    if (card?.vote_count > 0) return '5.0';
+    if (card?.popularity && card.popularity > 10) return '6.0';
+    const y = (card?.release_date || '').slice(0,4);
+    const cy = new Date().getFullYear();
+    if (y && cy - Number(y) <= 2) return '5.5';
+    return '0.0';
+  }
+
+  // ---------- Kinopoisk/IMDB (сеть) ----------
+  function prepareSearchTitle(q) {
+    return cleanTitle(q)
+      .replace(/^[ \/\\]+/, '')
+      .replace(/[ \/\\]+$/, '')
+      .replace(/\+( *[+\/\\])+/g, '+')
+      .replace(/([+\/\\] *)+\+/g, '+')
+      .replace(/( *[\/\\]+ *)+/g, '+');
+  }
+
+  function fetchKpOrImdb(item) {
+    return new Promise(resolve => {
+      const cached = readKP(item.id);
+      if (cached) {
+        const src = getSource();
+        const v = src === 'kp' ? cached.kp : cached.imdb;
+        return resolve(v ? String(parseFloat(v).toFixed(1)) : '0.0');
+      }
+
+      const req = makeRequest();
+      req.timeout(15000);
+
+      const base = 'https://kinopoiskapiunofficial.tech/';
+      const headers = { 'X-API-KEY': '8c8e1a50-6322-4135-8875-5d40a5420d86' };
+
+      const searchTitle = prepareSearchTitle(item.title || item.name || '');
+      const release = (item.release_date || item.first_air_date || item.first_release_date || '0000') + '';
+      const year = parseInt(release.substring(0,4) || '0', 10);
+      const orig = item.original_title || item.original_name;
+
+      function choose(results) {
+        if (!results || !results.length) {
+          writeKP(item.id, { kp: 0, imdb: 0 });
+          return resolve('0.0');
         }
-        
-        // Для других источников показываем загрузку
-        ratingElement.innerHTML = '<span class="rating-loading">...</span>';
-        ratingElement.className = `card__vote card__vote--${ratingSource}`;
-        
-        const updateRating = (rating) => {
-            const displayRating = rating === '0.0' ? '—' : rating;
-            const attempt = getAttemptCount(ratingSource === 'lampa' ? 'lampa_' + cardData.id : cardData.id);
-            
-            ratingElement.innerHTML = `
-                <span class="rating-value">${displayRating}</span>
-                <span class="rating-source">${ratingSource.toUpperCase()}</span>
-                ${attempt > 1 ? `<span class="rating-attempt">(${attempt})</span>` : ''}
-            `;
-            processedCards.add(cardElement);
-            log(`✅ Установлен рейтинг: ${displayRating} для "${cardData.title}" (попыток: ${attempt})`);
-        };
-        
-        if (ratingSource === 'lampa') {
-            getLampaRating(cardData, updateRating);
-        } else {
-            getKpRating(cardData, updateRating);
+        results.forEach(r => {
+          const y = r.start_date || r.year || '0000';
+          r.tmp_year = parseInt(String(y).substring(0,4), 10);
+        });
+
+        let cards = results;
+
+        if (orig) {
+          const t = cards.filter(r =>
+            partialMatch(r.nameOriginal || r.nameEn, orig) ||
+            partialMatch(r.en_title || r.nameEn, orig) ||
+            partialMatch(r.nameRu || r.ru_title || r.name, orig)
+          );
+          if (t.length) cards = t;
         }
+
+        if (cards.length > 1 && year) {
+          let y1 = cards.filter(r => r.tmp_year === year);
+          if (!y1.length) y1 = cards.filter(r => r.tmp_year && r.tmp_year > year - 2 && r.tmp_year < year + 2);
+          if (y1.length) cards = y1;
+        }
+
+        const pick = cards[0];
+        const filmId = pick.filmId || pick.kinopoisk_id || pick.kinopoiskId || pick.id;
+        if (!filmId) {
+          writeKP(item.id, { kp: 0, imdb: 0 });
+          return resolve('0.0');
+        }
+
+        const detailsUrl = base + 'api/v2.2/films/' + filmId;
+        req.clear();
+        req.timeout(15000);
+        req.silent(detailsUrl, (data) => {
+          const kp = data?.ratingKinopoisk || 0;
+          const imdb = data?.ratingImdb || 0;
+          writeKP(item.id, { kp, imdb });
+          memory.values.set(item.id, { ...(memory.values.get(item.id)||{}), kp: kp?String(kp):'0.0', imdb: imdb?String(imdb):'0.0', ts: Date.now() });
+          const src = getSource();
+          const val = src === 'kp' ? kp : imdb;
+          resolve(val ? String(parseFloat(val).toFixed(1)) : '0.0');
+        }, () => {
+          writeKP(item.id, { kp: 0, imdb: 0 });
+          resolve('0.0');
+        }, false, { headers });
+      }
+
+      // сначала imdbId, потом по названию
+      if (item.imdb_id) {
+        const url = addParam(base + 'api/v2.2/films', 'imdbId', item.imdb_id);
+        req.silent(url, (json) => {
+          choose(json?.items || json?.films || []);
+        }, () => {
+          const u2 = addParam(base + 'api/v2.1/films/search-by-keyword', 'keyword', searchTitle);
+          req.clear();
+          req.silent(u2, (json) => {
+            choose(json?.items || json?.films || []);
+          }, () => resolve('0.0'), false, { headers });
+        }, false, { headers });
+      } else {
+        const url = addParam(base + 'api/v2.1/films/search-by-keyword', 'keyword', searchTitle);
+        req.silent(url, (json) => {
+          choose(json?.items || json?.films || []);
+        }, () => resolve('0.0'), false, { headers });
+      }
+    });
+  }
+
+  // ---------- Стили (только TMDB/KP/IMDB) ----------
+  function ensureStyles() {
+    if (window[PLUGIN_NAME + '_styles']) return;
+    window[PLUGIN_NAME + '_styles'] = true;
+
+    const css = `
+      .card__vote{
+        display:inline-flex;align-items:center;gap:4px;
+        padding:4px 8px;border-radius:4px;min-width:50px;
+        justify-content:center;font-size:12px
+      }
+      .card__vote .source--name{
+        display:inline-block;flex-shrink:0;
+        height:18px;line-height:18px;
+        width:48px;
+        background-repeat:no-repeat;background-position:center;background-size:contain;
+        opacity:.95
+      }
+
+      .rate--tmdb{background:linear-gradient(90deg,#90cea1,#01b4e4);color:#fff}
+      .rate--kp{background:#ff5500;color:#fff}
+      .rate--imdb{background:#f5c518;color:#000}
+
+      @media (min-width:481px){
+        .card__vote .source--name{ height:20px }
+      }
+    `;
+    const st = document.createElement('style');
+    st.id = 'rating-core-style';
+    st.textContent = css;
+    document.head.appendChild(st);
+  }
+
+  // ---------- Иконки брендов (URL) + Storage ----------
+  const BRAND_ICONS_KEY = 'rating_brand_icon_urls_v1';
+
+  // applyBrandIcons({ tmdb, kp, imdb })
+  function applyBrandIcons(urls) {
+    try {
+      const current = (Lampa.Storage.get(BRAND_ICONS_KEY, {}) || {});
+      // оставляем только нужные ключи
+      const saved = {
+        tmdb: urls.tmdb ?? current.tmdb,
+        kp:   urls.kp   ?? current.kp,
+        imdb: urls.imdb ?? current.imdb
+      };
+      Lampa.Storage.set(BRAND_ICONS_KEY, saved);
+
+      const old = document.getElementById('rating-brand-icons-style');
+      if (old) old.remove();
+
+      const parts = [];
+      if (saved.tmdb) parts.push(`.rate--tmdb  .source--name{ background-image:url("${saved.tmdb}"); }`);
+      if (saved.kp)   parts.push(`.rate--kp    .source--name{ background-image:url("${saved.kp}"); }`);
+      if (saved.imdb) parts.push(`.rate--imdb  .source--name{ background-image:url("${saved.imdb}"); }`);
+
+      const css = parts.join('\n');
+      const st = document.createElement('style');
+      st.id = 'rating-brand-icons-style';
+      st.textContent = css;
+      document.head.appendChild(st);
+
+      // лёгкое обновление уже отрисованных бейджей
+      document.querySelectorAll('.card .card__vote .source--name').forEach(badge=>{
+        badge.style.transform = 'translateZ(0)';
+        requestAnimationFrame(()=>{ badge.style.transform = ''; });
+      });
+    } catch (e) {
+      console.log('[rating] applyBrandIcons error', e);
     }
-    
-    // Остальные функции без изменений...
-    function processAllCards() {
-        log('🔍 Поиск всех карточек на странице...');
-        const cards = document.querySelectorAll('.card');
-        log(`📊 Найдено карточек: ${cards.length}`);
-        
-        cards.forEach((card, index) => {
-            setTimeout(() => {
-                try {
-                    processCard(card);
-                } catch (error) {
-                    log('❌ Ошибка обработки карточки', error);
-                }
-            }, index * 200);
+  }
+
+  (function restoreBrandIcons(){
+    try{
+      const saved = Lampa.Storage.get(BRAND_ICONS_KEY, {});
+      if (saved && Object.keys(saved).length) applyBrandIcons(saved);
+    }catch(e){}
+  })();
+
+  // ---------- Применение рейтинга к карточке ----------
+  function displayCacheKey(item, source) {
+    // без Lampa тип нам не нужен, кэшируем просто по id+source
+    return `${item.id}:${source}`;
+  }
+
+  function applyRatingToCard($card, item, value, source) {
+    if (!$card?.querySelector) return;
+    const badge = $card.querySelector('.card__vote');
+    if (!badge) return;
+
+    badge.classList.remove('rate--tmdb','rate--kp','rate--imdb');
+    badge.classList.add(`rate--${source}`);
+
+    const safe = (value && value !== '0.0') ? value : '—';
+    badge.innerHTML = `
+      <span class="rating-value">${safe}</span>
+      <span class="source--name" title="${source.toUpperCase()}"></span>
+    `;
+
+    // Persist для восстановления
+    $card.dataset.ratingValue = safe;
+    $card.dataset.ratingSource = source;
+
+    displayCacheWrite(displayCacheKey(item, source), { value: safe, ts: Date.now() });
+  }
+
+  // ---------- Быстрый локальный путь без сети ----------
+  function tryApplyFromLocal($card, item, source) {
+    const badge = $card.querySelector('.card__vote');
+    if (!badge) return false;
+
+    if ($card.dataset.ratingValue && $card.dataset.ratingSource === source) {
+      applyRatingToCard($card, item, $card.dataset.ratingValue, source);
+      return true;
+    }
+
+    const mem = memory.values.get(item.id);
+    if (mem && mem[source]) {
+      applyRatingToCard($card, item, mem[source], source);
+      return true;
+    }
+
+    const disp = displayCacheRead()[displayCacheKey(item, source)];
+    if (disp?.value) {
+      applyRatingToCard($card, item, disp.value, source);
+      return true;
+    }
+
+    if (source === 'kp' || source === 'imdb') {
+      const rec = readKP(item.id);
+      if (rec) {
+        const v = source === 'kp' ? rec.kp : rec.imdb;
+        if (v) {
+          const val = String(parseFloat(v).toFixed(1));
+          applyRatingToCard($card, item, val, source);
+          return true;
+        }
+      }
+    } else if (source === 'tmdb') {
+      const val = getTmdbRating(item);
+      if (val !== '0.0') {
+        applyRatingToCard($card, item, val, source);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  // ---------- Основная обработка карточки ----------
+  async function processCardNode(node) {
+    if (!node?.querySelector) return;
+    memory.nodesProcessed.add(node);
+
+    const data = node.card_data || node.data;
+    if (!data?.id) return;
+
+    ensureStyles();
+
+    // Санитизируем возможное старое значение 'lampa'
+    let source = getSource();
+    if (!VALID_SOURCES.includes(source)) {
+      source = 'tmdb';
+      try { Lampa.Storage.set('rating_source', 'tmdb'); } catch(e){}
+      if (Lampa?.Noty) Lampa.Noty.show('Рейтинг: TMDB');
+    }
+
+    const badge = node.querySelector('.card__vote');
+    if (!badge) return;
+
+    // быстрый путь
+    if (tryApplyFromLocal(node, data, source)) return;
+
+    // TMDB — без сети
+    if (source === 'tmdb') {
+      const v = getTmdbRating(data);
+      applyRatingToCard(node, data, v, 'tmdb');
+      return;
+    }
+
+    // сеть с кешированием (KP/IMDB)
+    try {
+      const val = await fetchKpOrImdb(data);
+      applyRatingToCard(node, data, val, source);
+    } catch (e) {
+      log('fetch rating failed', e);
+      applyRatingToCard(node, data, '0.0', source);
+    }
+  }
+
+  // ---------- Подписки на события карточек и фолбэк ----------
+  function hookCardEvents() {
+    if (window[PLUGIN_NAME + '_hooked']) return;
+    window[PLUGIN_NAME + '_hooked'] = true;
+
+    if (Lampa?.Listener?.follow) {
+      Lampa.Listener.follow('card', (ev) => {
+        if (ev?.type === 'build' && ev?.data?.object) {
+          setTimeout(() => processCardNode(ev.data.object), 0);
+        }
+      });
+    }
+
+    const mo = new MutationObserver((muts) => {
+      for (const m of muts) {
+        for (const n of m.addedNodes) {
+          if (n.nodeType === 1) {
+            if (n.classList?.contains('card')) {
+              processCardNode(n);
+            } else {
+              const cards = n.querySelectorAll?.('.card');
+              if (cards?.length) cards.forEach((c) => processCardNode(c));
+            }
+          }
+        }
+      }
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ---------- Настройки (без LAMPA) ----------
+  function addSettingsUI() {
+    addSettingsSelect({
+      name: 'rating_source',
+      values: { tmdb: 'TMDB', kp: 'Кинопоиск', imdb: 'IMDB' },
+      def: 'tmdb',
+      title: 'Источник рейтинга на карточках',
+      descr: 'Выберите, какой рейтинг отображать на карточках',
+      onChange: (val) => {
+        val = sanitizeSource(val);
+        try { Lampa.Storage.set('rating_source', val); } catch (e) {}
+        if (Lampa?.Noty) Lampa.Noty.show(`Рейтинг: ${String(val).toUpperCase()}`);
+
+        // форс-перерисовка видимых карточек
+        document.querySelectorAll('.card').forEach((c) => {
+          delete c.dataset.ratingValue;
+          delete c.dataset.ratingSource;
+          memory.nodesProcessed.delete(c);
+          processCardNode(c);
         });
+      }
+    });
+  }
+
+  // ---------- Инициализация ----------
+  function init() {
+    if (window[PLUGIN_NAME + '_inited']) return;
+    window[PLUGIN_NAME + '_inited'] = true;
+
+    try {
+      // миграция: если в хранилище был 'lampa' — заменить на 'tmdb'
+      try {
+        const cur = Lampa.Storage.get('rating_source', 'tmdb');
+        if (!VALID_SOURCES.includes(cur)) {
+          Lampa.Storage.set('rating_source', 'tmdb');
+        }
+      } catch(e){}
+
+      addSettingsUI();
+      hookCardEvents();
+
+      // первичная обработка уже присутствующих карточек
+      setTimeout(() => {
+        document.querySelectorAll('.card').forEach((c) => processCardNode(c));
+      }, 300);
+    } catch (e) {
+      log('init error', e);
     }
-    
-    function addSettings() {
-        Lampa.SettingsApi.addParam({
-            component: 'interface',
-            param: {
-                name: 'rating_source',
-                type: 'select',
-                values: {
-                    'tmdb': 'TMDB',
-                    'lampa': 'LAMPA', 
-                    'kp': 'Кинопоиск',
-                    'imdb': 'IMDB'
-                },
-                default: 'tmdb'
-            },
-            field: {
-                name: 'Источник рейтинга',
-                description: 'Выберите источник рейтинга для карточек'
-            },
-            onChange: function(value) {
-                Lampa.Storage.set('rating_source', value);
-                log(`🔄 Источник изменен на: ${value}`);
-                Lampa.Noty.show(`Рейтинг: ${value.toUpperCase()}`);
-                
-                processedCards = new WeakSet();
-                requestAttempts.clear();
-                setTimeout(processAllCards, 1000);
-            }
-        });
-    }
-    
-    function addStyles() {
-        const style = document.createElement('style');
-        style.textContent = `
-            .card__vote {
-                background: rgba(0, 0, 0, 0.7);
-                color: white;
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 12px;
-                display: flex;
-                align-items: center;
-                gap: 4px;
-                min-width: 50px;
-                justify-content: center;
-            }
-            
-            .card__vote--imdb {
-                background: #f5c518;
-                color: black;
-            }
-            
-            .card__vote--kp {
-                background: #ff5500;
-                color: white;
-            }
-            
-            .card__vote--lampa {
-                background: #0078d7;
-                color: white;
-            }
-            
-            .card__vote--tmdb {
-                background: linear-gradient(90deg, #90cea1, #01b4e4);
-                color: white;
-            }
-            
-            .rating-loading {
-                color: #ccc;
-                font-style: italic;
-            }
-            
-            .rating-source {
-                font-size: 10px;
-                opacity: 0.8;
-            }
-            
-            .rating-value {
-                font-weight: bold;
-            }
-            
-            .rating-attempt {
-                font-size: 8px;
-                opacity: 0.6;
-                margin-left: 2px;
-            }
-        `;
-        document.head.appendChild(style);
-    }
-    
-    function startObserver() {
-        const observer = new MutationObserver((mutations) => {
-            mutations.forEach((mutation) => {
-                mutation.addedNodes.forEach((node) => {
-                    if (node.nodeType === 1 && node.classList.contains('card')) {
-                        setTimeout(() => {
-                            if (!processedCards.has(node)) {
-                                log('🆕 Новая карточка обнаружена');
-                                processCard(node);
-                            }
-                        }, 100);
-                    }
-                });
-            });
-        });
-        
-        observer.observe(document.body, { childList: true, subtree: true });
-    }
-    
-    function initPlugin() {
-        if (window.rating_plugin_initialized) return;
-        window.rating_plugin_initialized = true;
-        
-        log('🚀 Инициализация плагина...');
-        
-        addSettings();
-        addStyles();
-        startObserver();
-        
-        setTimeout(() => {
-            processAllCards();
-        }, 2000);
-        
-        log('✅ Плагин успешно инициализирован');
-    }
-    
-    if (window.appready) {
-        setTimeout(initPlugin, 1000);
-    } else {
-        Lampa.Listener.follow('app', (e) => {
-            if (e.type === 'ready') setTimeout(initPlugin, 1000);
-        });
-    }
+  }
+
+  // ---------- Вставляем официальные логотипы (TMDB/KP/IMDb) ----------
+  function injectOfficialBrandIconsOnce() {
+    if (window[PLUGIN_NAME + '_brands_applied']) return;
+    window[PLUGIN_NAME + '_brands_applied'] = true;
+
+    applyBrandIcons({
+      tmdb: 'https://www.themoviedb.org/assets/2/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c.svg',
+      kp:   'https://raw.githubusercontent.com/ARST113/star/refs/heads/main/kinopoisk-icon-main.svg',
+      imdb: 'https://upload.wikimedia.org/wikipedia/commons/6/69/IMDB_Logo_2016.svg'
+    });
+  }
+
+  // ---------- Старт плагина ----------
+  if (window.appready) {
+    injectOfficialBrandIconsOnce();
+    init();
+  } else if (Lampa?.Listener?.follow) {
+    Lampa.Listener.follow('app', (e) => {
+      if (e?.type === 'ready') {
+        injectOfficialBrandIconsOnce();
+        init();
+      }
+    });
+  } else {
+    setTimeout(() => {
+      injectOfficialBrandIconsOnce();
+      init();
+    }, 1200);
+  }
 })();
