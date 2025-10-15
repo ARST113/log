@@ -1,5 +1,3 @@
-Lampa.Platform.tv();
-
 (function(){
 "use strict";
 
@@ -160,8 +158,8 @@ function mirrorProfile($head){
     inner.innerHTML = img ? `<img src="${img.src}" style="border-radius:50%">` : "";
   };
   const open = () => orig?.click();
+  window.$(proxy).on("hover:enter", open);
   proxy.onclick = open;
-  $(proxy).on("hover:enter", open);
   sync();
   if (orig) new MutationObserver(() => setTimeout(sync,150))
     .observe(orig, { childList:true, subtree:true, attributes:true });
@@ -180,10 +178,15 @@ function buildMenu($head, cfg){
         ${renderIcon(it)}<span class="lhead__label">${it.title}</span>
       </div>`;
 
-    const $b = $(html);
+    const $b = window.$(html);
 
-    // обработка кликов и пульта через hover:enter
+    // Обработка кликов и пульта через jQuery 'hover:enter'
     $b.on('hover:enter', () => fireMenu(it));
+
+    // Как только фокус попал на кнопку верхней панели — включаем наш контроллер
+    $b.on('hover:focus', () => {
+      try { Lampa.Controller.toggle('lhead_controller'); } catch {}
+    });
 
     wrap.append($b);
   });
@@ -199,7 +202,7 @@ const renderIcon = it => {
 const fireMenu = it => {
   const btn = [...document.querySelectorAll(".menu__item,.selector")]
     .find(x => norm(x.textContent) === norm(it.title));
-  if (btn) btn.dispatchEvent(new Event('hover:enter'));
+  if (btn && window.$) window.$(btn).trigger('hover:enter');
 };
 
 /* ==== Главная и Поиск ==== */
@@ -207,7 +210,7 @@ function bindRoutes($head){
   $head.find(".lhead__logo").on("hover:enter", () => {
     const g = [...document.querySelectorAll(".menu__item,.selector")]
       .find(x => norm(x.textContent) === "главная");
-    g?.dispatchEvent(new Event('hover:enter'));
+    if (g && window.$) window.$(g).trigger('hover:enter');
   });
 }
 
@@ -222,7 +225,7 @@ function fixSearch(){
       } catch {}
       const s = [...document.querySelectorAll('.menu__item,.selector')]
         .find(x => /(поиск)/i.test(x.textContent));
-      s?.dispatchEvent(new Event('hover:enter'));
+      if (s && window.$) window.$(s).trigger('hover:enter');
     };
   }, 500);
 }
@@ -249,49 +252,51 @@ function installSearchModeWatcher(){
 
 /* ==== ТВ адаптация ==== */
 function adaptForTV($head){
-  if (!Lampa.Platform.tv()) return;
+  try {
+    if (!Lampa.Platform.tv()) return;
+  } catch { return; }
 
   const Controller = Lampa.Controller;
-  const items = $head.find('.lhead__action');
-  if (!items.length) return;
 
+  const getItems = () => $head.find('.lhead__action'); // всегда актуальный список
   let index = 0;
 
   function focusItem(i){
+    const items = getItems();
+    if (!items.length) return;
+    index = ((i % items.length) + items.length) % items.length;
     items.removeClass('focus');
-    const el = items.eq(i);
+    const el = items.eq(index);
     el.addClass('focus');
-    el[0].scrollIntoView({block:'nearest',inline:'center'});
+    el.get(0)?.scrollIntoView({ block: 'nearest', inline: 'center' });
   }
 
   function enterItem(){
+    const items = getItems();
+    if (!items.length) return;
     items.eq(index).trigger('hover:enter');
   }
 
   Controller.add('lhead_controller', {
     toggle: function(){
+      const items = getItems();
+      if (!items.length) return Controller.toggle('menu');
+      if (index >= items.length) index = 0;
       focusItem(index);
     },
-    right: function(){
-      index = (index + 1) % items.length;
-      focusItem(index);
-    },
-    left: function(){
-      index = (index - 1 + items.length) % items.length;
-      focusItem(index);
-    },
-    down: function(){
-      Controller.toggle('menu');
-    },
-    up: function(){},
+    right: function(){ focusItem(index + 1); },
+    left: function(){ focusItem(index - 1); },
+    down: function(){ Controller.toggle('menu'); },
+    up: function(){ /* при необходимости можно прыгать в поиск/профиль */ },
     enter: enterItem,
-    back: function(){
-      Controller.toggle('menu');
-    }
+    back: function(){ Controller.toggle('menu'); }
   });
 
+  // Скрыть подписи на ТВ
+  $head.find('.lhead__label').css({ display:'none' });
+
+  // Автофокус на верхней панели при старте
   Controller.toggle('lhead_controller');
-  $head.find('.lhead__label').css({display:'none'});
   console.log('[lhead] TV controller activated');
 }
 
