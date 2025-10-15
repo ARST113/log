@@ -104,7 +104,7 @@ function initPlugin(){
   const $head = $(renderHead());
   document.body.appendChild($head.get(0));
 
-  // Скрываем старую шапку, НО не удаляем из DOM!
+  // Скрываем только стилями!
   const orig = document.querySelector(".head");
   if (orig) {
     orig.style.opacity = "0";
@@ -272,6 +272,7 @@ function adaptForTV($head){
     items.removeClass('focus');
     const el = items.eq(index);
     el.addClass('focus');
+    el.get(0)?.focus();
     el.get(0)?.scrollIntoView({ block: 'nearest', inline: 'center' });
   }
 
@@ -286,31 +287,27 @@ function adaptForTV($head){
       const items = getItems();
       if (!items.length) return Controller.toggle('menu');
       if (index >= items.length) index = 0;
+      items.get(index)?.focus();
       focusItem(index);
     },
     right: function(){ focusItem(index + 1); },
     left: function(){ focusItem(index - 1); },
-    down: function(){ Controller.toggle('menu'); }, // уходим в левое меню
-    up: function(){}, // при необходимости можно возвращать фокус в поиск/профиль
+    down: function(){
+      Controller.toggle('menu');
+      setTimeout(()=>Controller.toggle('lhead_controller'), 600);
+    },
+    up: function(){},
     enter: enterItem,
-    back: function(){ Controller.toggle('menu'); }
-  });
-
-  // Скрыть подписи на ТВ
-  $head.find('.lhead__label').css({ display:'none' });
-
-  // Всегда возвращаем себе фокус после "up" с нижних меню
-  document.body.addEventListener('keydown', function(e){
-    // 38 = ArrowUp, 9 = Tab, 10009 для Tizen, и т.д.
-    if ((e.keyCode === 38 || e.key === "ArrowUp") &&
-        document.activeElement &&
-        document.activeElement.closest('.menu__item,.left-menu')) {
-      Controller.toggle('lhead_controller');
+    back: function(){
+      Controller.toggle('menu');
+      setTimeout(()=>Controller.toggle('lhead_controller'), 600);
     }
   });
 
-  // Автофокус на верхней панели при старте
-  Controller.toggle('lhead_controller');
+  $head.find('.lhead__label').css({ display:'none' });
+
+  setTimeout(()=>Controller.toggle('lhead_controller'), 1000);
+  setTimeout(()=>Controller.toggle('lhead_controller'), 1800);
 }
 
 /* ==== Конфигуратор ==== */
