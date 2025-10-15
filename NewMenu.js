@@ -182,7 +182,7 @@ function buildMenu($head, cfg){
 
     const $b = $(html);
 
-    // === новая обработка как в SURS ===
+    // обработка кликов и пульта через hover:enter
     $b.on('hover:enter', () => fireMenu(it));
 
     wrap.append($b);
@@ -199,10 +199,10 @@ const renderIcon = it => {
 const fireMenu = it => {
   const btn = [...document.querySelectorAll(".menu__item,.selector")]
     .find(x => norm(x.textContent) === norm(it.title));
-  btn?.dispatchEvent(new Event('hover:enter'));
+  if (btn) btn.dispatchEvent(new Event('hover:enter'));
 };
 
-/* ==== Поиск ==== */
+/* ==== Главная и Поиск ==== */
 function bindRoutes($head){
   $head.find(".lhead__logo").on("hover:enter", () => {
     const g = [...document.querySelectorAll(".menu__item,.selector")]
@@ -250,22 +250,49 @@ function installSearchModeWatcher(){
 /* ==== ТВ адаптация ==== */
 function adaptForTV($head){
   if (!Lampa.Platform.tv()) return;
+
   const Controller = Lampa.Controller;
-  const menuItems = $head.find('.lhead__action');
+  const items = $head.find('.lhead__action');
+  if (!items.length) return;
+
   let index = 0;
 
   function focusItem(i){
-    menuItems.removeClass('focus');
-    const el = menuItems.eq(i);
+    items.removeClass('focus');
+    const el = items.eq(i);
     el.addClass('focus');
     el[0].scrollIntoView({block:'nearest',inline:'center'});
   }
 
-  focusItem(index);
-  Controller.listener.follow('left',()=>{index=(index-1+menuItems.length)%menuItems.length;focusItem(index);});
-  Controller.listener.follow('right',()=>{index=(index+1)%menuItems.length;focusItem(index);});
-  Controller.listener.follow('enter',()=>{menuItems.eq(index).trigger('hover:enter');});
+  function enterItem(){
+    items.eq(index).trigger('hover:enter');
+  }
+
+  Controller.add('lhead_controller', {
+    toggle: function(){
+      focusItem(index);
+    },
+    right: function(){
+      index = (index + 1) % items.length;
+      focusItem(index);
+    },
+    left: function(){
+      index = (index - 1 + items.length) % items.length;
+      focusItem(index);
+    },
+    down: function(){
+      Controller.toggle('menu');
+    },
+    up: function(){},
+    enter: enterItem,
+    back: function(){
+      Controller.toggle('menu');
+    }
+  });
+
+  Controller.toggle('lhead_controller');
   $head.find('.lhead__label').css({display:'none'});
+  console.log('[lhead] TV controller activated');
 }
 
 /* ==== Конфигуратор ==== */
