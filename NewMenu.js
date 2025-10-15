@@ -1,7 +1,9 @@
 (function(){
 "use strict";
 
-/* ==== Константы ==== */
+const PLUGIN_VERSION = "lhead_menu/TV.1.3.0";
+console.log(`[Lampa plugin] ${PLUGIN_VERSION} стартовал`);
+
 const CFG_KEY = "lhead_menu_cfg";
 const ICON_SIZE_KEY = "lhead_icon_size";
 
@@ -18,12 +20,22 @@ const readCfg = () => {
   } catch { return defMenu(); }
 };
 
+/* ==== Меню по умолчанию ==== */
+function defMenu(){
+  const base = ["Фильмы","Сериалы","Аниме","Избранное","История","Настройки"];
+  const src = scanLeftMenu();
+  const out = base.map(n => {
+    const found = src.find(it => norm(it.title) === norm(n));
+    return found ? {...found, enabled:true} : {title:n,icon:"emoji:📁",enabled:true};
+  });
+  return out;
+}
+
 /* ==== Сканируем левое меню ==== */
 function scanLeftMenu(){
   const result = [], seen = {};
   const root = document.querySelector('.menu,.left-menu,.navigation-bar');
   if (!root) return [];
-
   root.querySelectorAll('.menu__item,.selector,[data-action]').forEach(el => {
     const title = (el.innerText || el.textContent || "").trim();
     const key = norm(title);
@@ -42,17 +54,6 @@ function scanLeftMenu(){
   return result;
 }
 
-/* ==== Меню по умолчанию ==== */
-function defMenu(){
-  const base = ["Фильмы","Сериалы","Аниме","Избранное","История","Настройки"];
-  const src = scanLeftMenu();
-  const out = base.map(n => {
-    const found = src.find(it => norm(it.title) === norm(n));
-    return found ? {...found, enabled:true} : {title:n,icon:"emoji:📁",enabled:true};
-  });
-  return out;
-}
-
 /* ==== Ожидание Lampa ==== */
 const wait = setInterval(() => {
   if (window.Lampa && Lampa.SettingsApi && window.$) {
@@ -68,14 +69,12 @@ function boot(){
     name: "Новое меню",
     icon: '<svg width="24" height="24" viewBox="0 0 32 32"><path d="M4 8h24M4 16h24M4 24h24" stroke="#fff" stroke-width="3" stroke-linecap="round"/></svg>'
   });
-
   L.SettingsApi.addParam({
     component: "new_menu_plugin",
     param: { name: "open_menu_config", type: "button" },
     field: { name: "Настроить верхнее меню" },
     onChange: openConfigUI
   });
-
   L.SettingsApi.addParam({
     component: "new_menu_plugin",
     param: { name: "icon_size", type: "select",
@@ -87,7 +86,6 @@ function boot(){
       applyIconSize(parseFloat(v));
     }
   });
-
   const wm = setInterval(() => {
     if (document.querySelector(".menu__item")) {
       clearInterval(wm); initPlugin();
@@ -113,6 +111,16 @@ function initPlugin(){
     orig.style.position = "fixed";
     orig.style.zIndex = "-99";
   }
+  const origActions = document.querySelector('.head__actions');
+  if(origActions){
+    origActions.style.opacity = "0";
+    origActions.style.visibility = "hidden";
+    origActions.style.pointerEvents = "none";
+    origActions.setAttribute('tabindex', '-1');
+    origActions.querySelectorAll('.head__action').forEach(btn=>{
+      btn.setAttribute('tabindex', '-1');
+    });
+  }
 
   buildMenu($head, readCfg());
   mirrorProfile($head);
@@ -134,6 +142,16 @@ function cleanupPlugin(){
     orig.style.visibility = "";
     orig.style.position = "";
     orig.style.zIndex = "";
+  }
+  const origActions = document.querySelector('.head__actions');
+  if (origActions) {
+    origActions.style.opacity = "";
+    origActions.style.visibility = "";
+    origActions.style.pointerEvents = "";
+    origActions.setAttribute('tabindex', '0');
+    origActions.querySelectorAll('.head__action').forEach(btn => {
+      btn.setAttribute('tabindex', '0');
+    });
   }
 }
 
@@ -185,10 +203,7 @@ function buildMenu($head, cfg){
 
     const $b = window.$(html);
 
-    // Обработка кликов и пульта через jQuery 'hover:enter'
     $b.on('hover:enter', () => fireMenu(it));
-
-    // При фокусе на панели вручную перехватываем управление пультом (на TV)
     $b.on('hover:focus', () => {
       try { Lampa.Controller.toggle('lhead_controller'); } catch {}
     });
@@ -397,4 +412,29 @@ function injectStyles(){
 }`;
   document.head.appendChild(st);
 }
+
+/* ==== ЖЁСТКИЙ ЗАХВАТ КОНТРОЛЛЕРА ==== */
+function patchController(){
+  if(!window.Lampa || !Lampa.Controller) {
+    setTimeout(patchController, 500);
+    return;
+  }
+  const origToggle = Lampa.Controller.toggle;
+  Lampa.Controller.toggle = function(name){
+    if(name==='menu'){
+      let panel = document.querySelector('.lhead');
+      if(panel && panel.offsetParent!==null){
+        console.log('[Lampa patch] Жёстко перехватываю menu -> lhead_controller');
+        origToggle.call(Lampa.Controller, 'lhead_controller');
+        return;
+      }
+    }
+    return origToggle.apply(this, arguments);
+  };
+  console.log("[Lampa patch] Controller.toggle: глобальный перехват lhead_controller включён");
+}
+
+// Патч применяем после всего
+patchController();
+
 })();
