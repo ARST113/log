@@ -104,11 +104,14 @@ function initPlugin(){
   const $head = $(renderHead());
   document.body.appendChild($head.get(0));
 
+  // Скрываем старую шапку, НО не удаляем из DOM!
   const orig = document.querySelector(".head");
   if (orig) {
     orig.style.opacity = "0";
     orig.style.pointerEvents = "none";
     orig.style.visibility = "hidden";
+    orig.style.position = "fixed";
+    orig.style.zIndex = "-99";
   }
 
   buildMenu($head, readCfg());
@@ -129,6 +132,8 @@ function cleanupPlugin(){
     orig.style.opacity = "";
     orig.style.pointerEvents = "";
     orig.style.visibility = "";
+    orig.style.position = "";
+    orig.style.zIndex = "";
   }
 }
 
@@ -183,7 +188,7 @@ function buildMenu($head, cfg){
     // Обработка кликов и пульта через jQuery 'hover:enter'
     $b.on('hover:enter', () => fireMenu(it));
 
-    // Как только фокус попал на кнопку верхней панели — включаем наш контроллер
+    // При фокусе на панели вручную перехватываем управление пультом (на TV)
     $b.on('hover:focus', () => {
       try { Lampa.Controller.toggle('lhead_controller'); } catch {}
     });
@@ -257,8 +262,7 @@ function adaptForTV($head){
   } catch { return; }
 
   const Controller = Lampa.Controller;
-
-  const getItems = () => $head.find('.lhead__action'); // всегда актуальный список
+  const getItems = () => $head.find('.lhead__action');
   let index = 0;
 
   function focusItem(i){
@@ -286,8 +290,8 @@ function adaptForTV($head){
     },
     right: function(){ focusItem(index + 1); },
     left: function(){ focusItem(index - 1); },
-    down: function(){ Controller.toggle('menu'); },
-    up: function(){ /* при необходимости можно прыгать в поиск/профиль */ },
+    down: function(){ Controller.toggle('menu'); }, // уходим в левое меню
+    up: function(){}, // при необходимости можно возвращать фокус в поиск/профиль
     enter: enterItem,
     back: function(){ Controller.toggle('menu'); }
   });
@@ -295,9 +299,18 @@ function adaptForTV($head){
   // Скрыть подписи на ТВ
   $head.find('.lhead__label').css({ display:'none' });
 
+  // Всегда возвращаем себе фокус после "up" с нижних меню
+  document.body.addEventListener('keydown', function(e){
+    // 38 = ArrowUp, 9 = Tab, 10009 для Tizen, и т.д.
+    if ((e.keyCode === 38 || e.key === "ArrowUp") &&
+        document.activeElement &&
+        document.activeElement.closest('.menu__item,.left-menu')) {
+      Controller.toggle('lhead_controller');
+    }
+  });
+
   // Автофокус на верхней панели при старте
   Controller.toggle('lhead_controller');
-  console.log('[lhead] TV controller activated');
 }
 
 /* ==== Конфигуратор ==== */
