@@ -1,415 +1,226 @@
 (function(){
-"use strict";
-
-const PLUGIN_VERSION = "lhead_menu/TV.1.5.0";
-if(window.Lampa && Lampa.Noty) Lampa.Noty.show(`[PLUGIN] ${PLUGIN_VERSION} стартовал!`,'green');
-
-const CFG_KEY = "lhead_menu_cfg";
-const ICON_SIZE_KEY = "lhead_icon_size";
-
-const norm = s => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
-const getIconSize = () => parseFloat(localStorage.getItem(ICON_SIZE_KEY) || "1.0");
-const writeCfg = cfg => localStorage.setItem(CFG_KEY, JSON.stringify(cfg || []));
-const readCfg = () => {
-  try {
-    const raw = localStorage.getItem(CFG_KEY);
-    if (!raw) return defMenu();
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length ? parsed : defMenu();
-  } catch { return defMenu(); }
-};
-
-function defMenu(){
-  const base = ["Фильмы","Сериалы","Аниме","Избранное","История","Настройки"];
-  const src = scanLeftMenu();
-  const out = base.map(n => {
-    const found = src.find(it => norm(it.title) === norm(n));
-    return found ? {...found, enabled:true} : {title:n,icon:"emoji:📁",enabled:true};
-  });
-  return out;
-}
-
-function scanLeftMenu(){
-  const result = [], seen = {};
-  const root = document.querySelector('.menu,.left-menu,.navigation-bar');
-  if (!root) return [];
-  root.querySelectorAll('.menu__item,.selector,[data-action]').forEach(el => {
-    const title = (el.innerText || el.textContent || "").trim();
-    const key = norm(title);
-    if (!title || seen[key]) return;
-    seen[key] = 1;
-    let iconHTML = "";
-    const svg = el.querySelector("svg");
-    if (svg) iconHTML = svg.outerHTML;
-    else {
-      const img = el.querySelector("img[src]");
-      if (img) iconHTML = `<img src="${img.src}" width="24" height="24">`;
-    }
-    if (!iconHTML) iconHTML = "emoji:📁";
-    result.push({ title, icon: iconHTML });
-  });
-  return result;
-}
-
-const wait = setInterval(() => {
-  if (window.Lampa && Lampa.SettingsApi && window.$) {
-    clearInterval(wait); boot();
-  }
-}, 200);
-
-function boot(){
-  const L = Lampa;
-  L.SettingsApi.addComponent({
-    component: "new_menu_plugin",
-    name: "Новое меню",
-    icon: '<svg width="24" height="24" viewBox="0 0 32 32"><path d="M4 8h24M4 16h24M4 24h24" stroke="#fff" stroke-width="3" stroke-linecap="round"/></svg>'
-  });
-  L.SettingsApi.addParam({
-    component: "new_menu_plugin",
-    param: { name: "open_menu_config", type: "button" },
-    field: { name: "Настроить верхнее меню" },
-    onChange: openConfigUI
-  });
-  L.SettingsApi.addParam({
-    component: "new_menu_plugin",
-    param: { name: "icon_size", type: "select",
-      values: { "0.8": "Маленькие", "1.0": "Стандарт", "1.2": "Крупные" },
-      default: "1.0" },
-    field: { name: "Размер иконок" },
-    onChange: v => {
-      localStorage.setItem(ICON_SIZE_KEY, v);
-      applyIconSize(parseFloat(v));
-    }
-  });
-  const wm = setInterval(() => {
-    if (document.querySelector(".menu__item")) {
-      clearInterval(wm); initPlugin();
-    }
-  }, 300);
-}
-
-function initPlugin(){
-  if(window.Lampa && Lampa.Noty) Lampa.Noty.show('[PLUGIN] initPlugin','green');
-  cleanupPlugin();
-  injectStyles();
-
-  const $ = window.$;
-  const $head = $(renderHead());
-  document.body.appendChild($head.get(0));
-
-  const orig = document.querySelector(".head");
-  if (orig) {
-    orig.style.opacity = "0";
-    orig.style.pointerEvents = "none";
-    orig.style.visibility = "hidden";
-    orig.style.position = "fixed";
-    orig.style.zIndex = "-99";
-  }
-  const origActions = document.querySelector('.head__actions');
-  if(origActions){
-    origActions.style.opacity = "0";
-    origActions.style.visibility = "hidden";
-    origActions.style.pointerEvents = "none";
-    origActions.setAttribute('tabindex', '-1');
-    origActions.querySelectorAll('.head__action').forEach(btn=>{
-      btn.setAttribute('tabindex', '-1');
+  "use strict";
+  function scanLeftMenu(){
+    const res = [], seen = {};
+    const root = document.querySelector('.menu,.left-menu,.navigation-bar');
+    if (!root) return [];
+    root.querySelectorAll('.menu__item,.selector,[data-action]').forEach(el => {
+      const t = (el.innerText || el.textContent || "").trim();
+      const k = t.toLowerCase();
+      if (!t || seen[k]) return;
+      seen[k] = 1;
+      let icon = "";
+      const svg = el.querySelector("svg");
+      if(svg) icon = svg.outerHTML;
+      else {
+        const img = el.querySelector("img[src]");
+        if(img) icon = `<img src="${img.src}" width="22" height="22">`;
+      }
+      if(!icon) icon = "emoji:📁";
+      res.push({title: t, icon});
     });
+    return res;
   }
 
-  buildMenu($head, readCfg());
-  mirrorProfile($head);
-  bindRoutes($head);
-  fixSearch();
-
-  setTimeout(() => applyIconSize(getIconSize()), 300);
-  installSearchModeWatcher();
-  adaptForTV($head);
-}
-
-function cleanupPlugin(){
-  document.querySelectorAll(".lhead, .lhead-style").forEach(n => n.remove());
-  const orig = document.querySelector(".head");
-  if (orig) {
-    orig.style.opacity = "";
-    orig.style.pointerEvents = "";
-    orig.style.visibility = "";
-    orig.style.position = "";
-    orig.style.zIndex = "";
-  }
-  const origActions = document.querySelector('.head__actions');
-  if (origActions) {
-    origActions.style.opacity = "";
-    origActions.style.visibility = "";
-    origActions.style.pointerEvents = "";
-    origActions.setAttribute('tabindex', '0');
-    origActions.querySelectorAll('.head__action').forEach(btn => {
-      btn.setAttribute('tabindex', '0');
-    });
-  }
-}
-
-const renderHead = () => `
-<div class="lhead">
-  <div class="lhead__body">
-    <div class="lhead__logo selector" tabindex="0"><img src="./img/logo-icon.svg" width="32" height="32"></div>
-    <div class="lhead__actions"></div>
-    <div class="lhead__right">
-      <div class="lhead__right-item selector open--search" tabindex="0" title="Поиск">
-        <svg width="28" height="28" viewBox="2 2 20 20" fill="none"><path d="M11 6C13.7614 6 16 8.2386 16 11M16.6588 16.6549L21 21M19 11C19 15.4183 15.4183 19 11 19C6.5817 19 3 15.4183 3 11C3 6.5817 6.5817 3 11 3C15.4183 3 19 6.5817 19 11Z" stroke="#fff" stroke-width="2"/></svg>
-      </div>
-      <div class="lhead__profile selector" tabindex="0"><div class="lhead__profile-inner"></div></div>
-    </div>
-  </div>
-</div>`;
-
-function mirrorProfile($head){
-  const proxy = $head.find(".lhead__profile").get(0);
-  const inner = proxy.querySelector(".lhead__profile-inner");
-  const orig = document.querySelector(".head .open--profile");
-  const sync = () => {
-    if (!orig || !inner) return;
-    const img = orig.querySelector("img");
-    inner.innerHTML = img ? `<img src="${img.src}" style="border-radius:50%">` : "";
-  };
-  const open = () => {
-    if(window.Lampa && Lampa.Noty) Lampa.Noty.show('[PLUGIN] Нажатие на профиль','green');
-    orig?.click();
-  };
-  window.$(proxy).on("hover:enter", open);
-  proxy.onclick = open;
-  sync();
-  if (orig) new MutationObserver(() => setTimeout(sync,150))
-    .observe(orig, { childList:true, subtree:true, attributes:true });
-}
-
-function buildMenu($head, cfg){
-  const wrap = $head.find(".lhead__actions");
-  wrap.empty();
-
-  (cfg || []).forEach(it => {
-    if (!it.enabled) return;
-
-    const html = `
-      <div class="lhead__action selector" tabindex="0" data-title="${it.title}">
-        ${renderIcon(it)}<span class="lhead__label">${it.title}</span>
-      </div>`;
-
-    const $b = window.$(html);
-
-    // Только обработчик клика!
-    $b.on('hover:enter', () => {
-      if(window.Lampa && Lampa.Noty) Lampa.Noty.show(`[PLUGIN] click по "${it.title}"`,'green');
-      fireMenu(it);
-    });
-
-    wrap.append($b);
-  });
-}
-
-const renderIcon = it => {
-  const i = it.icon || "";
-  if (i.startsWith("<svg") || i.startsWith("<img")) return `<span class="lhead__ico">${i}</span>`;
-  if (i.startsWith("emoji:")) return `<span class="lhead__ico">${i.slice(6)}</span>`;
-  return `<span class="lhead__ico">📁</span>`;
-};
-
-const fireMenu = it => {
-  const btn = [...document.querySelectorAll(".menu__item,.selector")]
-    .find(x => norm(x.textContent) === norm(it.title));
-  if (btn && window.$) window.$(btn).trigger('hover:enter');
-};
-
-function bindRoutes($head){
-  $head.find(".lhead__logo").on("hover:enter", () => {
-    if(window.Lampa && Lampa.Noty) Lampa.Noty.show('[PLUGIN] Логотип → главная','green');
-    const g = [...document.querySelectorAll(".menu__item,.selector")]
-      .find(x => norm(x.textContent) === "главная");
-    if (g && window.$) window.$(g).trigger('hover:enter');
-  });
-}
-
-function fixSearch(){
-  const waitSearch = setInterval(() => {
-    const btn = document.querySelector('.lhead__right-item.open--search');
-    if (!btn) return;
-    clearInterval(waitSearch);
-    btn.onclick = () => {
-      if(window.Lampa && Lampa.Noty) Lampa.Noty.show('[PLUGIN] Поиск','green');
-      try {
-        if (Lampa.Search?.open) return Lampa.Search.open();
-      } catch {}
-      const s = [...document.querySelectorAll('.menu__item,.selector')]
-        .find(x => /(поиск)/i.test(x.textContent));
-      if (s && window.$) window.$(s).trigger('hover:enter');
-    };
-  }, 500);
-}
-
-function applyIconSize(scale){
-  const isMobile = window.innerWidth <= 768;
-  const factor = isMobile ? scale * 0.9 : scale;
-  document.querySelectorAll(".lhead .lhead__ico svg, .lhead .lhead__ico img")
-    .forEach(el => { el.style.width = el.style.height = (2.3 * factor) + "em"; });
-  document.querySelectorAll(".lhead .lhead__label")
-    .forEach(el => el.style.fontSize = (1.05 * factor) + "em");
-}
-
-function installSearchModeWatcher(){
-  const observer = new MutationObserver(() => {
-    const active = document.body.classList.contains('search--active') ||
-                   document.querySelector('.search, .search-box');
-    document.documentElement.classList.toggle('lhead-native--on', !!active);
-  });
-  observer.observe(document.body, { childList:true, subtree:true });
-}
-
-function adaptForTV($head){
-  try {
-    if (!Lampa.Platform.tv()) return;
-  } catch { return; }
-
-  const Controller = Lampa.Controller;
-  const getItems = () => $head.find('.lhead__action');
-  let index = 0;
-
-  function focusItem(i){
-    const items = getItems();
-    if (!items.length) return;
-    index = ((i % items.length) + items.length) % items.length;
-    items.removeClass('focus');
-    const el = items.eq(index);
-    el.addClass('focus');
-    el.get(0)?.focus();
-    el.get(0)?.scrollIntoView({ block: 'nearest', inline: 'center' });
-    if(window.Lampa && Lampa.Noty) Lampa.Noty.show(`[PLUGIN] ФОКУС index=${index}`,'green');
-  }
-
-  function enterItem(){
-    const items = getItems();
-    if (!items.length) return;
-    items.eq(index).trigger('hover:enter');
-    if(window.Lampa && Lampa.Noty) Lampa.Noty.show(`[PLUGIN] ENTER index=${index}`,'green');
-  }
-
-  Controller.add('lhead_controller', {
-    toggle: function(){
-      const items = getItems();
-      if (!items.length) return Controller.toggle('content');
-      if (index >= items.length) index = 0;
-      focusItem(index);
-      if(window.Lampa && Lampa.Noty) Lampa.Noty.show('[PLUGIN] toggle панели','green');
-    },
-    right: function(){
-      focusItem(index + 1);
-      if(window.Lampa && Lampa.Noty) Lampa.Noty.show('[PLUGIN] → RIGHT','green');
-    },
-    left: function(){
-      focusItem(index - 1);
-      if(window.Lampa && Lampa.Noty) Lampa.Noty.show('[PLUGIN] ← LEFT','green');
-    },
-    down: function(){
-      Controller.toggle('content');
-      if(window.Lampa && Lampa.Noty) Lampa.Noty.show('[PLUGIN] ↓ DOWN (к контенту)','green');
-    },
-    up: function(){
-      if(window.Lampa && Lampa.Noty) Lampa.Noty.show('[PLUGIN] ↑ UP','green');
-    },
-    enter: enterItem,
-    back: function(){
-      Controller.toggle('content');
-      if(window.Lampa && Lampa.Noty) Lampa.Noty.show('[PLUGIN] ⬅ BACK (к контенту)','green');
+  function getEnabledMenuItems() {
+    let enabled = JSON.parse(localStorage.getItem("plugin_menu_cfg")||"[]");
+    const all = scanLeftMenu();
+    if (!enabled.length) {
+      const def = ["фильмы","аниме","избранное","история","сериалы","настройки"];
+      enabled = all.filter(x => def.includes(x.title.toLowerCase())).map(x => x.title);
+      localStorage.setItem("plugin_menu_cfg", JSON.stringify(enabled));
     }
-  });
+    return all.filter(x=>enabled.includes(x.title));
+  }
 
-  $head.find('.lhead__label').css({ display:'none' });
+  function buildMenuButtons(iconSize){
+    const actions = document.querySelector('.head__actions');
+    if (!actions) return setTimeout(()=>buildMenuButtons(iconSize), 150);
+    actions.querySelectorAll('.plugin-menu-btn').forEach(e=>e.remove());
+    getEnabledMenuItems().forEach(item => {
+      const btn = document.createElement('div');
+      btn.className = 'head__action selector plugin-menu-btn';
+      btn.setAttribute('tabindex','0');
+      btn.innerHTML = `
+        <span class="menu-ico">${item.icon}</span>
+        <span class="menu-label">${item.title}</span>`;
+      btn.querySelector('.menu-label').style.opacity = '0';
 
-  setTimeout(()=>Controller.toggle('lhead_controller'), 1000);
-}
+      function setFocus(state){
+        if(state){
+          btn.classList.add('focus');
+        } else {
+          btn.classList.remove('focus');
+        }
+      }
+      btn.addEventListener('mouseenter',()=>setFocus(true));
+      btn.addEventListener('mouseleave',()=>setFocus(false));
+      btn.addEventListener('focus',()=>setFocus(true));
+      btn.addEventListener('blur',()=>setFocus(false));
 
-function openConfigUI(){
-  const cfg = readCfg(), all = scanLeftMenu();
-  const modal = document.createElement("div");
-  modal.className = "lhead-modal";
-  modal.innerHTML = `
-  <div class="lhead-modal__box">
-    <div class="lhead-modal__title">Настройка верхнего меню</div>
-    <div class="lhead-list"></div>
-    <div class="lhead-modal__controls">
-      <button data-act="save">Сохранить</button>
-      <button data-act="cancel">Отмена</button>
-      <button data-act="defaults">Сбросить</button>
-    </div>
-  </div>`;
-  document.body.appendChild(modal);
-
-  const list = modal.querySelector(".lhead-list");
-  const active = new Set(cfg.map(x => norm(x.title)));
-  all.forEach(it => {
-    const checked = active.has(norm(it.title));
-    const tag = document.createElement("label");
-    tag.className = "lhead-tag" + (checked ? " selected" : "");
-    tag.innerHTML = `<input type="checkbox" ${checked ? "checked" : ""}/> ${renderIcon(it)} ${it.title}`;
-    tag.querySelector("input").addEventListener("change", e =>
-      e.target.checked ? tag.classList.add("selected") : tag.classList.remove("selected"));
-    list.appendChild(tag);
-  });
-
-  modal.addEventListener("click", e => {
-    const b = e.target.closest("button");
-    if (!b) return;
-    const act = b.dataset.act;
-    if (act === "cancel") return modal.remove();
-    if (act === "defaults") { writeCfg(defMenu()); initPlugin(); return modal.remove(); }
-    if (act === "save") {
-      const newCfg = [];
-      list.querySelectorAll("label").forEach(l => {
-        if (l.querySelector("input").checked) {
-          const t = l.textContent.trim();
-          const found = all.find(x => x.title === t);
-          if (found) newCfg.push({...found, enabled:true});
+      // -- Универсальный переход --
+      btn.onclick = function(e){
+        e.preventDefault();
+        const items = Array.from(document.querySelectorAll('.menu__item,.selector'));
+        // ищем точное совпадение и fallback по includes
+        let found = items.find(b=>{
+          const txt=(b.innerText||b.textContent||"").trim().toLowerCase();
+          return txt === item.title.toLowerCase();
+        }) || items.find(b=>{
+          const txt=(b.innerText||b.textContent||"").trim().toLowerCase();
+          return txt.includes(item.title.toLowerCase());
+        });
+        if(found){
+          found.focus();
+          if(window.$) window.$(found).trigger('hover:enter');
+          found.dispatchEvent(new Event('hover:enter'));
+          if (typeof found.click === "function") found.click();
+        }
+      };
+      btn.addEventListener('keydown', function(e){
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          btn.click();
         }
       });
-      writeCfg(newCfg); initPlugin(); modal.remove();
-    }
-  });
-}
+      actions.insertBefore(btn, actions.firstChild);
+    });
+    insertSettingsButton(actions, iconSize);
+  }
 
-function injectStyles(){
-  const prev = document.getElementById("lhead-style");
-  if (prev) prev.remove();
-  const st = document.createElement("style");
-  st.id = "lhead-style"; st.className = "lhead-style"; st.textContent = `
-.head.lhead-hidden{opacity:0!important;pointer-events:none!important;}
-.lhead{position:fixed;top:0;left:0;width:100%;z-index:15;}
-.lhead__body{display:flex;align-items:center;padding:.6em 1.4em;}
-.lhead__logo{cursor:pointer;margin-right:2em;}
-.lhead__actions{display:flex;gap:1.2em;flex:1;}
-.lhead__action{display:flex;align-items:center;cursor:pointer;border-radius:12px;padding:0 .5em;height:2.4em;transition:background .2s;}
-.lhead__ico{display:flex;align-items:center;justify-content:center;}
-.lhead__ico svg,.lhead__ico img{width:2.3em;height:2.3em;transition:fill .2s;}
-.lhead__label{max-width:0;opacity:0;overflow:hidden;white-space:nowrap;margin-left:0;color:#fff;transition:max-width .25s,opacity .25s,margin-left .25s;}
-.lhead__action:hover .lhead__label,.lhead__action.focus .lhead__label{max-width:8em;opacity:1;margin-left:.8em;color:#000;}
-.lhead__action:hover,.lhead__action.focus{background:#fff;color:#000;}
-.lhead__action:hover .lhead__ico svg path,.lhead__action.focus .lhead__ico svg path{stroke:#000!important;}
-.lhead__right{display:flex;align-items:center;gap:1em;}
-.lhead__profile img{width:2em;height:2em;border-radius:50%;object-fit:cover;}
-.lhead-modal{position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;}
-.lhead-modal__box{background:#23232a;padding:24px;border-radius:12px;color:#fff;width:90%;max-width:600px;}
-.lhead-list{display:flex;flex-wrap:wrap;gap:10px;}
-.lhead-tag{padding:6px 12px;border:1px solid #444;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:8px;}
-.lhead-tag.selected{background:#fff;color:#000;}
-.lhead-modal__controls{margin-top:15px;display:flex;gap:10px;}
-.lhead-modal__controls button{padding:6px 14px;border:none;border-radius:8px;background:#444;color:#fff;cursor:pointer;}
-.lhead-modal__controls button:hover{background:#666;}
-.lhead-native--on .lhead{display:none!important;}
-.lhead-native--on .head{visibility:visible!important;opacity:1!important;pointer-events:auto!important;}
-@media (orientation: portrait){
-  .lhead__logo{display:none!important;}
-  .lhead__label{max-width:0!important;opacity:0!important;margin-left:0!important;}
-  .lhead__body{padding:0.4em 1em!important;}
-  .lhead__ico svg,.lhead__ico img{width:1.8em!important;height:1.8em!important;}
-}`;
-  document.head.appendChild(st);
-}
+  function insertSettingsButton(actions, iconSize){
+    if (actions.querySelector('.menu-btn-settings')) return;
+    let settBtn = document.createElement('div');
+    settBtn.className = 'head__action selector plugin-menu-btn menu-btn-settings';
+    settBtn.setAttribute('tabindex','0');
+    settBtn.innerHTML = `<span class="menu-ico">⚙️</span> <span class="menu-label">Настройки</span>`;
+    settBtn.querySelector('.menu-label').style.opacity = '0';
+    settBtn.onclick = function(){ openMenuConfig(iconSize); };
+    settBtn.addEventListener('keydown', function(e){
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        settBtn.click();
+      }
+    });
+    actions.appendChild(settBtn);
+  }
 
+  function openMenuConfig(iconSize) {
+    const allItems = scanLeftMenu();
+    let enabledItems = JSON.parse(localStorage.getItem("plugin_menu_cfg")||"[]");
+    let modal = document.createElement("div");
+    modal.style = "position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;";
+    modal.innerHTML = `
+      <div style="background:#23232a;padding:2em 2em 1em 2em;border-radius:14px;color:#fff;min-width:340px;max-width:99vw">
+        <div style="font-size:1.35em;margin-bottom:1em;font-weight:bold">Настройка верхнего меню</div>
+        <div id="plugin-menu-list" style="display:flex;flex-direction:column;gap:10px;max-height:50vh;overflow-y:auto"></div>
+        <div style="margin-top:1.5em;text-align:right">
+          <button id="plugin-menu-save" style="padding:.6em 1.5em;background:#578;border-radius:6px;color:#fff;border:none;margin-right:.5em;">Сохранить</button>
+          <button id="plugin-menu-cancel" style="padding:.6em 1.5em;background:#444;border-radius:6px;color:#fff;border:none;margin-right:.5em;">Отмена</button>
+          <button id="plugin-menu-reset" style="padding:.6em 1.5em;background:#666;border-radius:6px;color:#fff;border:none">Сбросить</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    const list = modal.querySelector("#plugin-menu-list");
+    allItems.forEach(it => {
+      const enabled = enabledItems.includes(it.title);
+      const row = document.createElement("label");
+      row.style = "display:flex;align-items:center;gap:9px;cursor:pointer;font-size:1.08em;padding:.35em .6em;border-radius:7px;" +
+        (enabled ? "background:#fff;color:#000;" : "");
+      row.innerHTML = `
+        <input type="checkbox" ${enabled?"checked":""} style="accent-color:#578;width:22px;height:22px;"/>
+        ${it.icon} <span>${it.title}</span>`;
+      row.querySelector("input").onchange = function(){
+        if (this.checked) { row.style.background="#fff"; row.style.color="#000"; }
+        else { row.style.background=""; row.style.color="#fff"; }
+      };
+      list.appendChild(row);
+    });
+
+    modal.querySelector("#plugin-menu-save").onclick = function(){
+      const enabledNew = [];
+      list.querySelectorAll("label").forEach(row=>{
+        if(row.querySelector("input").checked) {
+          enabledNew.push(row.querySelector("span").innerText);
+        }
+      });
+      localStorage.setItem("plugin_menu_cfg", JSON.stringify(enabledNew));
+      modal.remove();
+      injectStyles(iconSize);
+      buildMenuButtons(iconSize);
+    };
+    modal.querySelector("#plugin-menu-cancel").onclick = function(){
+      modal.remove();
+    };
+    modal.querySelector("#plugin-menu-reset").onclick = function(){
+      localStorage.setItem("plugin_menu_cfg", JSON.stringify(allItems.map(x=>x.title)));
+      modal.remove();
+      injectStyles(iconSize);
+      buildMenuButtons(iconSize);
+    };
+  }
+
+  function injectStyles(iconSize){
+    const prevStyle = document.getElementById("plugin-menu-btn-style");
+    if(prevStyle) prevStyle.remove();
+    const size = iconSize || 1.1;
+    const style = document.createElement("style");
+    style.id = "plugin-menu-btn-style";
+    style.textContent = `
+.head__action.plugin-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  cursor:pointer;
+  border-radius:12px;
+  padding:0 .8em;
+  height:2.8em;
+  margin-left:.14em;
+  color:#fff;
+  font-size:${size}em;
+  min-width:8em;
+  background:none;
+  transition:background .16s, color .14s, min-width .12s;
+  user-select:none;
+  position:relative;
+}
+.head__action.plugin-menu-btn .menu-label{
+  margin-left:.48em;
+  font-size:1em;
+  white-space:nowrap;
+  opacity:0;
+  color:#000;
+  transition:opacity .16s;
+}
+.head__action.plugin-menu-btn .menu-ico svg,
+.head__action.plugin-menu-btn .menu-ico img {
+  width:2em; height:2em; min-width:2em; min-height:2em; margin-right:.09em; transition:all .14s; display:block;
+}
+.head__action.plugin-menu-btn.focus,
+.head__action.plugin-menu-btn:focus,
+.head__action.plugin-menu-btn:hover {
+  background: #fff !important;
+  color: #000 !important;
+  outline: none;
+}
+.head__action.plugin-menu-btn.focus .menu-label,
+.head__action.plugin-menu-btn:focus .menu-label,
+.head__action.plugin-menu-btn:hover .menu-label {
+  opacity:1 !important;
+}
+.head__action.plugin-menu-btn .menu-label,
+.head__action.plugin-menu-btn .menu-ico {
+  flex-shrink:0;
+  flex-grow:0;
+}
+`;
+    document.head.appendChild(style);
+  }
+
+  setTimeout(() => {
+    let iconSize = parseFloat(localStorage.getItem('plugin_menu_icon_size') || "1.1");
+    injectStyles(iconSize);
+    buildMenuButtons(iconSize);
+  }, 900);
 })();
