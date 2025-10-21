@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const PLUGIN_NAME = 'local_rating_badge_v8_2_single_tmdb_icon';
+  const PLUGIN_NAME = 'local_rating_badge_v8_3_safe_cache';
   const DEBUG = false;
   const log = (...a)=>DEBUG&&console.log('[badge]',...a);
 
@@ -15,11 +15,14 @@
   /* ========= ID helpers ========= */
   function collectIds(obj){
     const raw = [
-      obj?.id, obj?.card_id, obj?.source_id, obj?.sourceId,
+      obj?.id,                     // 🔹 основной id (по нему сохраняет rating_kp_imdb)
+      obj?.card_id, obj?.source_id, obj?.sourceId,
       obj?.movie_id, obj?.movieId, obj?.number_id, obj?.original_id,
       obj?.tmdb_id, obj?.tmdbId,
       obj?.imdb_id, obj?.imdbId,
-      obj?.kinopoisk_id, obj?.kinopoiskId, obj?.filmId
+      obj?.kinopoisk_id, obj?.kinopoiskId, obj?.filmId,
+      obj?.movie?.id,              // 🔹 иногда внутри movie
+      obj?.source?.id              // 🔹 или внутри source
     ];
     const ids = [];
     raw.forEach(v=>{
@@ -28,14 +31,16 @@
       if(!s || s==='0' || s==='NaN') return;
       ids.push(s);
     });
-    return Array.from(new Set(ids));
+    const uniq = Array.from(new Set(ids));
+    if(DEBUG && uniq.length===0) log('⚠️ no ids found in', obj);
+    return uniq;
   }
 
   /* ========= Read rating (cache/fields/TMDB fallback) ========= */
   function getRatingFromCard(card, source){
     if(!card) return 0;
 
-    // прямые поля (если другой плагин положил в объект)
+    // прямые поля
     if(source==='kp'){
       const v = card.kp_rating || card.kinopoisk_rating || card.kp_rate || card.kinopoisk_rate || card.rating_kp;
       if(v>0) return parseFloat(v);
@@ -68,23 +73,26 @@
     return 0;
   }
 
-  /* ========= Save rating into cache under ALL ids ========= */
+  /* ========= Safe save (only >0) ========= */
   function saveToCacheForAllIds(movie, payload){
+    if(!payload || (!payload.kp && !payload.imdb)) return;
+    if(payload.kp <= 0 && payload.imdb <= 0) return; // 🔹 не затирать кэш нулями
+
     const ids = collectIds(movie);
     if(!ids.length) return;
     const cache = Storage.cache('kp_rating', 1000, {});
     const now = Date.now();
     ids.forEach(id=>{
       cache[id] = cache[id] || { kp:0, imdb:0, timestamp: now };
-      if(payload.kp   != null) cache[id].kp   = payload.kp;
-      if(payload.imdb != null) cache[id].imdb = payload.imdb;
+      if(payload.kp   != null && payload.kp   > 0) cache[id].kp   = payload.kp;
+      if(payload.imdb != null && payload.imdb > 0) cache[id].imdb = payload.imdb;
       cache[id].timestamp = now;
     });
     Lampa.Storage.set('kp_rating', cache);
-    log('saved', payload, ids);
+    log('💾 saved ratings', payload, ids);
   }
 
-  /* ========= FULL view scraping (robust, incl. mobile) ========= */
+  /* ========= FULL view scraping ========= */
   function normalizeRoot(root){
     if(typeof root === 'function'){ try { root = root(); } catch {} }
     if(root && typeof root === 'object' && !root.querySelector && root[0]) root = root[0];
@@ -116,22 +124,24 @@
         }
       };
 
-      const kp   = getRate('.full-start__rate.rate--kp');
-      const imdb = getRate('.full-start__rate.rate--imdb');
-
-      if(kp>0 || imdb>0){
-        const movie = e.data?.movie || e.data || {};
-        saveToCacheForAllIds(movie, { kp: kp>0?kp:null, imdb: imdb>0?imdb:null });
-        document.querySelectorAll('.card').forEach(processCard);
-      }
+      // подождать, чтобы DOM успел дорендериться
+      setTimeout(()=>{
+        const kp   = getRate('.full-start__rate.rate--kp');
+        const imdb = getRate('.full-start__rate.rate--imdb');
+        if(kp>0 || imdb>0){
+          const movie = e.data?.movie || e.data || {};
+          saveToCacheForAllIds(movie, { kp, imdb });
+          document.querySelectorAll('.card').forEach(processCard);
+        } else {
+          log('⚠️ no DOM ratings found for', e.data?.movie?.title);
+        }
+      }, 300);
     });
   }
 
   /* ========= Badge render ========= */
 
-  // только этот URL для TMDB-логотипа (как просил)
   const TMDB_ICON = 'https://raw.githubusercontent.com/ARST113/Buttons-/refs/heads/main/the_movie_database.svg';
-
   const BRAND_ICONS = {
     tmdb: TMDB_ICON,
     kp:   'https://raw.githubusercontent.com/ARST113/star/refs/heads/main/kinopoisk-icon-main.svg',
@@ -172,14 +182,8 @@
         .b.tmdb{background:#0D253F;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 2px 8px rgba(0,0,0,.45);}
         .b.kp{background:#e85d00;padding:4px 6px;}
         .b.imdb{background:#f5c518;color:#000;text-shadow:none;box-shadow:0 0 4px rgba(0,0,0,.3);}
-
         .logo{display:inline-block;background-size:contain;background-repeat:no-repeat;background-position:center;}
-
-        /* TMDB логотип: чтобы не терялся на тёмной теме можно включить фильтр.
-           По-умолчанию выключен — сохраняем внешний вид твоего SVG как есть.
-           Если нужно осветлить, раскомментируй строку с filter ниже. */
-        .b.tmdb .logo{width:46px;height:18px; /* filter: brightness(0) invert(1); */ }
-
+        .b.tmdb .logo{width:46px;height:18px;}
         .b.kp   .logo{width:22px;height:22px;}
         .b.imdb .logo{width:44px;height:18px;}
       </style>
@@ -188,7 +192,6 @@
         <span class="logo" style="${icon?`background-image:url('${icon}')`:''}" title="${source.toUpperCase()}"></span>
       </div>
     `;
-
     requestAnimationFrame(()=>host.shadowRoot.querySelector('.b')?.classList.add('show'));
   }
 
@@ -199,6 +202,7 @@
     if(!data) return;
     const source = Storage.get('rating_source','kp');
     const r = getRatingFromCard(data, source);
+    if(DEBUG) log('render card', data.title, source, r);
     renderBadge(node, r, source);
   }
 
@@ -251,7 +255,7 @@
       values:{ tmdb:'TMDB', kp:'Кинопоиск', imdb:'IMDb' },
       def:Storage.get('rating_source','kp'),
       title:'Источник рейтинга (из кэша)',
-      descr:'Читает кэш rating_kp_imdb; при открытии карточки синхронизирует значения',
+      descr:'Читает кэш rating_kp_imdb; при открытии карточки синхронизирует значения (без перезаписи нулей)',
       onChange:v=>{
         Storage.set('rating_source', v);
         document.querySelectorAll('.card').forEach(processCard);
@@ -275,7 +279,7 @@
     hideNative();
     addSettings();
     hookCards();
-    hookFullScrape(); // скрейп KP/IMDb из карточки
+    hookFullScrape();
   }
 
   if(window.appready) init();
