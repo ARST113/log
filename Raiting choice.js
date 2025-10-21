@@ -1,297 +1,291 @@
-
 (function () {
-    'use strict';
+  'use strict';
 
-    /** ============================
-     *  LOCAL RATING BADGE v1
-     *  — только данные из карточки
-     *  — никаких API запросов
-     *  — мгновенное отображение
-     *  ============================ */
+  const PLUGIN_NAME = 'local_rating_badge_v8_cache_fullhook';
+  const DEBUG = false;
+  const log = (...a)=>DEBUG&&console.log('[badge]',...a);
 
-    const PLUGIN_NAME = 'local_rating_badge_v1';
+  const Storage = {
+    get(k,d){ try{const v=Lampa.Storage.get(k,d);return v==null?d:v;}catch{return d} },
+    set(k,v){ try{Lampa.Storage.set(k,v);}catch{} },
+    cache(k,m,d){ try{return Lampa.Storage.cache(k,m,d);}catch{return d} }
+  };
 
-    // ======= Storage helpers =======
-    const Storage = {
-        get(name, def) { 
-            try { 
-                const v = Lampa.Storage.get(name, def); 
-                return v == null ? def : v; 
-            } catch { 
-                return def; 
-            } 
-        },
-        set(name, val) { 
-            try { 
-                Lampa.Storage.set(name, val); 
-            } catch {} 
+  /* ================== ID helpers ================== */
+  function collectIds(obj){
+    const raw = [
+      obj?.id, obj?.card_id, obj?.source_id, obj?.sourceId,
+      obj?.movie_id, obj?.movieId, obj?.number_id, obj?.original_id,
+      obj?.tmdb_id, obj?.tmdbId,
+      obj?.imdb_id, obj?.imdbId,
+      obj?.kinopoisk_id, obj?.kinopoiskId, obj?.filmId
+    ];
+    const ids = [];
+    raw.forEach(v=>{
+      if(v==null) return;
+      const s = String(v).trim();
+      if(!s || s==='0' || s==='NaN') return;
+      ids.push(s);
+    });
+    return Array.from(new Set(ids));
+  }
+
+  /* ================== read rating from cache / card ================== */
+  function getRatingFromCard(card, source){
+    if(!card) return 0;
+
+    // прямые поля (если другой плагин положил в объект)
+    if(source==='kp'){
+      const v = card.kp_rating || card.kinopoisk_rating || card.kp_rate || card.kinopoisk_rate || card.rating_kp;
+      if(v>0) return parseFloat(v);
+    }
+    if(source==='imdb'){
+      const v = card.imdb_rating || card.imdb_rate || card.imdb_vote_average || card.rating_imdb;
+      if(v>0) return parseFloat(v);
+    }
+
+    // кэш rating_kp_imdb
+    const cache = Storage.cache('kp_rating', 1000, {});
+    const ids = collectIds(card);
+    for(const id of ids){
+      const rec = cache[id];
+      if(!rec) continue;
+      if(source==='kp' && rec.kp>0)     return parseFloat(rec.kp);
+      if(source==='imdb' && rec.imdb>0) return parseFloat(rec.imdb);
+    }
+
+    // fallback TMDB
+    if(source==='tmdb'){
+      if(card.vote_average>0) return parseFloat(card.vote_average);
+      if(card.rating>0)       return parseFloat(card.rating);
+      if(card.vote_count>0)   return 5.0;
+      if(card.popularity>10)  return 6.0;
+      const y=(card.release_date||card.first_air_date||'').slice(0,4),
+            cy=new Date().getFullYear();
+      if(y && cy-Number(y)<=2) return 5.5;
+    }
+    return 0;
+  }
+
+  /* ================== write to cache (under ALL ids) ================== */
+  function saveToCacheForAllIds(movie, payload){
+    const ids = collectIds(movie);
+    if(!ids.length) return;
+    const cache = Storage.cache('kp_rating', 1000, {});
+    const now = Date.now();
+    ids.forEach(id=>{
+      cache[id] = cache[id] || { kp:0, imdb:0, timestamp: now };
+      if(payload.kp  != null) cache[id].kp   = payload.kp;
+      if(payload.imdb!= null) cache[id].imdb = payload.imdb;
+      cache[id].timestamp = now;
+    });
+    Lampa.Storage.set('kp_rating', cache);
+    log('saved into cache', payload, ids);
+  }
+
+  /* ================== scrape from FULL render (надёжно) ================== */
+  function hookFullScrape(){
+    if(!Lampa?.Listener?.follow) return;
+    Lampa.Listener.follow('full', (e)=>{
+      if(e?.type!=='complite') return;
+      const render = e.object?.activity?.render?.();
+      if(!render) return;
+
+      const getRate = (selector)=>{
+        const el = render.querySelector(selector);
+        if(!el) return 0;
+        // ожидаемый DOM: <div class="full-start__rate rate--imdb"><div>6.4</div><div>IMDb</div></div>
+        const valDiv = el.querySelector('div');
+        if(!valDiv) return 0;
+        const num = parseFloat(valDiv.textContent.trim().replace(',','.'));
+        return isNaN(num)?0:num;
+      };
+
+      // читаем оба рейтинга
+      const kp   = getRate('.full-start__rate.rate--kp');
+      const imdb = getRate('.full-start__rate.rate--imdb');
+
+      if(kp>0 || imdb>0){
+        const movie = e.data?.movie || e.data || {};
+        saveToCacheForAllIds(movie, { kp: kp>0?kp:null, imdb: imdb>0?imdb:null });
+        // перерисуем плитки — чтобы бейджи появились сразу
+        document.querySelectorAll('.card').forEach(processCard);
+      }
+    });
+  }
+
+  /* ================== optional DOM observer fallback ================== */
+  function observeFullRatesFallback(){
+    const obs = new MutationObserver(muts=>{
+      for(const m of muts){
+        for(const n of m.addedNodes){
+          if(n.nodeType!==1) continue;
+          const r = (sel)=> n.matches?.(sel) ? n : n.querySelector?.(sel);
+          const kpEl   = r('.full-start__rate.rate--kp');
+          const imdbEl = r('.full-start__rate.rate--imdb');
+          if(!kpEl && !imdbEl) continue;
+
+          // подождём, когда внутрь вставят число
+          setTimeout(()=>{
+            const activity = Lampa.Activity.active()?.activity;
+            const movie = activity?.data?.movie || activity?.data || {};
+            const kp   = kpEl   ? parseFloat((kpEl.querySelector('div')?.textContent||'').replace(',','.'))   : 0;
+            const imdb = imdbEl ? parseFloat((imdbEl.querySelector('div')?.textContent||'').replace(',','.')) : 0;
+            if((kp && !isNaN(kp)) || (imdb && !isNaN(imdb))){
+              saveToCacheForAllIds(movie, { kp: (kp||0)>0?kp:null, imdb: (imdb||0)>0?imdb:null });
+              document.querySelectorAll('.card').forEach(processCard);
+            }
+          }, 500);
         }
+      }
+    });
+    obs.observe(document.body, { childList:true, subtree:true });
+  }
+
+  /* ================== badge render ================== */
+  const BRAND_ICONS = {
+    tmdb: 'https://www.themoviedb.org/assets/2/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c.svg',
+    kp:   'https://raw.githubusercontent.com/ARST113/star/refs/heads/main/kinopoisk-icon-main.svg',
+    imdb: 'https://upload.wikimedia.org/wikipedia/commons/6/69/IMDB_Logo_2016.svg'
+  };
+
+  function getPosterContainer(node){
+    return node.querySelector('.card__view, .card__image, .card__img, .poster, .image, .thumb') || node;
+  }
+
+  function ensureHost(node){
+    const c = getPosterContainer(node);
+    if(!c || !c.appendChild) return null;
+    try{ const cs=getComputedStyle(c); if(cs.position==='static') c.style.position='relative'; }catch{}
+    let host = c.querySelector(':scope > .local-rate-badge');
+    if(!host){
+      host = document.createElement('div');
+      host.className = 'local-rate-badge';
+      host.style.cssText = 'position:absolute;right:8px;bottom:8px;z-index:50;pointer-events:none;';
+      c.appendChild(host);
+    }
+    if(!host.shadowRoot) host.attachShadow({mode:'open'});
+    return host;
+  }
+
+  function renderBadge(node, rating, source){
+    const host = ensureHost(node); if(!host) return;
+
+    const num = parseFloat(rating)||0;
+    const val = num>0 ? num.toFixed(1) : '—';
+    const icon = BRAND_ICONS[source]||'';
+
+    host.shadowRoot.innerHTML = `
+      <style>
+        .b{display:inline-flex;align-items:center;gap:6px;padding:4px 6px;border-radius:10px;
+           font:700 12px/1 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;
+           color:#fff;pointer-events:none;opacity:0;transform:scale(.95);transition:all .25s ease;}
+        .b.show{opacity:1;transform:scale(1);}
+        .b.tmdb{background:#0D253F;box-shadow:0 0 0 1px rgba(255,255,255,.15),0 2px 8px rgba(0,0,0,.45);}
+        .b.kp{background:#e85d00;padding:4px 6px;}
+        .b.imdb{background:#f5c518;color:#000;text-shadow:none;box-shadow:0 0 4px rgba(0,0,0,.3);}
+        .logo{display:inline-block;background-size:contain;background-repeat:no-repeat;background-position:center;}
+        .b.tmdb .logo{width:46px;height:18px;filter:brightness(0) invert(1);}
+        .b.kp   .logo{width:22px;height:22px;}
+        .b.imdb .logo{width:44px;height:18px;}
+      </style>
+      <div class="b ${source}">
+        <span>${val}</span>
+        <span class="logo" style="${icon?`background-image:url('${icon}')`:''}" title="${source.toUpperCase()}"></span>
+      </div>
+    `;
+    requestAnimationFrame(()=>host.shadowRoot.querySelector('.b')?.classList.add('show'));
+  }
+
+  /* ================== apply to cards ================== */
+  function processCard(node){
+    if(!node?.querySelector) return;
+    const data = node.card_data || node.data;
+    if(!data) return;
+
+    const source = Storage.get('rating_source','kp'); // по умолчанию показываем KP
+    const r = getRatingFromCard(data, source);
+    renderBadge(node, r, source);
+  }
+
+  function hookCards(){
+    if(window[PLUGIN_NAME+'_hooked']) return;
+    window[PLUGIN_NAME+'_hooked'] = true;
+
+    if(Lampa?.Listener?.follow){
+      Lampa.Listener.follow('card', ev=>{
+        if(ev?.type==='build' && ev?.data?.object) setTimeout(()=>processCard(ev.data.object),0);
+      });
+    }
+
+    const mo = new MutationObserver(muts=>{
+      for(const m of muts){
+        for(const n of m.addedNodes){
+          if(n.nodeType!==1) continue;
+          if(n.classList?.contains('card')) processCard(n);
+          else n.querySelectorAll?.('.card')?.forEach(processCard);
+        }
+      }
+    });
+    mo.observe(document.body, { childList:true, subtree:true });
+
+    setTimeout(()=>document.querySelectorAll('.card').forEach(processCard), 300);
+  }
+
+  /* ================== settings & init ================== */
+  function addSettings(){
+    if(!Lampa?.SettingsApi?.addParam && !Lampa?.Settings?.listener?.add) return;
+    const addSelect = cfg=>{
+      if(Lampa.SettingsApi?.addParam){
+        Lampa.SettingsApi.addParam({
+          component:'interface',
+          param:{name:cfg.name,type:'select',values:cfg.values,default:cfg.def},
+          field:{name:cfg.title,description:cfg.descr},
+          onChange:cfg.onChange
+        });
+      } else if(Lampa.Settings?.listener?.add){
+        Lampa.Settings.listener.add({
+          component:'main',
+          param:{name:cfg.name,type:'select',values:cfg.values,default:cfg.def},
+          field:{name:cfg.title,description:cfg.descr},
+          onChange:cfg.onChange
+        });
+      }
     };
+    addSelect({
+      name:'rating_source',
+      values:{ tmdb:'TMDB', kp:'Кинопоиск', imdb:'IMDb' },
+      def:Storage.get('rating_source','kp'),
+      title:'Источник рейтинга (из кэша)',
+      descr:'Читает кэш rating_kp_imdb; при открытии карточки синхронизирует значения',
+      onChange:v=>{
+        Storage.set('rating_source', v);
+        document.querySelectorAll('.card').forEach(processCard);
+      }
+    });
+  }
 
-    // ======= Rating extraction =======
-    function getRatingFromCard(card, source) {
-        if (!card) return null;
+  function hideNative(){
+    const s=document.createElement('style');
+    s.textContent = `
+      .card .card__view .card__vote,
+      .card .card__image .card__vote,
+      .card .card__img .card__vote { display:none !important; }
+    `;
+    document.head.appendChild(s);
+  }
 
-        const ratings = {
-            'tmdb': () => {
-                // Основные поля TMDB
-                if (card.vote_average > 0) return parseFloat(card.vote_average);
-                if (card.rating > 0) return parseFloat(card.rating);
-                
-                // Эвристики для TMDB
-                if (card.vote_count > 0) return 5.0;
-                if (card.popularity > 10) return 6.0;
-                
-                const year = (card.release_date || card.first_air_date || '').slice(0, 4);
-                const currentYear = new Date().getFullYear();
-                if (year && currentYear - Number(year) <= 2) return 5.5;
-                
-                return 0;
-            },
-            
-            'kp': () => {
-                // Все возможные поля Kinopoisk
-                const rating = card.kp_rating || 
-                              card.kinopoisk_rating || 
-                              card.kp_rate ||
-                              card.kinopoisk_rate ||
-                              card.rating_kp ||
-                              0;
-                return parseFloat(rating);
-            },
-            
-            'imdb': () => {
-                // Все возможные поля IMDb
-                const rating = card.imdb_rating || 
-                              card.imdb_rate || 
-                              card.imdb_vote_average ||
-                              card.rating_imdb ||
-                              0;
-                return parseFloat(rating);
-            }
-        };
+  function init(){
+    if(window[PLUGIN_NAME+'_inited']) return;
+    window[PLUGIN_NAME+'_inited']=true;
+    hideNative();
+    addSettings();
+    hookCards();
+    hookFullScrape();          // <-- надёжный скрейп из полной карточки
+    observeFullRatesFallback();// <-- запасной наблюдатель на всякий случай
+  }
 
-        const rating = ratings[source] ? ratings[source]() : 0;
-        return rating > 0 ? rating : 0;
-    }
-
-    // ======= Badge rendering =======
-    const BRAND_ICONS = {
-        tmdb: 'https://www.themoviedb.org/assets/2/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c.svg',
-        kp: 'https://raw.githubusercontent.com/ARST113/star/refs/heads/main/kinopoisk-icon-main.svg',
-        imdb: 'https://upload.wikimedia.org/wikipedia/commons/6/69/IMDB_Logo_2016.svg'
-    };
-
-    function getPosterContainer(card) {
-        return card.querySelector('.card__view, .card__image, .card__img, .poster, .image, .thumb') || card;
-    }
-
-    function ensureBadgeHost(card) {
-        const container = getPosterContainer(card);
-        if (!container || !container.appendChild) return null;
-        
-        try { 
-            const cs = getComputedStyle(container); 
-            if (cs.position === 'static') container.style.position = 'relative'; 
-        } catch {}
-        
-        let host = container.querySelector(':scope > .local-rate-badge');
-        if (!host) {
-            host = document.createElement('div');
-            host.className = 'local-rate-badge';
-            host.style.cssText = `
-                position: absolute;
-                right: 8px;
-                bottom: 8px;
-                z-index: 50;
-                pointer-events: none;
-            `;
-            container.appendChild(host);
-        }
-        
-        if (!host.shadowRoot) host.attachShadow({ mode: 'open' });
-        return host;
-    }
-
-    function renderRatingBadge(card, rating, source) {
-        const host = ensureBadgeHost(card);
-        if (!host) return;
-
-        // Безопасное преобразование в число и форматирование
-        const numRating = parseFloat(rating) || 0;
-        const displayValue = numRating > 0 ? numRating.toFixed(1) : '—';
-        const icon = BRAND_ICONS[source] || '';
-
-        host.shadowRoot.innerHTML = `
-            <style>
-                .rating-badge {
-                    box-sizing: border-box;
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 6px;
-                    padding: 4px 8px;
-                    border-radius: 8px;
-                    min-width: 50px;
-                    justify-content: center;
-                    font: 600 12px/1.1 -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
-                    color: #fff;
-                    text-shadow: 0 1px 1px rgba(0,0,0,.7);
-                    pointer-events: none;
-                }
-                .rating-badge.tmdb { 
-                    background: #0D253F; 
-                    box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 2px 6px rgba(0,0,0,.38); 
-                }
-                .rating-badge.kp { 
-                    background: #ff5500; 
-                }
-                .rating-badge.imdb { 
-                    background: #f5c518; 
-                    color: #000; 
-                    text-shadow: none; 
-                }
-                .rating-value { 
-                    font-weight: 700; 
-                }
-                .rating-logo { 
-                    display: inline-block; 
-                    width: 48px; 
-                    height: 20px; 
-                    background-position: center; 
-                    background-repeat: no-repeat; 
-                    background-size: contain; 
-                }
-                @media (max-width: 480px) { 
-                    .rating-logo { 
-                        height: 18px; 
-                    } 
-                }
-            </style>
-            <div class="rating-badge ${source}">
-                <span class="rating-value">${displayValue}</span>
-                <span class="rating-logo" style="${icon ? `background-image:url('${icon}')` : ''}" title="${source.toUpperCase()}"></span>
-            </div>
-        `;
-    }
-
-    // ======= Card processing =======
-    function processCard(card) {
-        if (!card?.querySelector) return;
-        
-        const cardData = card.card_data || card.data;
-        if (!cardData?.id) return;
-
-        const source = Storage.get('rating_source', 'tmdb');
-        const rating = getRatingFromCard(cardData, source);
-
-        renderRatingBadge(card, rating, source);
-    }
-
-    // ======= Auto-injection =======
-    function hookCards() {
-        if (window[PLUGIN_NAME + '_hooked']) return;
-        window[PLUGIN_NAME + '_hooked'] = true;
-
-        // Обработка новых карточек через Lampa Listener
-        if (Lampa?.Listener?.follow) {
-            Lampa.Listener.follow('card', (ev) => {
-                if (ev?.type === 'build' && ev?.data?.object) {
-                    setTimeout(() => processCard(ev.data.object), 0);
-                }
-            });
-        }
-
-        // Обработка через MutationObserver
-        const observer = new MutationObserver((mutations) => {
-            for (const mutation of mutations) {
-                for (const node of mutation.addedNodes) {
-                    if (node.nodeType !== 1) continue;
-                    
-                    if (node.classList?.contains('card')) {
-                        processCard(node);
-                    } else {
-                        node.querySelectorAll?.('.card')?.forEach(processCard);
-                    }
-                }
-            }
-        });
-
-        observer.observe(document.body, { childList: true, subtree: true });
-        
-        // Обработка существующих карточек
-        setTimeout(() => {
-            document.querySelectorAll('.card').forEach(processCard);
-        }, 300);
-    }
-
-    // ======= Settings =======
-    function addSettings() {
-        if (!Lampa?.SettingsApi?.addParam && !Lampa?.Settings?.listener?.add) return;
-
-        const addSelect = (config) => {
-            if (Lampa.SettingsApi?.addParam) {
-                Lampa.SettingsApi.addParam({
-                    component: 'interface',
-                    param: { name: config.name, type: 'select', values: config.values, default: config.def },
-                    field: { name: config.title, description: config.descr },
-                    onChange: config.onChange
-                });
-            } else if (Lampa.Settings?.listener?.add) {
-                Lampa.Settings.listener.add({
-                    component: 'main',
-                    param: { name: config.name, type: 'select', values: config.values, default: config.def },
-                    field: { name: config.title, description: config.descr },
-                    onChange: config.onChange
-                });
-            }
-        };
-
-        addSelect({
-            name: 'rating_source',
-            values: { tmdb: 'TMDB', kp: 'Кинопоиск', imdb: 'IMDb' },
-            def: Storage.get('rating_source', 'tmdb'),
-            title: 'Источник рейтинга (локальный)',
-            descr: 'Берётся только из данных карточки, без запросов к API',
-            onChange: (value) => {
-                Storage.set('rating_source', value);
-                // Перерисовываем все карточки
-                document.querySelectorAll('.card').forEach(processCard);
-            }
-        });
-    }
-
-    // ======= Hide native ratings =======
-    function hideNativeRatings() {
-        const style = document.createElement('style');
-        style.id = 'hide-native-ratings';
-        style.textContent = `
-            .card .card__view .card__vote,
-            .card .card__image .card__vote,
-            .card .card__img .card__vote { 
-                display: none !important; 
-            }
-        `;
-        document.head.appendChild(style);
-    }
-
-    // ======= Initialization =======
-    function init() {
-        if (window[PLUGIN_NAME + '_inited']) return;
-        window[PLUGIN_NAME + '_inited'] = true;
-
-        hideNativeRatings();
-        addSettings();
-        hookCards();
-    }
-
-    // Запуск
-    if (window.appready) {
-        init();
-    } else if (Lampa?.Listener?.follow) {
-        Lampa.Listener.follow('app', (e) => {
-            if (e?.type === 'ready') init();
-        });
-    } else {
-        setTimeout(init, 1000);
-    }
+  if(window.appready) init();
+  else if(Lampa?.Listener?.follow) Lampa.Listener.follow('app', e=>{ if(e?.type==='ready') init(); });
+  else setTimeout(init, 1000);
 })();
