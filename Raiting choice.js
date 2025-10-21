@@ -1,17 +1,18 @@
 (function () {
   'use strict';
 
-  const PLUGIN_NAME = 'local_rating_badge_v8_cache_fullhook';
+  const PLUGIN_NAME = 'local_rating_badge_v8_2_single_tmdb_icon';
   const DEBUG = false;
   const log = (...a)=>DEBUG&&console.log('[badge]',...a);
 
+  /* ========= Storage helpers ========= */
   const Storage = {
     get(k,d){ try{const v=Lampa.Storage.get(k,d);return v==null?d:v;}catch{return d} },
     set(k,v){ try{Lampa.Storage.set(k,v);}catch{} },
     cache(k,m,d){ try{return Lampa.Storage.cache(k,m,d);}catch{return d} }
   };
 
-  /* ================== ID helpers ================== */
+  /* ========= ID helpers ========= */
   function collectIds(obj){
     const raw = [
       obj?.id, obj?.card_id, obj?.source_id, obj?.sourceId,
@@ -30,7 +31,7 @@
     return Array.from(new Set(ids));
   }
 
-  /* ================== read rating from cache / card ================== */
+  /* ========= Read rating (cache/fields/TMDB fallback) ========= */
   function getRatingFromCard(card, source){
     if(!card) return 0;
 
@@ -50,11 +51,11 @@
     for(const id of ids){
       const rec = cache[id];
       if(!rec) continue;
-      if(source==='kp' && rec.kp>0)     return parseFloat(rec.kp);
+      if(source==='kp'   && rec.kp>0)   return parseFloat(rec.kp);
       if(source==='imdb' && rec.imdb>0) return parseFloat(rec.imdb);
     }
 
-    // fallback TMDB
+    // TMDB fallback
     if(source==='tmdb'){
       if(card.vote_average>0) return parseFloat(card.vote_average);
       if(card.rating>0)       return parseFloat(card.rating);
@@ -67,7 +68,7 @@
     return 0;
   }
 
-  /* ================== write to cache (under ALL ids) ================== */
+  /* ========= Save rating into cache under ALL ids ========= */
   function saveToCacheForAllIds(movie, payload){
     const ids = collectIds(movie);
     if(!ids.length) return;
@@ -75,76 +76,64 @@
     const now = Date.now();
     ids.forEach(id=>{
       cache[id] = cache[id] || { kp:0, imdb:0, timestamp: now };
-      if(payload.kp  != null) cache[id].kp   = payload.kp;
-      if(payload.imdb!= null) cache[id].imdb = payload.imdb;
+      if(payload.kp   != null) cache[id].kp   = payload.kp;
+      if(payload.imdb != null) cache[id].imdb = payload.imdb;
       cache[id].timestamp = now;
     });
     Lampa.Storage.set('kp_rating', cache);
-    log('saved into cache', payload, ids);
+    log('saved', payload, ids);
   }
 
-  /* ================== scrape from FULL render (надёжно) ================== */
+  /* ========= FULL view scraping (robust, incl. mobile) ========= */
+  function normalizeRoot(root){
+    if(typeof root === 'function'){ try { root = root(); } catch {} }
+    if(root && typeof root === 'object' && !root.querySelector && root[0]) root = root[0];
+    if(!(root instanceof Element)) root = document;
+    return root;
+  }
+
   function hookFullScrape(){
     if(!Lampa?.Listener?.follow) return;
     Lampa.Listener.follow('full', (e)=>{
       if(e?.type!=='complite') return;
-      const render = e.object?.activity?.render?.();
-      if(!render) return;
+
+      const rawRender = e.object?.activity?.render;
+      const renderRoot = normalizeRoot(typeof rawRender==='function' ? rawRender() : rawRender);
 
       const getRate = (selector)=>{
-        const el = render.querySelector(selector);
-        if(!el) return 0;
-        // ожидаемый DOM: <div class="full-start__rate rate--imdb"><div>6.4</div><div>IMDb</div></div>
-        const valDiv = el.querySelector('div');
-        if(!valDiv) return 0;
-        const num = parseFloat(valDiv.textContent.trim().replace(',','.'));
-        return isNaN(num)?0:num;
+        try{
+          const el = renderRoot.querySelector(selector);
+          if(!el) return 0;
+          const valDiv = el.querySelector('div');
+          if(!valDiv) return 0;
+          const num = parseFloat((valDiv.textContent||'').trim().replace(',','.'));
+          return isNaN(num)?0:num;
+        }catch{
+          const el = document.querySelector(selector);
+          const valDiv = el?.querySelector?.('div');
+          const num = parseFloat((valDiv?.textContent||'').trim().replace(',','.'));
+          return isNaN(num)?0:num;
+        }
       };
 
-      // читаем оба рейтинга
       const kp   = getRate('.full-start__rate.rate--kp');
       const imdb = getRate('.full-start__rate.rate--imdb');
 
       if(kp>0 || imdb>0){
         const movie = e.data?.movie || e.data || {};
         saveToCacheForAllIds(movie, { kp: kp>0?kp:null, imdb: imdb>0?imdb:null });
-        // перерисуем плитки — чтобы бейджи появились сразу
         document.querySelectorAll('.card').forEach(processCard);
       }
     });
   }
 
-  /* ================== optional DOM observer fallback ================== */
-  function observeFullRatesFallback(){
-    const obs = new MutationObserver(muts=>{
-      for(const m of muts){
-        for(const n of m.addedNodes){
-          if(n.nodeType!==1) continue;
-          const r = (sel)=> n.matches?.(sel) ? n : n.querySelector?.(sel);
-          const kpEl   = r('.full-start__rate.rate--kp');
-          const imdbEl = r('.full-start__rate.rate--imdb');
-          if(!kpEl && !imdbEl) continue;
+  /* ========= Badge render ========= */
 
-          // подождём, когда внутрь вставят число
-          setTimeout(()=>{
-            const activity = Lampa.Activity.active()?.activity;
-            const movie = activity?.data?.movie || activity?.data || {};
-            const kp   = kpEl   ? parseFloat((kpEl.querySelector('div')?.textContent||'').replace(',','.'))   : 0;
-            const imdb = imdbEl ? parseFloat((imdbEl.querySelector('div')?.textContent||'').replace(',','.')) : 0;
-            if((kp && !isNaN(kp)) || (imdb && !isNaN(imdb))){
-              saveToCacheForAllIds(movie, { kp: (kp||0)>0?kp:null, imdb: (imdb||0)>0?imdb:null });
-              document.querySelectorAll('.card').forEach(processCard);
-            }
-          }, 500);
-        }
-      }
-    });
-    obs.observe(document.body, { childList:true, subtree:true });
-  }
+  // только этот URL для TMDB-логотипа (как просил)
+  const TMDB_ICON = 'https://raw.githubusercontent.com/ARST113/Buttons-/refs/heads/main/the_movie_database.svg';
 
-  /* ================== badge render ================== */
   const BRAND_ICONS = {
-    tmdb: 'https://www.themoviedb.org/assets/2/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c.svg',
+    tmdb: TMDB_ICON,
     kp:   'https://raw.githubusercontent.com/ARST113/star/refs/heads/main/kinopoisk-icon-main.svg',
     imdb: 'https://upload.wikimedia.org/wikipedia/commons/6/69/IMDB_Logo_2016.svg'
   };
@@ -152,7 +141,6 @@
   function getPosterContainer(node){
     return node.querySelector('.card__view, .card__image, .card__img, .poster, .image, .thumb') || node;
   }
-
   function ensureHost(node){
     const c = getPosterContainer(node);
     if(!c || !c.appendChild) return null;
@@ -181,11 +169,17 @@
            font:700 12px/1 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;
            color:#fff;pointer-events:none;opacity:0;transform:scale(.95);transition:all .25s ease;}
         .b.show{opacity:1;transform:scale(1);}
-        .b.tmdb{background:#0D253F;box-shadow:0 0 0 1px rgba(255,255,255,.15),0 2px 8px rgba(0,0,0,.45);}
+        .b.tmdb{background:#0D253F;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 2px 8px rgba(0,0,0,.45);}
         .b.kp{background:#e85d00;padding:4px 6px;}
         .b.imdb{background:#f5c518;color:#000;text-shadow:none;box-shadow:0 0 4px rgba(0,0,0,.3);}
+
         .logo{display:inline-block;background-size:contain;background-repeat:no-repeat;background-position:center;}
-        .b.tmdb .logo{width:46px;height:18px;filter:brightness(0) invert(1);}
+
+        /* TMDB логотип: чтобы не терялся на тёмной теме можно включить фильтр.
+           По-умолчанию выключен — сохраняем внешний вид твоего SVG как есть.
+           Если нужно осветлить, раскомментируй строку с filter ниже. */
+        .b.tmdb .logo{width:46px;height:18px; /* filter: brightness(0) invert(1); */ }
+
         .b.kp   .logo{width:22px;height:22px;}
         .b.imdb .logo{width:44px;height:18px;}
       </style>
@@ -194,16 +188,16 @@
         <span class="logo" style="${icon?`background-image:url('${icon}')`:''}" title="${source.toUpperCase()}"></span>
       </div>
     `;
+
     requestAnimationFrame(()=>host.shadowRoot.querySelector('.b')?.classList.add('show'));
   }
 
-  /* ================== apply to cards ================== */
+  /* ========= Apply to cards ========= */
   function processCard(node){
     if(!node?.querySelector) return;
     const data = node.card_data || node.data;
     if(!data) return;
-
-    const source = Storage.get('rating_source','kp'); // по умолчанию показываем KP
+    const source = Storage.get('rating_source','kp');
     const r = getRatingFromCard(data, source);
     renderBadge(node, r, source);
   }
@@ -232,7 +226,7 @@
     setTimeout(()=>document.querySelectorAll('.card').forEach(processCard), 300);
   }
 
-  /* ================== settings & init ================== */
+  /* ========= Settings & init ========= */
   function addSettings(){
     if(!Lampa?.SettingsApi?.addParam && !Lampa?.Settings?.listener?.add) return;
     const addSelect = cfg=>{
@@ -243,7 +237,7 @@
           field:{name:cfg.title,description:cfg.descr},
           onChange:cfg.onChange
         });
-      } else if(Lampa.Settings?.listener?.add){
+      } else if(Lampa?.Settings?.listener?.add){
         Lampa.Settings.listener.add({
           component:'main',
           param:{name:cfg.name,type:'select',values:cfg.values,default:cfg.def},
@@ -281,8 +275,7 @@
     hideNative();
     addSettings();
     hookCards();
-    hookFullScrape();          // <-- надёжный скрейп из полной карточки
-    observeFullRatesFallback();// <-- запасной наблюдатель на всякий случай
+    hookFullScrape(); // скрейп KP/IMDb из карточки
   }
 
   if(window.appready) init();
