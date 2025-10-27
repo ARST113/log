@@ -9,18 +9,13 @@
     let observer;
     window.logoplugin = true;
 
-    // ===== ФУНКЦИИ ДЛЯ ОТКЛЮЧЕНИЯ BLUR =====
-    function disableBlur() {
-        // 1. Меняем параметр
-        if (typeof window.lampa_settings !== 'undefined' && 'blur_poster' in window.lampa_settings) {
-            window.lampa_settings.blur_poster = false;
-        }
-        
-        // 2. Удаляем старые стили если есть
+    // ===== ОСНОВНЫЕ СТИЛИ =====
+    function applyBaseStyles() {
+        // Удаляем старые стили если есть
         var oldStyle = document.getElementById('no-blur-plugin-styles');
         if (oldStyle) oldStyle.remove();
         
-        // 3. Добавляем CSS для принудительного отключения blur
+        // Добавляем все стили
         var style = document.createElement('style');
         style.id = 'no-blur-plugin-styles';
         style.textContent = `
@@ -37,6 +32,72 @@
                 filter: none !important;
                 -webkit-filter: none !important;
             }
+            
+            /* Черный фон и скрытие canvas */
+            .background {
+                background: #000 !important;
+            }
+            .background canvas {
+                display: none !important;
+            }
+            
+            /* Очистка правого блока */
+            .full-start-new__right {
+                background: none !important;
+                border: none !important;
+                border-radius: 0 !important;
+                box-shadow: none !important;
+                outline: none !important;
+            }
+            .full-start-new__right::before, 
+            .full-start-new__right::after {
+                background: none !important;
+                box-shadow: none !important;
+                border: none !important;
+                opacity: 0 !important;
+                content: unset !important;
+            }
+            
+            /* Стили для логотипа */
+            .full-start-new__title {
+                position: relative !important;
+                width: 100% !important;
+                display: flex !important;
+                justify-content: center !important;
+                align-items: center !important;
+                min-height: 70px !important;
+                margin: 0 auto !important;
+                box-sizing: border-box !important;
+            }
+            .full-start-new__title img {
+                margin-top: 5px !important;
+                max-height: 125px !important;
+                display: block !important;
+                position: relative !important;
+                z-index: 2 !important;
+            }
+            
+            /* Плавное затемнение постера (начинается с 50% высоты) */
+            .full-start-new__poster {
+                position: relative !important;
+            }
+            
+            .full-start-new__poster::after {
+                content: '' !important;
+                position: absolute !important;
+                bottom: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                height: 50% !important;
+                background: linear-gradient(to bottom, 
+                    transparent 0%, 
+                    rgba(0, 0, 0, 0.3) 20%,
+                    rgba(0, 0, 0, 0.6) 50%,
+                    rgba(0, 0, 0, 0.8) 80%,
+                    #000 100%) !important;
+                pointer-events: none !important;
+                z-index: 1 !important;
+            }
         `;
         document.head.appendChild(style);
         
@@ -45,10 +106,10 @@
 
     function initBlurPlugin() {
         // Запускаем сразу
-        disableBlur();
+        applyBaseStyles();
 
         // Повторяем через 500ms на случай если DOM еще не готов
-        setTimeout(disableBlur, 500);
+        setTimeout(applyBaseStyles, 500);
 
         // Мониторинг изменений каждую секунду
         setInterval(function() {
@@ -273,7 +334,7 @@
 
     // ===== ОБЩАЯ ИНИЦИАЛИЗАЦИЯ =====
     function initAllPlugins() {
-        initBlurPlugin();    // Запускаем отключение blur
+        initBlurPlugin();    // Запускаем отключение blur и базовые стили
         initMobileStyles();  // Запускаем мобильные стили
         initLogoPlugin();    // Запускаем логотипы
         addLogoSettings();   // Добавляем настройки логотипов
@@ -304,6 +365,6 @@
 
     // Ручные вызовы для отладки (бесшумные)
     window.applyLampaStyles = applyMobileStyles;
-    window.disableLampaBlur = disableBlur;
+    window.applyBaseStyles = applyBaseStyles;
 
 })();
