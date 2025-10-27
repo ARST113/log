@@ -77,9 +77,10 @@
                 z-index: 2 !important;
             }
             
-            /* Плавное затемнение постера (начинается с 50% высоты) */
+            /* Плавное затемнение постера - ИСПРАВЛЕННАЯ ВЕРСИЯ */
             .full-start-new__poster {
                 position: relative !important;
+                overflow: hidden !important;
             }
             
             .full-start-new__poster::after {
@@ -88,12 +89,12 @@
                 bottom: 0 !important;
                 left: 0 !important;
                 right: 0 !important;
-                height: 50% !important;
+                height: 40% !important;
                 background: linear-gradient(to bottom, 
                     transparent 0%, 
-                    rgba(0, 0, 0, 0.3) 20%,
-                    rgba(0, 0, 0, 0.6) 50%,
-                    rgba(0, 0, 0, 0.8) 80%,
+                    rgba(0, 0, 0, 0.4) 30%,
+                    rgba(0, 0, 0, 0.7) 60%,
+                    rgba(0, 0, 0, 0.9) 90%,
                     #000 100%) !important;
                 pointer-events: none !important;
                 z-index: 1 !important;
@@ -162,9 +163,11 @@
                                 node.classList.contains('full-start-new__right') ||
                                 node.classList.contains('full-start__left') ||
                                 node.classList.contains('items-line__head') ||
+                                node.classList.contains('full-start-new__poster') ||
                                 node.querySelector('.full-start-new__right') ||
                                 node.querySelector('.full-start__left') ||
-                                node.querySelector('.items-line__head')
+                                node.querySelector('.items-line__head') ||
+                                node.querySelector('.full-start-new__poster')
                             )) {
                                 shouldApplyStyles = true;
                                 break;
@@ -173,7 +176,7 @@
                             // Проверяем вложенные элементы
                             if (node.querySelector) {
                                 const cardElements = node.querySelectorAll(
-                                    '.full-start-new__right, .full-start__left, .items-line__head'
+                                    '.full-start-new__right, .full-start__left, .items-line__head, .full-start-new__poster'
                                 );
                                 if (cardElements.length > 0) {
                                     shouldApplyStyles = true;
@@ -183,17 +186,28 @@
                         }
                     }
                 }
+                
+                // Также проверяем изменения атрибутов (на случай если Lampa меняет классы)
+                if (mutation.type === 'attributes' && 
+                    mutation.target.classList && 
+                    mutation.target.classList.contains('full-start-new__poster')) {
+                    shouldApplyStyles = true;
+                }
             });
             
             if (shouldApplyStyles) {
-                applyMobileStyles();
+                setTimeout(applyMobileStyles, 100);
+                // Принудительно переприменяем базовые стили для затемнения
+                setTimeout(applyBaseStyles, 150);
             }
         });
         
         // Начинаем наблюдение
         observer.observe(document.body, {
             childList: true,
-            subtree: true
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'style']
         });
     }
 
