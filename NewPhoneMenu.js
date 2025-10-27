@@ -1,153 +1,377 @@
-Lampa.Platform.tv();
+(function() {
+    'use strict';
+    
+    // Проверка версии Lampa 3.0.0 и выше
+    if (Lampa.Manifest && Lampa.Manifest.app_digital < 300) return;
+    
+    Lampa.Platform.tv();
 
-(function () {
-  'use strict';
+    let observer;
+    window.logoplugin = true;
 
-  /** SVG */
-  const MOVIE_SVG = `<svg width="24" height="24" fill="none" viewBox="0 0 24 24"><path d="M9 22H15C20 22 22 20 22 15V9C22 4 20 2 15 2H9C4 2 2 4 2 9V15C2 20 4 22 9 22Z" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.1 12V10.52C9.1 8.61 10.45 7.84 12.1 8.79L13.38 9.53L14.66 10.27C16.31 11.22 16.31 12.78 14.66 13.73L13.38 14.47L12.1 15.21C10.45 16.16 9.1 15.38 9.1 13.48V12Z" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  const TV_SVG    = `<svg width="24" height="24" fill="none" viewBox="0 0 24 24"><path d="M7.26 2h9.47c.65 0 1.23.02 1.75.09C21.25 2.4 22 3.7 22 7.26v6.32c0 3.56-.75 4.86-3.52 5.16-.52.07-1.09.08-1.76.08H7.26c-.65 0-1.23-.02-1.75-.08C2.74 18.44 2 17.14 2 13.58V7.26c0-3.56.74-4.86 3.51-5.17.52-.07 1.1-.09 1.75-.09Z" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.58 8.32h3.68M6.74 14.11h10.53M7 22h10M7.19 8.3h.01M10.49 8.3h.01" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-
-  /** CSS */
-  const css = `
-  .navigation-bar__body {
-      display: flex !important;
-      justify-content: center !important;
-      align-items: center !important;
-      width: 100% !important;
-      padding: 6px 10px !important;
-      background: rgba(20,20,25,0.45);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      box-shadow: 0 2px 20px rgba(0,0,0,0.3);
-      border-top: 1px solid rgba(255,255,255,0.08);
-      overflow: hidden !important;
-  }
-
-  .navigation-bar__item {
-      flex: 1 1 auto !important;        /* 👈 равномерное распределение ширины */
-      display: flex !important;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 70px !important;          /* фиксируем только высоту */
-      margin: 0 4px !important;
-      background: rgba(255,255,255,0.06);
-      border-radius: 14px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.35);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      transition: background .2s ease, transform .2s ease;
-      box-sizing: border-box;
-  }
-
-  .navigation-bar__item:hover,
-  .navigation-bar__item.active {
-      background: rgba(255,255,255,0.14);
-      transform: scale(1.05);
-  }
-
-  .navigation-bar__icon {
-      width: 24px;
-      height: 24px;
-      margin-bottom: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-  }
-
-  .navigation-bar__icon svg {
-      width: 22px !important;
-      height: 22px !important;
-  }
-
-  .navigation-bar__label {
-      font-size: 0.85em !important;
-      text-align: center;
-      color: #fff;
-      white-space: nowrap;
-  }
-
-  /* 📱 лёгкое авто-сжатие */
-  @media (max-width: 900px) {
-      .navigation-bar__item { height: 66px !important; }
-      .navigation-bar__label { font-size: 0.8em !important; }
-  }
-  @media (max-width: 600px) {
-      .navigation-bar__item { height: 60px !important; border-radius: 12px; }
-      .navigation-bar__icon svg { width: 20px !important; height: 20px !important; }
-      .navigation-bar__label { font-size: 0.78em !important; }
-  }`;
-
-  const $  = (s,r=document)=>r.querySelector(s);
-  const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
-
-  function injectCSS(){
-    if(!$('#menu-glass-auto-style')){
-      const st=document.createElement('style');
-      st.id='menu-glass-auto-style';
-      st.textContent=css;
-      document.head.appendChild(st);
+    // ===== ФУНКЦИИ ДЛЯ ОТКЛЮЧЕНИЯ BLUR =====
+    function disableBlur() {
+        // 1. Меняем параметр
+        if (typeof window.lampa_settings !== 'undefined' && 'blur_poster' in window.lampa_settings) {
+            window.lampa_settings.blur_poster = false;
+        }
+        
+        // 2. Удаляем старые стили если есть
+        var oldStyle = document.getElementById('no-blur-plugin-styles');
+        if (oldStyle) oldStyle.remove();
+        
+        // 3. Добавляем CSS для нового layout и отключения blur
+        var style = document.createElement('style');
+        style.id = 'no-blur-plugin-styles';
+        style.textContent = `
+            /* Новый layout: постер сверху, контент снизу */
+            .full-start-new {
+                display: flex !important;
+                flex-direction: column !important;
+            }
+            
+            .full-start-new__poster {
+                width: 100% !important;
+                max-width: 100% !important;
+                margin: 0 auto !important;
+                text-align: center !important;
+            }
+            
+            .full-start-new__poster img {
+                width: auto !important;
+                max-width: 100% !important;
+                max-height: 70vh !important;
+                object-fit: contain !important;
+            }
+            
+            .full-start-new__content {
+                width: 100% !important;
+                padding: 20px 15px !important;
+            }
+            
+            /* Отключаем blur на всех постерах */
+            .full-start__poster,
+            .full-start-new__poster,
+            .full-start__poster img,
+            .full-start-new__poster img,
+            .background,
+            .background img,
+            .screensaver__slides-slide img,
+            .screensaver__bg,
+            .card--collection .card__img {
+                filter: none !important;
+                -webkit-filter: none !important;
+            }
+            
+            /* Центрируем логотип */
+            .full-start-new__title {
+                display: flex !important;
+                justify-content: center !important;
+                align-items: center !important;
+                width: 100% !important;
+                text-align: center !important;
+            }
+            
+            .full-start-new__title img {
+                max-height: 80px !important;
+                width: auto !important;
+                margin: 10px 0 !important;
+            }
+        `;
+        document.head.appendChild(style);
+        
+        return true;
     }
-  }
 
-  function emulateSidebarClick(label){
-    for(const el of $$('.menu__item, .selector')){
-      const txt=(el.innerText||el.textContent||'').trim().toLowerCase();
-      if(txt===label.toLowerCase()){el.click();return;}
+    function initBlurPlugin() {
+        // Запускаем сразу
+        disableBlur();
+
+        // Повторяем через 500ms на случай если DOM еще не готов
+        setTimeout(disableBlur, 500);
+
+        // Мониторинг изменений каждую секунду
+        setInterval(function() {
+            if (window.lampa_settings && window.lampa_settings.blur_poster !== false) {
+                window.lampa_settings.blur_poster = false;
+            }
+        }, 1000);
     }
-  }
 
-  function addItem(action,label,svg){
-    const bar=$('.navigation-bar__body');
-    if(!bar||bar.querySelector(`[data-action="${action}"]`))return;
-    const div=document.createElement('div');
-    div.className='navigation-bar__item';
-    div.dataset.action=action;
-    div.innerHTML=`<div class="navigation-bar__icon">${svg}</div><div class="navigation-bar__label">${label}</div>`;
-    const search=bar.querySelector('.navigation-bar__item[data-action="search"]');
-    if(search) bar.insertBefore(div,search); else bar.appendChild(div);
-    div.addEventListener('click',()=>emulateSidebarClick(label));
-  }
+    // ===== ФУНКЦИИ ДЛЯ МОБИЛЬНЫХ СТИЛЕЙ =====
+    function initMobileStyles() {
+        // Подписываемся на события
+        if (typeof Lampa.Listener !== 'undefined' && typeof Lampa.Listener.follow === 'function') {
+            // События приложения
+            Lampa.Listener.follow('app', function(e) {
+                if (e.type === 'full' || e.type === 'card') {
+                    setTimeout(() => {
+                        applyMobileStyles();
+                        startDOMObserver();
+                        reorganizeLayout(); // Реорганизуем layout
+                    }, 400);
+                }
+                
+                // При скрытии карточки останавливаем observer
+                if (e.type === 'hide' || e.type === 'component_hide') {
+                    stopDOMObserver();
+                }
+            });
+        }
 
-  /** адаптация под экран */
-  function adjustSpacing(){
-    const bar=$('.navigation-bar__body');
-    if(!bar) return;
-    const items=$$('.navigation-bar__item',bar);
-    if(!items.length) return;
+        // Запускаем постоянное отслеживание
+        startDOMObserver();
+        
+        // Также применяем стили сразу
+        setTimeout(() => {
+            applyMobileStyles();
+            reorganizeLayout();
+        }, 1000);
+    }
 
-    // если экран очень узкий — уменьшаем внутренние отступы
-    const width=bar.clientWidth;
-    const count=items.length;
-    const minGap=Math.max(2,Math.floor(width*0.005));
-    const totalGap=minGap*(count-1);
-    const available=width-totalGap;
-    const itemWidth=Math.floor(available/count);
+    function reorganizeLayout() {
+        // Реорганизуем layout: постер сверху, контент снизу
+        const $fullStart = $('.full-start-new');
+        const $poster = $('.full-start-new__poster');
+        const $content = $('.full-start-new__right, .full-start-new__left');
+        
+        if ($fullStart.length > 0 && $poster.length > 0 && $content.length > 0) {
+            // Убедимся что постер идет первым
+            $poster.prependTo($fullStart);
+            
+            // Обернем контент в отдельный блок
+            if (!$('.full-start-new__content').length) {
+                $content.wrapAll('<div class="full-start-new__content"></div>');
+            }
+        }
+    }
 
-    items.forEach((it,i)=>{
-      it.style.flex=`0 0 ${itemWidth}px`;
-      it.style.marginRight=(i<count-1)?`${minGap}px`:'0';
-    });
-  }
+    function startDOMObserver() {
+        // Если observer уже запущен, останавливаем его
+        stopDOMObserver();
+        
+        observer = new MutationObserver(function(mutations) {
+            let shouldApplyStyles = false;
+            let shouldReorganize = false;
+            
+            mutations.forEach(function(mutation) {
+                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                    for (let node of mutation.addedNodes) {
+                        if (node.nodeType === 1) {
+                            // Проверяем, появились ли элементы карточки
+                            if (node.classList && (
+                                node.classList.contains('full-start-new__right') ||
+                                node.classList.contains('full-start__left') ||
+                                node.classList.contains('full-start-new__poster') ||
+                                node.classList.contains('items-line__head') ||
+                                node.querySelector('.full-start-new__right') ||
+                                node.querySelector('.full-start__left') ||
+                                node.querySelector('.full-start-new__poster') ||
+                                node.querySelector('.items-line__head')
+                            )) {
+                                shouldApplyStyles = true;
+                                shouldReorganize = true;
+                                break;
+                            }
+                            
+                            // Проверяем вложенные элементы
+                            if (node.querySelector) {
+                                const cardElements = node.querySelectorAll(
+                                    '.full-start-new__right, .full-start__left, .full-start-new__poster, .items-line__head'
+                                );
+                                if (cardElements.length > 0) {
+                                    shouldApplyStyles = true;
+                                    shouldReorganize = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            
+            if (shouldApplyStyles) {
+                applyMobileStyles();
+            }
+            if (shouldReorganize) {
+                setTimeout(reorganizeLayout, 100);
+            }
+        });
+        
+        // Начинаем наблюдение
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
 
-  function init(){
-    injectCSS();
-    addItem('movie','Фильмы',MOVIE_SVG);
-    addItem('tv','Сериалы',TV_SVG);
-    adjustSpacing();
+    function stopDOMObserver() {
+        if (observer) {
+            observer.disconnect();
+            observer = null;
+        }
+    }
 
-    const bar=$('.navigation-bar__body');
-    if(!bar) return;
-    const ro=new ResizeObserver(adjustSpacing);
-    ro.observe(bar);
-    window.addEventListener('resize',adjustSpacing);
-    window.addEventListener('orientationchange',adjustSpacing);
-  }
+    function applyMobileStyles() {
+        // Применяем стили для мобильной адаптации
+        const styles = {
+            // Основной контейнер
+            '.full-start-new__right, .full-start__left': {
+                'display': 'flex',
+                'flex-direction': 'column',
+                'justify-content': 'center',
+                'align-items': 'center'
+            },
+            
+            // Кнопки и рейтинг
+            '.full-start-new__buttons, .full-start-new__rate-line, .full-start__buttons, .full-start__details': {
+                'justify-content': 'center',
+                'align-items': 'center',
+                'display': 'flex',
+                'flex-direction': 'row',
+                'gap': '0.5em',
+                'flex-wrap': 'wrap'
+            },
+            
+            // Детали
+            '.full-start-new__details, .full-descr__details, .full-descr__tags': {
+                'justify-content': 'center',
+                'align-items': 'center',
+                'display': 'flex',
+                'flex-direction': 'row',
+                'flex-wrap': 'wrap'
+            },
+            
+            // Текстовые блоки
+            '.full-descr__text, .full-start-new__title, .full-start-new__tagline, .full-start-new__head, .full-start__title, .full-start__title-original': {
+                'display': 'flex',
+                'flex-direction': 'row',
+                'justify-content': 'center',
+                'align-items': 'center',
+                'text-align': 'center'
+            }
+        };
 
-  const mo=new MutationObserver(()=>{
-    const bar=$('.navigation-bar__body');
-    if(bar){mo.disconnect();init();}
-  });
-  mo.observe(document.documentElement,{childList:true,subtree:true});
-  if($('.navigation-bar__body')){mo.disconnect();init();}
+        // Применяем все стили
+        Object.keys(styles).forEach(selector => {
+            const elements = $(selector);
+            if (elements.length > 0) {
+                elements.css(styles[selector]);
+            }
+        });
+
+        // Стили для заголовков разделов
+        applySectionHeadStyles();
+    }
+
+    function applySectionHeadStyles() {
+        const sectionTitles = [
+            'Рекомендации',
+            'Режиссер', 
+            'Актеры',
+            'Подробно',
+            'Похожие',
+            'Коллекция'
+        ];
+
+        $('.items-line__head').each(function() {
+            const $element = $(this);
+            const text = $element.text().trim();
+            
+            if (text && (
+                sectionTitles.includes(text) ||
+                text.includes('Сезон')
+            )) {
+                $element.css({
+                    'display': 'flex',
+                    'justify-content': 'center',
+                    'align-items': 'center',
+                    'width': '100%'
+                });
+            }
+        });
+    }
+
+    // ===== ФУНКЦИИ ДЛЯ ЛОГОТИПОВ =====
+    function initLogoPlugin() {
+        Lampa.Listener.follow('full', function(e) {
+            if (e.type === 'complite' && Lampa.Storage.get('logo_glav') !== '1') {
+                var data = e.data.movie;
+                var type = data.name ? 'tv' : 'movie';
+                
+                if (data.id !== '') {
+                    var url = Lampa.TMDB.api(type + '/' + data.id + '/images?api_key=' + Lampa.TMDB.key() + '&language=' + Lampa.Storage.get('language'));
+                    
+                    $.get(url, function(data) {
+                        if (data.logos && data.logos[0]) {
+                            var logo = data.logos[0].file_path;
+                            
+                            if (logo !== '') {
+                                // Добавляем логотип с центрированием
+                                e.object.activity.render().find('.full-start-new__title').html(
+                                    '<img style="max-height: 80px; width: auto; margin: 10px 0;" src="' + Lampa.TMDB.image('/t/p/w300' + logo.replace('.svg', '.png')) + '"/>'
+                                );
+                            }
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    function addLogoSettings() {
+        Lampa.SettingsApi.addParam({
+            component: 'interface',
+            param: {
+                name: 'logo_glav',
+                type: 'select',
+                values: {
+                    '1': 'Скрыть',
+                    '0': 'Отображать',
+                },
+                default: '0',
+            },
+            field: {
+                name: 'Логотипы вместо названий',
+                description: 'Отображает логотипы фильмов вместо текста',
+            }
+        });
+    }
+
+    // ===== ОБЩАЯ ИНИЦИАЛИЗАЦИЯ =====
+    function initAllPlugins() {
+        initBlurPlugin();    // Запускаем отключение blur
+        initMobileStyles();  // Запускаем мобильные стили
+        initLogoPlugin();    // Запускаем логотипы
+        addLogoSettings();   // Добавляем настройки логотипов
+    }
+
+    function startPlugin() {
+        if (window.appready) {
+            initAllPlugins();
+        } else {
+            if (typeof Lampa.Listener !== 'undefined' && typeof Lampa.Listener.follow === 'function') {
+                Lampa.Listener.follow('app', function(e) {
+                    if (e.type === 'ready') {
+                        setTimeout(initAllPlugins, 500);
+                    }
+                });
+            } else {
+                setTimeout(initAllPlugins, 2000);
+            }
+        }
+    }
+
+    // Запускаем плагин
+    if (typeof Lampa.Timer !== 'undefined' && typeof Lampa.Timer.add === 'function') {
+        Lampa.Timer.add(500, startPlugin, true);
+    } else {
+        setTimeout(startPlugin, 500);
+    }
+
+    // Ручные вызовы для отладки (бесшумные)
+    window.applyLampaStyles = applyMobileStyles;
+    window.disableLampaBlur = disableBlur;
+    window.reorganizeLayout = reorganizeLayout;
+
 })();
