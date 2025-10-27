@@ -1,174 +1,309 @@
 (function() {
     'use strict';
+    
+    // Проверка версии Lampa 3.0.0 и выше
+    if (Lampa.Manifest && Lampa.Manifest.app_digital < 300) return;
+    
+    Lampa.Platform.tv();
 
-    console.log('[Poster Style] === Плагин запущен ===');
+    let observer;
+    window.logoplugin = true;
 
-    function applyPosterStyles() {
-        console.log('[Poster Style] Применяем стили...');
-        
-        // Меняем параметр blur на false
+    // ===== ФУНКЦИИ ДЛЯ ОТКЛЮЧЕНИЯ BLUR =====
+    function disableBlur() {
+        // 1. Меняем параметр
         if (typeof window.lampa_settings !== 'undefined' && 'blur_poster' in window.lampa_settings) {
             window.lampa_settings.blur_poster = false;
         }
         
-        // Удаляем старые стили
-        var oldStyle = document.getElementById('poster-style-plugin');
+        // 2. Удаляем старые стили если есть
+        var oldStyle = document.getElementById('no-blur-plugin-styles');
         if (oldStyle) oldStyle.remove();
         
-        // Создаем новые стили
+        // 3. Добавляем CSS для принудительного отключения blur
         var style = document.createElement('style');
-        style.id = 'poster-style-plugin';
+        style.id = 'no-blur-plugin-styles';
         style.textContent = `
-            /* Убираем blur */
+            /* Отключаем blur на всех постерах */
             .full-start__poster,
             .full-start-new__poster,
             .full-start__poster img,
             .full-start-new__poster img,
             .background,
-            .background img {
+            .background img,
+            .screensaver__slides-slide img,
+            .screensaver__bg,
+            .card--collection .card__img {
                 filter: none !important;
                 -webkit-filter: none !important;
             }
-            
-            /* Основной контейнер постера */
-            .full-start__poster,
-            .full-start-new__poster,
-            .background {
-                position: relative;
-                overflow: hidden;
-            }
-            
-            /* Изображение - показываем весь постер */
-            .full-start__poster img,
-            .full-start-new__poster img,
-            .background img {
-                object-fit: cover !important;
-                object-position: center center !important;
-                width: 100% !important;
-                height: 100% !important;
-                
-                /* Обработка как на Кинопоиске */
-                filter: brightness(0.75) contrast(1.1) saturate(0.9) !important;
-                -webkit-filter: brightness(0.75) contrast(1.1) saturate(0.9) !important;
-            }
-            
-            /* Очень плавный градиент без резких границ */
-            .full-start__poster::after,
-            .full-start-new__poster::after,
-            .background::after {
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                pointer-events: none;
-                z-index: 1;
-                
-                background: 
-                    /* Мягкий градиент снизу - очень плавный переход */
-                    linear-gradient(
-                        to top,
-                        rgba(0, 0, 0, 0.95) 0%,
-                        rgba(0, 0, 0, 0.92) 5%,
-                        rgba(0, 0, 0, 0.88) 10%,
-                        rgba(0, 0, 0, 0.82) 15%,
-                        rgba(0, 0, 0, 0.75) 20%,
-                        rgba(0, 0, 0, 0.65) 25%,
-                        rgba(0, 0, 0, 0.55) 30%,
-                        rgba(0, 0, 0, 0.45) 35%,
-                        rgba(0, 0, 0, 0.35) 40%,
-                        rgba(0, 0, 0, 0.25) 45%,
-                        rgba(0, 0, 0, 0.18) 50%,
-                        rgba(0, 0, 0, 0.12) 55%,
-                        rgba(0, 0, 0, 0.08) 60%,
-                        rgba(0, 0, 0, 0.05) 65%,
-                        rgba(0, 0, 0, 0.03) 70%,
-                        rgba(0, 0, 0, 0.01) 75%,
-                        transparent 80%
-                    ),
-                    /* Мягкое затемнение по бокам */
-                    linear-gradient(
-                        to right,
-                        rgba(0, 0, 0, 0.4) 0%,
-                        rgba(0, 0, 0, 0.2) 5%,
-                        rgba(0, 0, 0, 0.1) 10%,
-                        transparent 20%,
-                        transparent 80%,
-                        rgba(0, 0, 0, 0.1) 90%,
-                        rgba(0, 0, 0, 0.2) 95%,
-                        rgba(0, 0, 0, 0.4) 100%
-                    ),
-                    /* Легкая виньетка */
-                    radial-gradient(
-                        ellipse at center,
-                        transparent 40%,
-                        rgba(0, 0, 0, 0.08) 60%,
-                        rgba(0, 0, 0, 0.15) 80%,
-                        rgba(0, 0, 0, 0.25) 100%
-                    );
-            }
-            
-            /* Очень легкий общий overlay */
-            .full-start__poster::before,
-            .full-start-new__poster::before,
-            .background::before {
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0, 0, 0, 0.1);
-                pointer-events: none;
-                z-index: 0;
-            }
-            
-            /* Контент поверх градиентов */
-            .full-start__content,
-            .full-start-new__content,
-            .full-start__title,
-            .full-start-new__title,
-            .full-start__tagline,
-            .full-start__details,
-            .full-start__buttons {
-                position: relative;
-                z-index: 2;
-            }
         `;
-        
         document.head.appendChild(style);
-        console.log('[Poster Style] ✓ Стили применены');
+        
+        return true;
     }
 
-    // Применяем стили сразу
-    applyPosterStyles();
-    
-    // Повторяем через 500ms
-    setTimeout(applyPosterStyles, 500);
+    function initBlurPlugin() {
+        // Запускаем сразу
+        disableBlur();
 
-    // Мониторинг настройки blur_poster
-    setInterval(function() {
-        if (window.lampa_settings && window.lampa_settings.blur_poster !== false) {
-            window.lampa_settings.blur_poster = false;
+        // Повторяем через 500ms на случай если DOM еще не готов
+        setTimeout(disableBlur, 500);
+
+        // Мониторинг изменений каждую секунду
+        setInterval(function() {
+            if (window.lampa_settings && window.lampa_settings.blur_poster !== false) {
+                window.lampa_settings.blur_poster = false;
+            }
+        }, 1000);
+    }
+
+    // ===== ФУНКЦИИ ДЛЯ МОБИЛЬНЫХ СТИЛЕЙ =====
+    function initMobileStyles() {
+        // Подписываемся на события
+        if (typeof Lampa.Listener !== 'undefined' && typeof Lampa.Listener.follow === 'function') {
+            // События приложения
+            Lampa.Listener.follow('app', function(e) {
+                if (e.type === 'full' || e.type === 'card') {
+                    setTimeout(() => {
+                        applyMobileStyles();
+                        startDOMObserver();
+                    }, 400);
+                }
+                
+                // При скрытии карточки останавливаем observer
+                if (e.type === 'hide' || e.type === 'component_hide') {
+                    stopDOMObserver();
+                }
+            });
         }
-    }, 1000);
 
-    // Подписываемся на события Lampa
-    if (window.Lampa && Lampa.Listener) {
-        Lampa.Listener.follow('app', function(e) {
-            if (e.type === 'ready') {
-                applyPosterStyles();
+        // Запускаем постоянное отслеживание
+        startDOMObserver();
+        
+        // Также применяем стили сразу
+        setTimeout(applyMobileStyles, 1000);
+    }
+
+    function startDOMObserver() {
+        // Если observer уже запущен, останавливаем его
+        stopDOMObserver();
+        
+        observer = new MutationObserver(function(mutations) {
+            let shouldApplyStyles = false;
+            
+            mutations.forEach(function(mutation) {
+                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                    for (let node of mutation.addedNodes) {
+                        if (node.nodeType === 1) {
+                            // Проверяем, появились ли элементы карточки
+                            if (node.classList && (
+                                node.classList.contains('full-start-new__right') ||
+                                node.classList.contains('full-start__left') ||
+                                node.classList.contains('items-line__head') ||
+                                node.querySelector('.full-start-new__right') ||
+                                node.querySelector('.full-start__left') ||
+                                node.querySelector('.items-line__head')
+                            )) {
+                                shouldApplyStyles = true;
+                                break;
+                            }
+                            
+                            // Проверяем вложенные элементы
+                            if (node.querySelector) {
+                                const cardElements = node.querySelectorAll(
+                                    '.full-start-new__right, .full-start__left, .items-line__head'
+                                );
+                                if (cardElements.length > 0) {
+                                    shouldApplyStyles = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            
+            if (shouldApplyStyles) {
+                applyMobileStyles();
             }
         });
         
-        Lampa.Listener.follow('activity', function(e) {
-            if (e.type === 'start') {
-                setTimeout(applyPosterStyles, 100);
+        // Начинаем наблюдение
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    function stopDOMObserver() {
+        if (observer) {
+            observer.disconnect();
+            observer = null;
+        }
+    }
+
+    function applyMobileStyles() {
+        // Применяем стили для мобильной адаптации
+        const styles = {
+            // Основной контейнер
+            '.full-start-new__right, .full-start__left': {
+                'display': 'flex',
+                'flex-direction': 'column',
+                'justify-content': 'center',
+                'align-items': 'center'
+            },
+            
+            // Кнопки и рейтинг
+            '.full-start-new__buttons, .full-start-new__rate-line, .full-start__buttons, .full-start__details': {
+                'justify-content': 'center',
+                'align-items': 'center',
+                'display': 'flex',
+                'flex-direction': 'row',
+                'gap': '0.5em',
+                'flex-wrap': 'wrap'
+            },
+            
+            // Детали
+            '.full-start-new__details, .full-descr__details, .full-descr__tags': {
+                'justify-content': 'center',
+                'align-items': 'center',
+                'display': 'flex',
+                'flex-direction': 'row',
+                'flex-wrap': 'wrap'
+            },
+            
+            // Текстовые блоки
+            '.full-descr__text, .full-start-new__title, .full-start-new__tagline, .full-start-new__head, .full-start__title, .full-start__title-original': {
+                'display': 'flex',
+                'flex-direction': 'row',
+                'justify-content': 'center',
+                'align-items': 'center',
+                'text-align': 'center'
+            }
+        };
+
+        // Применяем все стили
+        Object.keys(styles).forEach(selector => {
+            const elements = $(selector);
+            if (elements.length > 0) {
+                elements.css(styles[selector]);
+            }
+        });
+
+        // Стили для заголовков разделов
+        applySectionHeadStyles();
+    }
+
+    function applySectionHeadStyles() {
+        const sectionTitles = [
+            'Рекомендации',
+            'Режиссер', 
+            'Актеры',
+            'Подробно',
+            'Похожие',
+            'Коллекция'
+        ];
+
+        $('.items-line__head').each(function() {
+            const $element = $(this);
+            const text = $element.text().trim();
+            
+            if (text && (
+                sectionTitles.includes(text) ||
+                text.includes('Сезон')
+            )) {
+                $element.css({
+                    'display': 'flex',
+                    'justify-content': 'center',
+                    'align-items': 'center',
+                    'width': '100%'
+                });
             }
         });
     }
 
-    console.log('[Poster Style] === Инициализация завершена ===');
+    // ===== ФУНКЦИИ ДЛЯ ЛОГОТИПОВ =====
+    function initLogoPlugin() {
+        Lampa.Listener.follow('full', function(e) {
+            if (e.type === 'complite' && Lampa.Storage.get('logo_glav') !== '1') {
+                var data = e.data.movie;
+                var type = data.name ? 'tv' : 'movie';
+                
+                if (data.id !== '') {
+                    var url = Lampa.TMDB.api(type + '/' + data.id + '/images?api_key=' + Lampa.TMDB.key() + '&language=' + Lampa.Storage.get('language'));
+                    
+                    $.get(url, function(data) {
+                        if (data.logos && data.logos[0]) {
+                            var logo = data.logos[0].file_path;
+                            
+                            if (logo !== '') {
+                                // Добавляем логотип с центрированием
+                                e.object.activity.render().find('.full-start-new__title').html(
+                                    '<div style="display: flex; justify-content: center; align-items: center; width: 100%;">' +
+                                    '<img style="margin-top: 5px; max-height: 125px;" src="' + Lampa.TMDB.image('/t/p/w300' + logo.replace('.svg', '.png')) + '"/>' +
+                                    '</div>'
+                                );
+                            }
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    function addLogoSettings() {
+        Lampa.SettingsApi.addParam({
+            component: 'interface',
+            param: {
+                name: 'logo_glav',
+                type: 'select',
+                values: {
+                    '1': 'Скрыть',
+                    '0': 'Отображать',
+                },
+                default: '0',
+            },
+            field: {
+                name: 'Логотипы вместо названий',
+                description: 'Отображает логотипы фильмов вместо текста',
+            }
+        });
+    }
+
+    // ===== ОБЩАЯ ИНИЦИАЛИЗАЦИЯ =====
+    function initAllPlugins() {
+        initBlurPlugin();    // Запускаем отключение blur
+        initMobileStyles();  // Запускаем мобильные стили
+        initLogoPlugin();    // Запускаем логотипы
+        addLogoSettings();   // Добавляем настройки логотипов
+    }
+
+    function startPlugin() {
+        if (window.appready) {
+            initAllPlugins();
+        } else {
+            if (typeof Lampa.Listener !== 'undefined' && typeof Lampa.Listener.follow === 'function') {
+                Lampa.Listener.follow('app', function(e) {
+                    if (e.type === 'ready') {
+                        setTimeout(initAllPlugins, 500);
+                    }
+                });
+            } else {
+                setTimeout(initAllPlugins, 2000);
+            }
+        }
+    }
+
+    // Запускаем плагин
+    if (typeof Lampa.Timer !== 'undefined' && typeof Lampa.Timer.add === 'function') {
+        Lampa.Timer.add(500, startPlugin, true);
+    } else {
+        setTimeout(startPlugin, 500);
+    }
+
+    // Ручные вызовы для отладки (бесшумные)
+    window.applyLampaStyles = applyMobileStyles;
+    window.disableLampaBlur = disableBlur;
 
 })();
