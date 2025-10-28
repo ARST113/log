@@ -9,6 +9,8 @@ Lampa.Platform.tv();
     Lampa.Platform.tv();
 
     let observer;
+    let reorganizationAttempts = 0;
+    const maxAttempts = 10;
     window.logoplugin = true;
 
     // ===== ОСНОВНЫЕ СТИЛИ =====
@@ -122,6 +124,113 @@ Lampa.Platform.tv();
         }, 1000);
     }
 
+    // ===== ФУНКЦИИ ДЛЯ РЕОРГАНИЗАЦИИ ЭЛЕМЕНТОВ =====
+    function reorganizeElements() {
+        reorganizationAttempts++;
+        
+        const $title = $('.full-start-new__title'); // Логотип
+        const $tagline = $('.full-start-new__tagline'); // Слоган
+        const $head = $('.full-start-new__head'); // Год и страна
+        const $rateLine = $('.full-start-new__rate-line'); // Рейтинги
+        
+        // Проверяем что все элементы существуют
+        if ($title.length > 0 && $tagline.length > 0 && $head.length > 0 && $rateLine.length > 0) {
+            // Находим общего родителя
+            const $parent = $title.parent();
+            
+            // Получаем текущий порядок элементов
+            const elements = [];
+            $parent.children().each(function() {
+                const $el = $(this);
+                if ($el.hasClass('full-start-new__title') || 
+                    $el.hasClass('full-start-new__tagline') || 
+                    $el.hasClass('full-start-new__head') || 
+                    $el.hasClass('full-start-new__rate-line')) {
+                    elements.push($el);
+                }
+            });
+            
+            // Проверяем, нужно ли менять порядок
+            const currentOrder = elements.map(el => el.attr('class'));
+            const desiredOrder = [
+                'full-start-new__title',
+                'full-start-new__tagline full--tagline',
+                'full-start-new__head',
+                'full-start-new__rate-line'
+            ];
+            
+            let needsReordering = false;
+            for (let i = 0; i < Math.min(currentOrder.length, desiredOrder.length); i++) {
+                if (!currentOrder[i].includes(desiredOrder[i].split(' ')[0])) {
+                    needsReordering = true;
+                    break;
+                }
+            }
+            
+            if (needsReordering) {
+                // Сохраняем HTML содержимое элементов
+                const titleHTML = $title.html();
+                const taglineHTML = $tagline.html();
+                const headHTML = $head.html();
+                const rateLineHTML = $rateLine.html();
+                
+                // Удаляем старые элементы
+                $title.remove();
+                $tagline.remove();
+                $head.remove();
+                $rateLine.remove();
+                
+                // Создаем новые элементы в правильном порядке
+                const $newTitle = $('<div class="full-start-new__title"></div>').html(titleHTML);
+                const $newTagline = $('<div class="full-start-new__tagline full--tagline"></div>').html(taglineHTML);
+                const $newHead = $('<div class="full-start-new__head"></div>').html(headHTML);
+                const $newRateLine = $('<div class="full-start-new__rate-line"></div>').html(rateLineHTML);
+                
+                // Применяем стили центрирования
+                $newTagline.css({
+                    'display': 'flex',
+                    'flex-direction': 'row',
+                    'justify-content': 'center',
+                    'align-items': 'center',
+                    'text-align': 'center'
+                });
+                
+                $newHead.css({
+                    'display': 'flex',
+                    'flex-direction': 'row',
+                    'justify-content': 'center',
+                    'align-items': 'center',
+                    'text-align': 'center'
+                });
+                
+                $newRateLine.css({
+                    'justify-content': 'center',
+                    'align-items': 'center',
+                    'display': 'flex',
+                    'flex-flow': 'wrap',
+                    'gap': '0.5em'
+                });
+                
+                // Вставляем элементы в правильном порядке
+                $newTitle.prependTo($parent);
+                $newTagline.insertAfter($newTitle);
+                $newHead.insertAfter($newTagline);
+                $newRateLine.insertAfter($newHead);
+            }
+            
+            reorganizationAttempts = 0; // Сбрасываем счетчик
+            return true;
+        } else {
+            // Если превышено максимальное количество попыток, останавливаемся
+            if (reorganizationAttempts >= maxAttempts) {
+                if (observer) {
+                    observer.disconnect();
+                }
+            }
+            return false;
+        }
+    }
+
     // ===== ФУНКЦИИ ДЛЯ МОБИЛЬНЫХ СТИЛЕЙ =====
     function initMobileStyles() {
         // Подписываемся на события
@@ -132,6 +241,7 @@ Lampa.Platform.tv();
                     setTimeout(() => {
                         applyMobileStyles();
                         startDOMObserver();
+                        reorganizeElements(); // Реорганизуем элементы при открытии карточки
                     }, 400);
                 }
                 
@@ -146,7 +256,10 @@ Lampa.Platform.tv();
         startDOMObserver();
         
         // Также применяем стили сразу
-        setTimeout(applyMobileStyles, 1000);
+        setTimeout(() => {
+            applyMobileStyles();
+            reorganizeElements();
+        }, 1000);
     }
 
     function startDOMObserver() {
@@ -155,12 +268,13 @@ Lampa.Platform.tv();
         
         observer = new MutationObserver(function(mutations) {
             let shouldApplyStyles = false;
+            let shouldReorganize = false;
             
             mutations.forEach(function(mutation) {
                 if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
                     for (let node of mutation.addedNodes) {
                         if (node.nodeType === 1) {
-                            // Проверяем, появились ли элементы карточки
+                            // Проверяем, появились ли элементы карточки для стилей
                             if (node.classList && (
                                 node.classList.contains('full-start-new__right') ||
                                 node.classList.contains('full-start__left') ||
@@ -172,7 +286,20 @@ Lampa.Platform.tv();
                                 node.querySelector('.full-start-new__poster')
                             )) {
                                 shouldApplyStyles = true;
-                                break;
+                            }
+                            
+                            // Проверяем, появились ли элементы для реорганизации
+                            if (node.classList && (
+                                node.classList.contains('full-start-new__title') ||
+                                node.classList.contains('full-start-new__tagline') ||
+                                node.classList.contains('full-start-new__head') ||
+                                node.classList.contains('full-start-new__rate-line') ||
+                                node.querySelector('.full-start-new__title') ||
+                                node.querySelector('.full-start-new__tagline') ||
+                                node.querySelector('.full-start-new__head') ||
+                                node.querySelector('.full-start-new__rate-line')
+                            )) {
+                                shouldReorganize = true;
                             }
                             
                             // Проверяем вложенные элементы
@@ -182,7 +309,13 @@ Lampa.Platform.tv();
                                 );
                                 if (cardElements.length > 0) {
                                     shouldApplyStyles = true;
-                                    break;
+                                }
+                                
+                                const reorgElements = node.querySelectorAll(
+                                    '.full-start-new__title, .full-start-new__tagline, .full-start-new__head, .full-start-new__rate-line'
+                                );
+                                if (reorgElements.length > 0) {
+                                    shouldReorganize = true;
                                 }
                             }
                         }
@@ -192,8 +325,13 @@ Lampa.Platform.tv();
                 // Также проверяем изменения атрибутов (на случай если Lampa меняет классы)
                 if (mutation.type === 'attributes' && 
                     mutation.target.classList && 
-                    mutation.target.classList.contains('full-start-new__poster')) {
+                    (mutation.target.classList.contains('full-start-new__poster') ||
+                     mutation.target.classList.contains('full-start-new__title') ||
+                     mutation.target.classList.contains('full-start-new__tagline') ||
+                     mutation.target.classList.contains('full-start-new__head') ||
+                     mutation.target.classList.contains('full-start-new__rate-line'))) {
                     shouldApplyStyles = true;
+                    shouldReorganize = true;
                 }
             });
             
@@ -201,6 +339,10 @@ Lampa.Platform.tv();
                 setTimeout(applyMobileStyles, 100);
                 // Принудительно переприменяем базовые стили для затемнения
                 setTimeout(applyBaseStyles, 150);
+            }
+            
+            if (shouldReorganize && reorganizationAttempts < maxAttempts) {
+                setTimeout(reorganizeElements, 200);
             }
         });
         
@@ -382,5 +524,10 @@ Lampa.Platform.tv();
     // Ручные вызовы для отладки (бесшумные)
     window.applyLampaStyles = applyMobileStyles;
     window.applyBaseStyles = applyBaseStyles;
+    window.reorderElements = reorganizeElements;
+    window.resetElementOrder = function() {
+        reorganizationAttempts = 0;
+        reorganizeElements();
+    };
 
 })();
