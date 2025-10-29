@@ -12,6 +12,10 @@ Lampa.Platform.tv();
     let reorganizationAttempts = 0;
     const maxAttempts = 10;
     window.logoplugin = true;
+    
+    // Переменные для управления логотипами
+    let currentMovieId = null;
+    let logoRequest = null;
 
     // ===== ОСНОВНЫЕ СТИЛИ =====
     function applyBaseStyles() {
@@ -442,19 +446,31 @@ Lampa.Platform.tv();
         });
     }
 
-    // ===== ФУНКЦИИ ДЛЯ ЛОГОТИПОВ =====
+    // ===== ИСПРАВЛЕННЫЕ ФУНКЦИИ ДЛЯ ЛОГОТИПОВ =====
     function initLogoPlugin() {
         Lampa.Listener.follow('full', function(e) {
             if (e.type === 'complite' && Lampa.Storage.get('logo_glav') !== '1') {
                 var data = e.data.movie;
                 var type = data.name ? 'tv' : 'movie';
                 
+                // Отменяем предыдущий запрос, если он есть
+                if (logoRequest && logoRequest.abort) {
+                    logoRequest.abort();
+                }
+                
+                // Сохраняем ID текущего фильма
+                currentMovieId = data.id;
+                
                 if (data.id !== '') {
                     var url = Lampa.TMDB.api(type + '/' + data.id + '/images?api_key=' + Lampa.TMDB.key() + '&language=' + Lampa.Storage.get('language'));
                     
-                    $.get(url, function(data) {
-                        if (data.logos && data.logos[0]) {
-                            var logo = data.logos[0].file_path;
+                    // Очищаем старый логотип перед загрузкой нового
+                    e.object.activity.render().find('.full-start-new__title').html('');
+                    
+                    logoRequest = $.get(url, function(responseData) {
+                        // Проверяем, что это все еще тот же фильм
+                        if (currentMovieId === data.id && responseData.logos && responseData.logos[0]) {
+                            var logo = responseData.logos[0].file_path;
                             
                             if (logo !== '') {
                                 // Добавляем логотип с центрированием
@@ -465,8 +481,27 @@ Lampa.Platform.tv();
                                 );
                             }
                         }
+                    }).fail(function() {
+                        // В случае ошибки просто очищаем логотип
+                        e.object.activity.render().find('.full-start-new__title').html('');
                     });
                 }
+            }
+            
+            // Очищаем логотип при начале загрузки новой карточки
+            if (e.type === 'start') {
+                // Отменяем предыдущий запрос
+                if (logoRequest && logoRequest.abort) {
+                    logoRequest.abort();
+                }
+                
+                // Очищаем логотип
+                if (e.object && e.object.activity && e.object.activity.render) {
+                    e.object.activity.render().find('.full-start-new__title').html('');
+                }
+                
+                // Сбрасываем текущий ID
+                currentMovieId = null;
             }
         });
     }
