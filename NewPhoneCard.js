@@ -7,7 +7,13 @@
     Lampa.Platform.tv();
 
     let observer;
+    let reorderAttempts = 0;
+    const maxReorderAttempts = 10;
     window.logoplugin = true;
+
+    function log(...args) {
+        if (window.logoplugin) console.log('[combined-plugin]', ...args);
+    }
 
     // ===== ОСНОВНЫЕ СТИЛИ =====
     function applyBaseStyles() {
@@ -99,6 +105,14 @@
                 pointer-events: none !important;
                 z-index: 1 !important;
             }
+
+            /* Стили для перемещения заголовка */
+            .full-start-new__head {
+                border: 2px solid rgba(255, 255, 255, 0.75) !important;
+                border-radius: 6px !important;
+                padding: 0.25em 0.7em !important;
+                box-sizing: border-box !important;
+            }
         `;
         document.head.appendChild(style);
         
@@ -120,6 +134,68 @@
         }, 1000);
     }
 
+    // ===== ФУНКЦИИ ПЕРЕМЕЩЕНИЯ ЗАГОЛОВКА =====
+    function reorderElements() {
+        reorderAttempts++;
+
+        const $head = $('.full-start-new__head');
+        const $tagline = $('.full-start-new__tagline.full--tagline');
+        const $rateLine = $('.full-start-new__rate-line');
+
+        if ($head.length && $rateLine.length) {
+            // Усиленная обводка: толще и ярче
+            $head.css({
+                'border': '2px solid rgba(255, 255, 255, 0.75)',  // более яркая обводка
+                'border-radius': '6px',
+                'padding': '0.25em 0.7em',
+                'box-sizing': 'border-box'
+            });
+
+            if ($tagline.length) {
+                if ($tagline.next()[0] !== $head[0]) {
+                    $head.insertAfter($tagline);
+                    log('Moved head after tagline');
+                }
+                if ($head.next()[0] !== $rateLine[0]) {
+                    $head.insertBefore($rateLine);
+                    log('Moved head before rateLine');
+                }
+            } else {
+                if ($head.next()[0] !== $rateLine[0]) {
+                    $head.insertBefore($rateLine);
+                    log('Fallback: moved head before rateLine');
+                }
+            }
+
+            reorderAttempts = 0;
+            return true;
+        } else {
+            log('Heads or rate-line missing', {
+                head: $head.length,
+                tagline: $tagline.length,
+                rateLine: $rateLine.length
+            });
+
+            if (reorderAttempts >= maxReorderAttempts) {
+                log('Max reorder attempts reached');
+            }
+
+            return false;
+        }
+    }
+
+    function initHeadMover() {
+        reorderElements();
+
+        let intervalId = setInterval(() => {
+            let success = reorderElements();
+            if (success || reorderAttempts >= maxReorderAttempts) {
+                clearInterval(intervalId);
+                log(success ? 'Successfully reordered elements' : 'Stopped reorder attempts after max retries');
+            }
+        }, 200);
+    }
+
     // ===== ФУНКЦИИ ДЛЯ МОБИЛЬНЫХ СТИЛЕЙ =====
     function initMobileStyles() {
         // Подписываемся на события
@@ -130,6 +206,7 @@
                     setTimeout(() => {
                         applyMobileStyles();
                         startDOMObserver();
+                        initHeadMover(); // Добавляем инициализацию перемещения заголовка
                     }, 400);
                 }
                 
@@ -153,6 +230,7 @@
         
         observer = new MutationObserver(function(mutations) {
             let shouldApplyStyles = false;
+            let shouldReorder = false;
             
             mutations.forEach(function(mutation) {
                 if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
@@ -164,23 +242,32 @@
                                 node.classList.contains('full-start__left') ||
                                 node.classList.contains('items-line__head') ||
                                 node.classList.contains('full-start-new__poster') ||
+                                node.classList.contains('full-start-new__head') ||
                                 node.querySelector('.full-start-new__right') ||
                                 node.querySelector('.full-start__left') ||
                                 node.querySelector('.items-line__head') ||
-                                node.querySelector('.full-start-new__poster')
+                                node.querySelector('.full-start-new__poster') ||
+                                node.querySelector('.full-start-new__head')
                             )) {
                                 shouldApplyStyles = true;
-                                break;
+                                
+                                // Если появился заголовок, запускаем переупорядочивание
+                                if (node.classList.contains('full-start-new__head') || 
+                                    node.querySelector('.full-start-new__head')) {
+                                    shouldReorder = true;
+                                }
                             }
                             
                             // Проверяем вложенные элементы
                             if (node.querySelector) {
                                 const cardElements = node.querySelectorAll(
-                                    '.full-start-new__right, .full-start__left, .items-line__head, .full-start-new__poster'
+                                    '.full-start-new__right, .full-start__left, .items-line__head, .full-start-new__poster, .full-start-new__head'
                                 );
                                 if (cardElements.length > 0) {
                                     shouldApplyStyles = true;
-                                    break;
+                                    if (node.querySelector('.full-start-new__head')) {
+                                        shouldReorder = true;
+                                    }
                                 }
                             }
                         }
@@ -190,7 +277,8 @@
                 // Также проверяем изменения атрибутов (на случай если Lampa меняет классы)
                 if (mutation.type === 'attributes' && 
                     mutation.target.classList && 
-                    mutation.target.classList.contains('full-start-new__poster')) {
+                    (mutation.target.classList.contains('full-start-new__poster') ||
+                     mutation.target.classList.contains('full-start-new__head'))) {
                     shouldApplyStyles = true;
                 }
             });
@@ -199,6 +287,10 @@
                 setTimeout(applyMobileStyles, 100);
                 // Принудительно переприменяем базовые стили для затемнения
                 setTimeout(applyBaseStyles, 150);
+            }
+            
+            if (shouldReorder) {
+                setTimeout(initHeadMover, 200);
             }
         });
         
@@ -352,6 +444,7 @@
         initMobileStyles();  // Запускаем мобильные стили
         initLogoPlugin();    // Запускаем логотипы
         addLogoSettings();   // Добавляем настройки логотипов
+        initHeadMover();     // Запускаем перемещение заголовка
     }
 
     function startPlugin() {
@@ -380,5 +473,6 @@
     // Ручные вызовы для отладки (бесшумные)
     window.applyLampaStyles = applyMobileStyles;
     window.applyBaseStyles = applyBaseStyles;
+    window.reorderHeadElements = reorderElements;
 
 })();
