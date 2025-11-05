@@ -83,7 +83,7 @@
                 z-index: 2 !important;
             }
             
-            /* Плавное затемнение постера - ИСПРАВЛЕННАЯ ВЕРСИЯ */
+            /* Плавное затемнение постера - УВЕЛИЧЕНО ДО 50% */
             .full-start-new__poster {
                 position: relative !important;
                 overflow: hidden !important;
@@ -95,23 +95,26 @@
                 bottom: 0 !important;
                 left: 0 !important;
                 right: 0 !important;
-                height: 40% !important;
+                height: 50% !important;  /* Увеличено с 40% до 50% */
                 background: linear-gradient(to bottom, 
                     transparent 0%, 
-                    rgba(0, 0, 0, 0.4) 30%,
-                    rgba(0, 0, 0, 0.7) 60%,
-                    rgba(0, 0, 0, 0.9) 90%,
+                    rgba(0, 0, 0, 0.4) 20%,
+                    rgba(0, 0, 0, 0.6) 40%,
+                    rgba(0, 0, 0, 0.8) 70%,
                     #000 100%) !important;
                 pointer-events: none !important;
                 z-index: 1 !important;
             }
 
-            /* Стили для перемещения заголовка */
+            /* Стили для перемещения заголовка с затемненным фоном */
             .full-start-new__head {
                 border: 2px solid rgba(255, 255, 255, 0.75) !important;
                 border-radius: 6px !important;
                 padding: 0.25em 0.7em !important;
                 box-sizing: border-box !important;
+                background: rgba(0, 0, 0, 0.7) !important;  /* Добавлен затемненный фон */
+                backdrop-filter: blur(5px) !important;      /* Легкое размытие для красоты */
+                -webkit-backdrop-filter: blur(5px) !important;
             }
         `;
         document.head.appendChild(style);
@@ -143,12 +146,15 @@
         const $rateLine = $('.full-start-new__rate-line');
 
         if ($head.length && $rateLine.length) {
-            // Усиленная обводка: толще и ярче
+            // Усиленная обводка: толще и ярче + фон
             $head.css({
                 'border': '2px solid rgba(255, 255, 255, 0.75)',  // более яркая обводка
                 'border-radius': '6px',
                 'padding': '0.25em 0.7em',
-                'box-sizing': 'border-box'
+                'box-sizing': 'border-box',
+                'background': 'rgba(0, 0, 0, 0.7)',              // Добавлен фон
+                'backdrop-filter': 'blur(5px)',                  // Размытие фона
+                '-webkit-backdrop-filter': 'blur(5px)'
             });
 
             if ($tagline.length) {
