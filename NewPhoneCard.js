@@ -7,8 +7,7 @@
     Lampa.Platform.tv();
 
     let observer;
-    let reorderIntervalId = null;
-    let isReordered = false; // Флаг для отслеживания состояния
+    let headMoverObserver;
     window.logoplugin = true;
 
     function log(...args) {
@@ -116,6 +115,19 @@
                 backdrop-filter: blur(5px) !important;
                 -webkit-backdrop-filter: blur(5px) !important;
             }
+
+            /* Дополнительный фон для заголовка для лучшей читаемости */
+            .full-start-new__head::before {
+                content: '' !important;
+                position: absolute !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                bottom: 0 !important;
+                background: rgba(0, 0, 0, 0.3) !important;
+                border-radius: 4px !important;
+                z-index: -1 !important;
+            }
         `;
         document.head.appendChild(style);
         
@@ -138,106 +150,142 @@
     }
 
     // ===== УЛУЧШЕННЫЕ ФУНКЦИИ ПЕРЕМЕЩЕНИЯ ЗАГОЛОВКА =====
-    function stopReorderInterval() {
-        if (reorderIntervalId) {
-            clearInterval(reorderIntervalId);
-            reorderIntervalId = null;
-        }
-    }
-
-    function isAlreadyInRightPosition($head, $tagline, $rateLine) {
-        if (!$head.length || !$rateLine.length) return false;
-        
-        // Проверяем, находится ли заголовок уже в правильной позиции
-        if ($tagline.length) {
-            return $tagline.next()[0] === $head[0] && $head.next()[0] === $rateLine[0];
-        } else {
-            return $rateLine.prev()[0] === $head[0];
-        }
-    }
-
-    function reorderElements() {
-        const $head = $('.full-start-new__head');
-        const $tagline = $('.full-start-new__tagline.full--tagline');
-        const $rateLine = $('.full-start-new__rate-line');
-
-        // Если элементы не найдены или уже в правильной позиции
-        if (!$head.length || !$rateLine.length) {
-            return false;
-        }
-
-        // Проверяем, не находится ли уже в правильной позиции
-        if (isAlreadyInRightPosition($head, $tagline, $rateLine)) {
-            if (!isReordered) {
-                log('Head is already in correct position');
-                isReordered = true;
-            }
-            return true;
-        }
-
-        // Применяем стили к заголовку
-        $head.css({
-            'border': '2px solid rgba(255, 255, 255, 0.75)',
-            'border-radius': '6px',
-            'padding': '0.25em 0.7em',
-            'box-sizing': 'border-box',
-            'background': 'rgba(0, 0, 0, 0.7)',
-            'backdrop-filter': 'blur(5px)',
-            '-webkit-backdrop-filter': 'blur(5px)'
-        });
-
-        // Перемещаем элементы
+    function safeReorderHead() {
         try {
-            if ($tagline.length) {
-                if ($tagline.next()[0] !== $head[0]) {
-                    $head.insertAfter($tagline);
-                }
-                if ($head.next()[0] !== $rateLine[0]) {
-                    $head.insertBefore($rateLine);
-                }
-                log('Moved head after tagline and before rateLine');
-            } else {
-                if ($rateLine.prev()[0] !== $head[0]) {
-                    $head.insertBefore($rateLine);
-                }
-                log('Moved head before rateLine');
+            const head = document.querySelector('.full-start-new__head');
+            const tagline = document.querySelector('.full-start-new__tagline.full--tagline');
+            const rateLine = document.querySelector('.full-start-new__rate-line');
+
+            if (!head || !rateLine) {
+                return false;
             }
+
+            // Проверяем, не был ли уже перемещен (имеет ли наши стили)
+            const hasOurStyles = head.style.background === 'rgba(0, 0, 0, 0.7)' || 
+                                head.getAttribute('data-reordered') === 'true';
             
-            isReordered = true;
+            if (hasOurStyles) {
+                return true;
+            }
+
+            // Применяем стили
+            head.style.cssText = `
+                border: 2px solid rgba(255, 255, 255, 0.75) !important;
+                border-radius: 6px !important;
+                padding: 0.25em 0.7em !important;
+                box-sizing: border-box !important;
+                background: rgba(0, 0, 0, 0.7) !important;
+                backdrop-filter: blur(5px) !important;
+                -webkit-backdrop-filter: blur(5px) !important;
+                position: relative !important;
+            `;
+
+            // Добавляем псевдоэлемент для дополнительного фона
+            if (!head.querySelector('.head-background')) {
+                const bg = document.createElement('div');
+                bg.className = 'head-background';
+                bg.style.cssText = `
+                    position: absolute !important;
+                    top: 0 !important;
+                    left: 0 !important;
+                    right: 0 !important;
+                    bottom: 0 !important;
+                    background: rgba(0, 0, 0, 0.3) !important;
+                    border-radius: 4px !important;
+                    z-index: -1 !important;
+                `;
+                head.appendChild(bg);
+            }
+
+            // Перемещаем
+            if (tagline) {
+                if (tagline.nextElementSibling !== head) {
+                    tagline.parentNode.insertBefore(head, tagline.nextElementSibling);
+                }
+                if (head.nextElementSibling !== rateLine) {
+                    rateLine.parentNode.insertBefore(head, rateLine);
+                }
+            } else {
+                if (rateLine.previousElementSibling !== head) {
+                    rateLine.parentNode.insertBefore(head, rateLine);
+                }
+            }
+
+            // Помечаем как обработанный
+            head.setAttribute('data-reordered', 'true');
+            
+            log('Successfully reordered head element');
             return true;
         } catch (error) {
-            log('Error during reordering:', error);
+            log('Error reordering head:', error);
             return false;
         }
     }
 
     function initHeadMover() {
-        stopReorderInterval(); // Останавливаем предыдущий интервал
-        
-        isReordered = false; // Сбрасываем флаг
-        
-        // Пытаемся переместить сразу
-        if (reorderElements()) {
-            log('Successfully reordered elements on first try');
-            return;
+        // Останавливаем предыдущий observer
+        if (headMoverObserver) {
+            headMoverObserver.disconnect();
         }
 
-        // Если не получилось, запускаем интервал с ограниченным количеством попыток
-        let attempts = 0;
-        const maxAttempts = 15;
-        
-        reorderIntervalId = setInterval(() => {
-            attempts++;
-            
-            if (reorderElements() || attempts >= maxAttempts) {
-                stopReorderInterval();
-                if (attempts >= maxAttempts) {
-                    log('Stopped reorder attempts after max retries');
-                } else {
-                    log('Successfully reordered elements after ' + attempts + ' attempts');
-                }
+        // Пытаемся переместить сразу, если элементы уже есть
+        setTimeout(() => {
+            if (!safeReorderHead()) {
+                // Если не получилось, запускаем observer
+                startHeadMoverObserver();
             }
-        }, 300);
+        }, 100);
+
+        // Дополнительные попытки с задержками
+        [300, 600, 1000, 1500, 2000].forEach(delay => {
+            setTimeout(() => {
+                safeReorderHead();
+            }, delay);
+        });
+    }
+
+    function startHeadMoverObserver() {
+        headMoverObserver = new MutationObserver((mutations) => {
+            let shouldReorder = false;
+            
+            for (let mutation of mutations) {
+                if (mutation.type === 'childList') {
+                    for (let node of mutation.addedNodes) {
+                        if (node.nodeType === 1) {
+                            if (node.classList && node.classList.contains('full-start-new__head')) {
+                                shouldReorder = true;
+                                break;
+                            }
+                            if (node.querySelector && node.querySelector('.full-start-new__head')) {
+                                shouldReorder = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (shouldReorder) break;
+            }
+            
+            if (shouldReorder) {
+                setTimeout(safeReorderHead, 50);
+            }
+        });
+
+        // Наблюдаем за правым блоком, где находится контент
+        const rightBlock = document.querySelector('.full-start-new__right');
+        if (rightBlock) {
+            headMoverObserver.observe(rightBlock, {
+                childList: true,
+                subtree: true
+            });
+        } else {
+            // Если правого блока нет, наблюдаем за всем body
+            headMoverObserver.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        }
     }
 
     // ===== ФУНКЦИИ ДЛЯ МОБИЛЬНЫХ СТИЛЕЙ =====
@@ -248,18 +296,20 @@
             Lampa.Listener.follow('app', function(e) {
                 if (e.type === 'full' || e.type === 'card') {
                     setTimeout(() => {
-                        isReordered = false; // Сбрасываем флаг при новом контенте
                         applyMobileStyles();
                         startDOMObserver();
-                        setTimeout(initHeadMover, 100); // Небольшая задержка для загрузки DOM
+                        // Даем время на загрузку DOM перед перемещением заголовка
+                        setTimeout(initHeadMover, 300);
                     }, 400);
                 }
                 
-                // При скрытии карточки останавливаем observer и интервал
+                // При скрытии карточки останавливаем observers
                 if (e.type === 'hide' || e.type === 'component_hide') {
                     stopDOMObserver();
-                    stopReorderInterval();
-                    isReordered = false;
+                    if (headMoverObserver) {
+                        headMoverObserver.disconnect();
+                        headMoverObserver = null;
+                    }
                 }
             });
         }
@@ -277,7 +327,6 @@
         
         observer = new MutationObserver(function(mutations) {
             let shouldApplyStyles = false;
-            let shouldReorder = false;
             
             mutations.forEach(function(mutation) {
                 if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
@@ -289,43 +338,21 @@
                                 node.classList.contains('full-start__left') ||
                                 node.classList.contains('items-line__head') ||
                                 node.classList.contains('full-start-new__poster') ||
-                                node.classList.contains('full-start-new__head') ||
                                 node.querySelector('.full-start-new__right') ||
                                 node.querySelector('.full-start__left') ||
                                 node.querySelector('.items-line__head') ||
-                                node.querySelector('.full-start-new__poster') ||
-                                node.querySelector('.full-start-new__head')
+                                node.querySelector('.full-start-new__poster')
                             )) {
                                 shouldApplyStyles = true;
-                                
-                                // Если появился заголовок и он еще не перемещен, запускаем переупорядочивание
-                                if ((node.classList.contains('full-start-new__head') || 
-                                    node.querySelector('.full-start-new__head')) && !isReordered) {
-                                    shouldReorder = true;
-                                }
-                            }
-                            
-                            // Проверяем вложенные элементы
-                            if (node.querySelector) {
-                                const cardElements = node.querySelectorAll(
-                                    '.full-start-new__right, .full-start__left, .items-line__head, .full-start-new__poster, .full-start-new__head'
-                                );
-                                if (cardElements.length > 0) {
-                                    shouldApplyStyles = true;
-                                    if (node.querySelector('.full-start-new__head') && !isReordered) {
-                                        shouldReorder = true;
-                                    }
-                                }
                             }
                         }
                     }
                 }
                 
-                // Также проверяем изменения атрибутов (на случай если Lampa меняет классы)
+                // Также проверяем изменения атрибутов
                 if (mutation.type === 'attributes' && 
                     mutation.target.classList && 
-                    (mutation.target.classList.contains('full-start-new__poster') ||
-                     mutation.target.classList.contains('full-start-new__head'))) {
+                    (mutation.target.classList.contains('full-start-new__poster'))) {
                     shouldApplyStyles = true;
                 }
             });
@@ -334,10 +361,6 @@
                 setTimeout(applyMobileStyles, 100);
                 // Принудительно переприменяем базовые стили для затемнения
                 setTimeout(applyBaseStyles, 150);
-            }
-            
-            if (shouldReorder) {
-                setTimeout(initHeadMover, 200);
             }
         });
         
@@ -399,10 +422,12 @@
 
         // Применяем все стили
         Object.keys(styles).forEach(selector => {
-            const elements = $(selector);
-            if (elements.length > 0) {
-                elements.css(styles[selector]);
-            }
+            const elements = document.querySelectorAll(selector);
+            elements.forEach(element => {
+                Object.keys(styles[selector]).forEach(property => {
+                    element.style[property] = styles[selector][property];
+                });
+            });
         });
 
         // Стили для заголовков разделов
@@ -419,20 +444,17 @@
             'Коллекция'
         ];
 
-        $('.items-line__head').each(function() {
-            const $element = $(this);
-            const text = $element.text().trim();
+        document.querySelectorAll('.items-line__head').forEach(element => {
+            const text = element.textContent.trim();
             
             if (text && (
                 sectionTitles.includes(text) ||
                 text.includes('Сезон')
             )) {
-                $element.css({
-                    'display': 'flex',
-                    'justify-content': 'center',
-                    'align-items': 'center',
-                    'width': '100%'
-                });
+                element.style.display = 'flex';
+                element.style.justifyContent = 'center';
+                element.style.alignItems = 'center';
+                element.style.width = '100%';
             }
         });
     }
@@ -475,7 +497,7 @@
         initBlurPlugin();    // Запускаем отключение blur и базовые стили
         initMobileStyles();  // Запускаем мобильные стили
         initLogoPlugin();    // Запускаем логотипы (встроенные без настроек)
-        setTimeout(initHeadMover, 500); // Запускаем перемещение заголовка с задержкой
+        setTimeout(initHeadMover, 800); // Запускаем перемещение заголовка с задержкой
     }
 
     function startPlugin() {
@@ -500,10 +522,5 @@
     } else {
         setTimeout(startPlugin, 500);
     }
-
-    // Ручные вызовы для отладки (бесшумные)
-    window.applyLampaStyles = applyMobileStyles;
-    window.applyBaseStyles = applyBaseStyles;
-    window.reorderHeadElements = reorderElements;
 
 })();
