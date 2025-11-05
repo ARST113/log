@@ -390,10 +390,11 @@
         });
     }
 
-    // ===== ФУНКЦИИ ДЛЯ ЛОГОТИПОВ =====
+    // ===== ФУНКЦИИ ДЛЯ ЛОГОТИПОВ (ВСТРОЕННЫЕ БЕЗ НАСТРОЕК) =====
     function initLogoPlugin() {
+        // Встроенная версия плагина логотипов без настроек
         Lampa.Listener.follow('full', function(e) {
-            if (e.type === 'complite' && Lampa.Storage.get('logo_glav') !== '1') {
+            if (e.type === 'complite') {
                 var data = e.data.movie;
                 var type = data.name ? 'tv' : 'movie';
                 
@@ -413,27 +414,11 @@
                                 );
                             }
                         }
+                    }).fail(function() {
+                        // Ошибка загрузки логотипа - оставляем оригинальный текст
+                        log('Failed to load logo');
                     });
                 }
-            }
-        });
-    }
-
-    function addLogoSettings() {
-        Lampa.SettingsApi.addParam({
-            component: 'interface',
-            param: {
-                name: 'logo_glav',
-                type: 'select',
-                values: {
-                    '1': 'Скрыть',
-                    '0': 'Отображать',
-                },
-                default: '0',
-            },
-            field: {
-                name: 'Логотипы вместо названий',
-                description: 'Отображает логотипы фильмов вместо текста',
             }
         });
     }
@@ -442,8 +427,7 @@
     function initAllPlugins() {
         initBlurPlugin();    // Запускаем отключение blur и базовые стили
         initMobileStyles();  // Запускаем мобильные стили
-        initLogoPlugin();    // Запускаем логотипы
-        addLogoSettings();   // Добавляем настройки логотипов
+        initLogoPlugin();    // Запускаем логотипы (встроенные без настроек)
         initHeadMover();     // Запускаем перемещение заголовка
     }
 
