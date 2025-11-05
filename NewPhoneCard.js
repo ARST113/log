@@ -7,8 +7,8 @@
     Lampa.Platform.tv();
 
     let observer;
-    let reorderAttempts = 0;
-    const maxReorderAttempts = 10;
+    let reorderIntervalId = null;
+    let isReordered = false; // Флаг для отслеживания состояния
     window.logoplugin = true;
 
     function log(...args) {
@@ -95,7 +95,7 @@
                 bottom: 0 !important;
                 left: 0 !important;
                 right: 0 !important;
-                height: 50% !important;  /* Увеличено с 40% до 50% */
+                height: 50% !important;
                 background: linear-gradient(to bottom, 
                     transparent 0%, 
                     rgba(0, 0, 0, 0.4) 20%,
@@ -112,8 +112,8 @@
                 border-radius: 6px !important;
                 padding: 0.25em 0.7em !important;
                 box-sizing: border-box !important;
-                background: rgba(0, 0, 0, 0.7) !important;  /* Добавлен затемненный фон */
-                backdrop-filter: blur(5px) !important;      /* Легкое размытие для красоты */
+                background: rgba(0, 0, 0, 0.7) !important;
+                backdrop-filter: blur(5px) !important;
                 -webkit-backdrop-filter: blur(5px) !important;
             }
         `;
@@ -137,69 +137,107 @@
         }, 1000);
     }
 
-    // ===== ФУНКЦИИ ПЕРЕМЕЩЕНИЯ ЗАГОЛОВКА =====
-    function reorderElements() {
-        reorderAttempts++;
+    // ===== УЛУЧШЕННЫЕ ФУНКЦИИ ПЕРЕМЕЩЕНИЯ ЗАГОЛОВКА =====
+    function stopReorderInterval() {
+        if (reorderIntervalId) {
+            clearInterval(reorderIntervalId);
+            reorderIntervalId = null;
+        }
+    }
 
+    function isAlreadyInRightPosition($head, $tagline, $rateLine) {
+        if (!$head.length || !$rateLine.length) return false;
+        
+        // Проверяем, находится ли заголовок уже в правильной позиции
+        if ($tagline.length) {
+            return $tagline.next()[0] === $head[0] && $head.next()[0] === $rateLine[0];
+        } else {
+            return $rateLine.prev()[0] === $head[0];
+        }
+    }
+
+    function reorderElements() {
         const $head = $('.full-start-new__head');
         const $tagline = $('.full-start-new__tagline.full--tagline');
         const $rateLine = $('.full-start-new__rate-line');
 
-        if ($head.length && $rateLine.length) {
-            // Усиленная обводка: толще и ярче + фон
-            $head.css({
-                'border': '2px solid rgba(255, 255, 255, 0.75)',  // более яркая обводка
-                'border-radius': '6px',
-                'padding': '0.25em 0.7em',
-                'box-sizing': 'border-box',
-                'background': 'rgba(0, 0, 0, 0.7)',              // Добавлен фон
-                'backdrop-filter': 'blur(5px)',                  // Размытие фона
-                '-webkit-backdrop-filter': 'blur(5px)'
-            });
+        // Если элементы не найдены или уже в правильной позиции
+        if (!$head.length || !$rateLine.length) {
+            return false;
+        }
 
+        // Проверяем, не находится ли уже в правильной позиции
+        if (isAlreadyInRightPosition($head, $tagline, $rateLine)) {
+            if (!isReordered) {
+                log('Head is already in correct position');
+                isReordered = true;
+            }
+            return true;
+        }
+
+        // Применяем стили к заголовку
+        $head.css({
+            'border': '2px solid rgba(255, 255, 255, 0.75)',
+            'border-radius': '6px',
+            'padding': '0.25em 0.7em',
+            'box-sizing': 'border-box',
+            'background': 'rgba(0, 0, 0, 0.7)',
+            'backdrop-filter': 'blur(5px)',
+            '-webkit-backdrop-filter': 'blur(5px)'
+        });
+
+        // Перемещаем элементы
+        try {
             if ($tagline.length) {
                 if ($tagline.next()[0] !== $head[0]) {
                     $head.insertAfter($tagline);
-                    log('Moved head after tagline');
                 }
                 if ($head.next()[0] !== $rateLine[0]) {
                     $head.insertBefore($rateLine);
-                    log('Moved head before rateLine');
                 }
+                log('Moved head after tagline and before rateLine');
             } else {
-                if ($head.next()[0] !== $rateLine[0]) {
+                if ($rateLine.prev()[0] !== $head[0]) {
                     $head.insertBefore($rateLine);
-                    log('Fallback: moved head before rateLine');
                 }
+                log('Moved head before rateLine');
             }
-
-            reorderAttempts = 0;
+            
+            isReordered = true;
             return true;
-        } else {
-            log('Heads or rate-line missing', {
-                head: $head.length,
-                tagline: $tagline.length,
-                rateLine: $rateLine.length
-            });
-
-            if (reorderAttempts >= maxReorderAttempts) {
-                log('Max reorder attempts reached');
-            }
-
+        } catch (error) {
+            log('Error during reordering:', error);
             return false;
         }
     }
 
     function initHeadMover() {
-        reorderElements();
+        stopReorderInterval(); // Останавливаем предыдущий интервал
+        
+        isReordered = false; // Сбрасываем флаг
+        
+        // Пытаемся переместить сразу
+        if (reorderElements()) {
+            log('Successfully reordered elements on first try');
+            return;
+        }
 
-        let intervalId = setInterval(() => {
-            let success = reorderElements();
-            if (success || reorderAttempts >= maxReorderAttempts) {
-                clearInterval(intervalId);
-                log(success ? 'Successfully reordered elements' : 'Stopped reorder attempts after max retries');
+        // Если не получилось, запускаем интервал с ограниченным количеством попыток
+        let attempts = 0;
+        const maxAttempts = 15;
+        
+        reorderIntervalId = setInterval(() => {
+            attempts++;
+            
+            if (reorderElements() || attempts >= maxAttempts) {
+                stopReorderInterval();
+                if (attempts >= maxAttempts) {
+                    log('Stopped reorder attempts after max retries');
+                } else {
+                    log('Successfully reordered elements after ' + attempts + ' attempts');
+                }
             }
-        }, 200);
+        }, 300);
     }
 
     // ===== ФУНКЦИИ ДЛЯ МОБИЛЬНЫХ СТИЛЕЙ =====
@@ -210,15 +248,18 @@
             Lampa.Listener.follow('app', function(e) {
                 if (e.type === 'full' || e.type === 'card') {
                     setTimeout(() => {
+                        isReordered = false; // Сбрасываем флаг при новом контенте
                         applyMobileStyles();
                         startDOMObserver();
-                        initHeadMover(); // Добавляем инициализацию перемещения заголовка
+                        setTimeout(initHeadMover, 100); // Небольшая задержка для загрузки DOM
                     }, 400);
                 }
                 
-                // При скрытии карточки останавливаем observer
+                // При скрытии карточки останавливаем observer и интервал
                 if (e.type === 'hide' || e.type === 'component_hide') {
                     stopDOMObserver();
+                    stopReorderInterval();
+                    isReordered = false;
                 }
             });
         }
@@ -257,9 +298,9 @@
                             )) {
                                 shouldApplyStyles = true;
                                 
-                                // Если появился заголовок, запускаем переупорядочивание
-                                if (node.classList.contains('full-start-new__head') || 
-                                    node.querySelector('.full-start-new__head')) {
+                                // Если появился заголовок и он еще не перемещен, запускаем переупорядочивание
+                                if ((node.classList.contains('full-start-new__head') || 
+                                    node.querySelector('.full-start-new__head')) && !isReordered) {
                                     shouldReorder = true;
                                 }
                             }
@@ -271,7 +312,7 @@
                                 );
                                 if (cardElements.length > 0) {
                                     shouldApplyStyles = true;
-                                    if (node.querySelector('.full-start-new__head')) {
+                                    if (node.querySelector('.full-start-new__head') && !isReordered) {
                                         shouldReorder = true;
                                     }
                                 }
@@ -434,7 +475,7 @@
         initBlurPlugin();    // Запускаем отключение blur и базовые стили
         initMobileStyles();  // Запускаем мобильные стили
         initLogoPlugin();    // Запускаем логотипы (встроенные без настроек)
-        initHeadMover();     // Запускаем перемещение заголовка
+        setTimeout(initHeadMover, 500); // Запускаем перемещение заголовка с задержкой
     }
 
     function startPlugin() {
