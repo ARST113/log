@@ -33,7 +33,10 @@
                     allButtons.each(function () {
                         var $button = $(this);
                         var className = $button.attr('class') || '';
-                        if (className.includes('online')) categories.online.push($button);
+                        // Проверяем reyohoho_mod и относим к online
+                        if (className.includes('online') || className.includes('reyohoho_mod')) {
+                            categories.online.push($button);
+                        }
                         else if (className.includes('torrent')) categories.torrent.push($button);
                         else if (className.includes('trailer')) categories.trailer.push($button);
                         else categories.other.push($button.clone(true));
