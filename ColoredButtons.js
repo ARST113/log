@@ -68,10 +68,17 @@ Lampa.Platform.tv();
       onlineButtons.forEach(btn => {
         if (btn.classList.contains('online-svg-applied')) return;
         const svg = btn.querySelector('svg');
+        const span = btn.querySelector('span');
+        
         if (svg) {
           replaceIconPreservingAttrs(svg, ONLINE_SVG_SOURCE);
           btn.classList.add('online-svg-applied');
           count++;
+        }
+        
+        // Заменяем текст в <span>
+        if (span) {
+          span.textContent = 'BWA';
         }
       });
     }
