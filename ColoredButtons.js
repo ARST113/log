@@ -67,7 +67,17 @@ Lampa.Platform.tv();
       const onlineButtons = document.querySelectorAll('.full-start__button.view--online.selector');
       onlineButtons.forEach(btn => {
         if (btn.classList.contains('online-svg-applied')) return;
+        
         const svg = btn.querySelector('svg');
+        
+        // Пропускаем кнопку Z01 (проверяем наличие <text> с буквой "Z" внутри SVG)
+        if (svg && svg.querySelector('text')) {
+          const textElement = svg.querySelector('text');
+          if (textElement && textElement.textContent.trim() === 'Z') {
+            return; // Пропускаем эту кнопку
+          }
+        }
+        
         const span = btn.querySelector('span');
         
         if (svg) {
