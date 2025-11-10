@@ -12,6 +12,9 @@ Lampa.Platform.tv();
 
   // SVG для кнопки "Онлайн" - загружаем с GitHub
   let ONLINE_SVG_SOURCE = null;
+  
+  // Храним последнюю активированную кнопку
+  let lastActiveButton = null;
 
   // Загрузка SVG с GitHub
   async function loadOnlineSVG() {
@@ -19,7 +22,7 @@ Lampa.Platform.tv();
       const response = await fetch('https://raw.githubusercontent.com/ARST113/Buttons-/refs/heads/main/play-video-svgrepo-com.svg');
       ONLINE_SVG_SOURCE = await response.text();
       console.log('✅ SVG для онлайн загружен');
-      process(); // Запускаем обработку после загрузки
+      process();
     } catch (error) {
       console.error('❌ Ошибка загрузки SVG:', error);
     }
@@ -36,15 +39,97 @@ Lampa.Platform.tv();
   function replaceIconPreservingAttrs(origSvg, newSvgSource) {
     const fresh = buildSVG(newSvgSource);
 
-    // Список атрибутов, которые переносим из исходной иконки
     const keep = ['width','height','class','style','preserveAspectRatio','shape-rendering','aria-hidden','role','focusable'];
     keep.forEach(a => {
       const v = origSvg.getAttribute(a);
       if (v != null && v !== '') fresh.setAttribute(a, v);
     });
 
-    // Заменяем узел на месте
     origSvg.replaceWith(fresh);
+  }
+
+  // Получить имя плагина из кнопки
+  function getPluginName(btn) {
+    if (!btn) return 'Online';
+    
+    let pluginName = btn.getAttribute('data-subtitle');
+    
+    if (pluginName) {
+      let shortName = pluginName.split(' ')[0];
+      
+      if (pluginName.includes('by Skaz')) {
+        shortName = 'Z01';
+      }
+      
+      return shortName;
+    }
+    
+    return 'Online';
+  }
+
+  // Добавляем обработчик hover:enter для кнопки
+  function attachHoverEnter(btn) {
+    if (btn.classList.contains('hover-enter-attached')) return;
+    
+    // Используем jQuery если доступен (обычно есть в Lampa)
+    if (window.$ && typeof $(btn).on === 'function') {
+      $(btn).on('hover:enter', function() {
+        lastActiveButton = btn;
+        console.log('🎯 hover:enter на кнопке:', getPluginName(btn));
+      });
+    }
+    
+    // Дополнительный обработчик keydown для совместимости
+    btn.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.keyCode === 13) {
+        lastActiveButton = btn;
+        console.log('🎯 Enter на кнопке:', getPluginName(btn));
+      }
+    });
+    
+    // Клик для мыши
+    btn.addEventListener('click', function() {
+      lastActiveButton = btn;
+      console.log('🎯 Click на кнопке:', getPluginName(btn));
+    });
+    
+    btn.classList.add('hover-enter-attached');
+  }
+
+  // Наблюдатель за изменениями заголовка
+  function watchTitle() {
+    let lastCheck = '';
+    
+    const checkAndUpdate = () => {
+      const titleElement = document.querySelector('.head__title');
+      
+      if (titleElement) {
+        const currentText = titleElement.textContent.trim();
+        
+        // Проверяем только если текст изменился
+        if (currentText !== lastCheck) {
+          lastCheck = currentText;
+          
+          // Если текст "Онлайн" и у нас есть последняя активная кнопка
+          if (currentText === 'Онлайн' && lastActiveButton) {
+            const pluginName = getPluginName(lastActiveButton);
+            titleElement.textContent = `${pluginName} - Online`;
+            console.log(`✅ Заголовок изменён на: ${pluginName} - Online`);
+          }
+        }
+      }
+    };
+    
+    // MutationObserver для быстрой реакции
+    const observer = new MutationObserver(checkAndUpdate);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+    
+    // Дополнительная проверка каждые 50мс
+    setInterval(checkAndUpdate, 50);
   }
 
   function process() {
@@ -62,20 +147,29 @@ Lampa.Platform.tv();
       }
     });
 
-    // Обработка онлайн-кнопок (только если SVG загружен)
+    // Обработка онлайн-кнопок
     if (ONLINE_SVG_SOURCE) {
       const onlineButtons = document.querySelectorAll('.full-start__button.view--online.selector');
       onlineButtons.forEach(btn => {
+        // Добавляем обработчик hover:enter для всех онлайн-кнопок
+        attachHoverEnter(btn);
+        
         if (btn.classList.contains('online-svg-applied')) return;
         
         const svg = btn.querySelector('svg');
         
-        // Пропускаем кнопку Z01 (проверяем наличие <text> с буквой "Z" внутри SVG)
+        // Проверяем, это кнопка Z01 или нет
+        let isZ01 = false;
         if (svg && svg.querySelector('text')) {
           const textElement = svg.querySelector('text');
           if (textElement && textElement.textContent.trim() === 'Z') {
-            return; // Пропускаем эту кнопку
+            isZ01 = true;
           }
+        }
+        
+        // Если это Z01 - пропускаем замену иконки и текста
+        if (isZ01) {
+          return;
         }
         
         const span = btn.querySelector('span');
@@ -91,6 +185,15 @@ Lampa.Platform.tv();
           span.textContent = 'BWA';
         }
       });
+      
+      // Обновляем коллекцию навигации для корректной работы пульта
+      if (window.Lampa && window.Lampa.Controller && typeof window.Lampa.Controller.collectionSet === 'function') {
+        const buttons = document.querySelectorAll('.full-start__button.selector');
+        if (buttons.length > 0 && window.$) {
+          window.Lampa.Controller.collectionSet($(buttons));
+          console.log('✅ Коллекция навигации обновлена');
+        }
+      }
     }
 
     if (count) console.log('✅ Иконки заменены:', count);
@@ -112,13 +215,15 @@ Lampa.Platform.tv();
   // Инициализация
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
-      loadOnlineSVG(); // Загружаем SVG
+      loadOnlineSVG();
       process();
       observe();
+      watchTitle();
     });
   } else {
-    loadOnlineSVG(); // Загружаем SVG
+    loadOnlineSVG();
     process();
     observe();
+    watchTitle();
   }
 })();
