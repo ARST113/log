@@ -30,6 +30,7 @@
                         trailer: [],
                         other: []
                     };
+                    
                     allButtons.each(function () {
                         var $button = $(this);
                         var className = $button.attr('class') || '';
@@ -37,9 +38,15 @@
                         if (className.includes('online') || className.includes('reyohoho_mod')) {
                             categories.online.push($button);
                         }
-                        else if (className.includes('torrent')) categories.torrent.push($button);
-                        else if (className.includes('trailer')) categories.trailer.push($button);
-                        else categories.other.push($button.clone(true));
+                        else if (className.includes('torrent')) {
+                            categories.torrent.push($button);
+                        }
+                        else if (className.includes('trailer')) {
+                            categories.trailer.push($button);
+                        }
+                        else {
+                            categories.other.push($button.clone(true));
+                        }
                     });
 
                     console.log('showAllButtonsWithLogs: Категории кнопок по длине:',
@@ -50,11 +57,14 @@
 
                     var buttonSortOrder = Lampa.Storage.get('lme_buttonsort') || ['torrent', 'online', 'trailer', 'other'];
                     targetContainer.empty();
-                    buttonSortOrder.forEach(function (category) {
-                        categories[category].forEach(function ($button) {
-                            targetContainer.append($button);
-                        });
-                    });
+                    
+                    for (var i = 0; i < buttonSortOrder.length; i++) {
+                        var category = buttonSortOrder[i];
+                        var buttons = categories[category];
+                        for (var j = 0; j < buttons.length; j++) {
+                            targetContainer.append(buttons[j]);
+                        }
+                    }
 
                     if (Lampa.Storage.get('lme_showbuttonwn') == true) {
                         targetContainer.find("span").remove();
@@ -86,16 +96,16 @@
     // Добавляем CSS стили для анимаций при наведении
     function addCustomStyles() {
         var style = document.createElement('style');
-        style.innerHTML = `
-            .full-start__button {
-                transition: all 0.4s ease !important;
-            }
-            .full-start__button:hover,
-            .full-start__button.focus {
-                transform: scale(1.05) !important;
-                transition: all 0.4s ease !important;
-            }
-        `;
+        style.innerHTML = '\n' +
+            '            .full-start__button {\n' +
+            '                transition: all 0.4s ease !important;\n' +
+            '            }\n' +
+            '            .full-start__button:hover,\n' +
+            '            .full-start__button.focus {\n' +
+            '                transform: scale(1.05) !important;\n' +
+            '                transition: all 0.4s ease !important;\n' +
+            '            }\n' +
+            '        ';
         document.head.appendChild(style);
         console.log('addCustomStyles: CSS стили для плавных анимаций добавлены');
     }
