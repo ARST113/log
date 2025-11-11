@@ -162,25 +162,24 @@ Lampa.Platform.tv();
       onlineButtons.forEach(function (btn) {
         attachHoverEnter(btn);
         if (btn.classList.contains('online-svg-applied')) return;
-        var svg = btn.querySelector('svg');
-
-        // Проверяем, это кнопка Z01 или нет
-        var isZ01 = false;
-        if (svg && svg.querySelector('text')) {
-          var textElement = svg.querySelector('text');
-          if (textElement && textElement.textContent.trim() === 'Z') {
-            isZ01 = true;
+        
+        // ОСНОВНОЕ ИЗМЕНЕНИЕ: Проверяем название плагина (без учета регистра)
+        var pluginName = getPluginName(btn);
+        console.log('Проверяем плагин:', pluginName);
+        
+        // Меняем иконку и текст для плагина BwaRC (без учета регистра)
+        if (pluginName.toLowerCase().includes('bwa')) {
+          var svg = btn.querySelector('svg');
+          var span = btn.querySelector('span');
+          if (svg) {
+            replaceIconPreservingAttrs(svg, ONLINE_SVG_SOURCE);
+            btn.classList.add('online-svg-applied');
+            count++;
           }
-        }
-        if (isZ01) return;
-        var span = btn.querySelector('span');
-        if (svg) {
-          replaceIconPreservingAttrs(svg, ONLINE_SVG_SOURCE);
-          btn.classList.add('online-svg-applied');
-          count++;
-        }
-        if (span) {
-          span.textContent = 'BWA';
+          if (span) {
+            span.textContent = 'BWA';
+          }
+          console.log('✅ Применены изменения для плагина BwaRC');
         }
       });
     }
