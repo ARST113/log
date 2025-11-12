@@ -50,7 +50,13 @@
       { base: 'ru_jacred_pro', name: 'Ru.jacred.pro', settings: { url: 'ru.jacred.pro', key: '', parser_torrent_type: 'jackett' } },
       { base: 'jr_maxvol_pro', name: 'Jr.maxvol.pro', settings: { url: 'jr.maxvol.pro', key: '', parser_torrent_type: 'jackett' } },
       { base: 'jacblack_ru', name: 'Jacblack.ru:9117', settings: { url: 'jacblack.ru:9117', key: '', parser_torrent_type: 'jackett' } },
-      { base: 'spawn_pp_ua', name: 'Spawn.pp', settings: { url: 'spawn.pp.ua:59117', key: '2', parser_torrent_type: 'jackett' } }
+      { base: 'spawn_pp_ua', name: 'Spawn.pp', settings: { url: 'spawn.pp.ua:59117', key: '2', parser_torrent_type: 'jackett' } },
+      
+      // Новые парсеры
+      { base: 'lampa32', name: 'Lampa32', settings: { url: '62.60.149.237:2601', key: '', parser_torrent_type: 'jackett' } },
+      { base: 'jacred_maxvol_pro', name: 'Jacred Maxvol Pro', settings: { url: 'jr.maxvol.pro', key: '', parser_torrent_type: 'jackett' } },
+      { base: 'jacred_ru', name: 'Jacred RU', settings: { url: 'jac-red.ru', key: '', parser_torrent_type: 'jackett' } },
+      { base: 'jac_black', name: 'Jac Black', settings: { url: 'jacblack.ru:9117', key: '', parser_torrent_type: 'jackett' } }
     ];
 
     // Хранилище статусов парсеров
