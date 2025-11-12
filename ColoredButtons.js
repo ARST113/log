@@ -10,8 +10,59 @@ Lampa.Platform.tv();
   var ONLINE_SVG_SOURCE = null;
   var REYOHOHO_SVG_SOURCE = null;
   var lastActiveButton = null;
+  var isInitialized = false;
+
+  // Основная функция инициализации
+  function initializePlugin() {
+    if (isInitialized) return;
+    isInitialized = true;
+    
+    console.log('🚀 Плагин иконок запускается (последним)');
+    
+    // Добавляем кастомные стили
+    addCustomStyles();
+
+    // Загружаем SVG
+    loadOnlineSVG();
+    loadReyohohoSVG();
+    
+    // Запускаем наблюдение
+    observe();
+    watchTitle();
+    
+    // Множественные попытки обработки с увеличивающимися задержками
+    setTimeout(process, 100);
+    setTimeout(process, 500);
+    setTimeout(process, 1000);
+    setTimeout(process, 2000);
+    setTimeout(process, 3000);
+  }
+
+  // Стратегии загрузки последним
+  function loadAsLast() {
+    // Стратегия 1: Ждем полной загрузки страницы
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function() {
+        // Стратегия 2: Ждем еще немного после DOMContentLoaded
+        setTimeout(initializePlugin, 1000);
+      });
+    } else {
+      // Стратегия 3: Если DOM уже загружен, ждем пока все успокоится
+      setTimeout(initializePlugin, 2000);
+    }
+
+    // Стратегия 4: Ждем пока все ресурсы загрузятся
+    window.addEventListener('load', function() {
+      setTimeout(initializePlugin, 500);
+    });
+
+    // Стратегия 5: Последний шанс - максимальная задержка
+    setTimeout(initializePlugin, 5000);
+  }
 
   function loadOnlineSVG() {
+    if (ONLINE_SVG_SOURCE) return;
+    
     fetch('https://raw.githubusercontent.com/ARST113/Buttons-/refs/heads/main/play-video-svgrepo-com.svg').then(function (response) {
       return response.text();
     }).then(function (svg) {
@@ -24,6 +75,8 @@ Lampa.Platform.tv();
   }
 
   function loadReyohohoSVG() {
+    if (REYOHOHO_SVG_SOURCE) return;
+    
     fetch('https://raw.githubusercontent.com/ARST113/Buttons-/refs/heads/main/AIVector_clapperboard.svg').then(function (response) {
       return response.text();
     }).then(function (svg) {
@@ -161,7 +214,11 @@ Lampa.Platform.tv();
 
   // Функция для добавления CSS стилей
   function addCustomStyles() {
+    // Проверяем, не добавлены ли стили уже
+    if (document.getElementById('custom-button-styles')) return;
+    
     var style = document.createElement('style');
+    style.id = 'custom-button-styles';
     style.textContent = `
       /* Убираем анимацию трансформации для reyohoho кнопок */
       .full-start__button.view--reyohoho_mod.selector {
@@ -171,11 +228,19 @@ Lampa.Platform.tv();
       .full-start__button.view--reyohoho_mod.selector:focus {
         transform: none !important;
       }
+      
+      /* Стили для кастомных иконок */
+      .reyohoho-custom-icon {
+        width: 24px !important;
+        height: 24px !important;
+      }
     `;
     document.head.appendChild(style);
   }
 
   function process() {
+    if (!isInitialized) return;
+    
     var count = 0;
 
     // Торрент-кнопки - обрабатываем все
@@ -206,7 +271,6 @@ Lampa.Platform.tv();
 
         // Меняем иконку и текст для BwaRC
         if (pluginName.toLowerCase().includes('bwa')) {
-          // Используем setTimeout для отложенного выполнения, чтобы не мешать рендерингу Lampa
           setTimeout(function() {
             if (!btn.parentNode) {
               console.log('❌ Кнопка BwaRC больше не существует, пропускаем');
@@ -267,16 +331,54 @@ Lampa.Platform.tv();
           setTimeout(function() {
             if (!btn.parentNode) return;
 
-            // Заменяем иконку без указания размера - будет использоваться стандартный размер как у BWA
             if (replaceIconPreservingAttrs(svg, REYOHOHO_SVG_SOURCE, {
               className: 'reyohoho-custom-icon'
             })) {
               btn.classList.add('reyohoho-svg-applied');
               count++;
-              console.log('✅ Иконка заменена для reyohoho_mod (стандартный размер)');
+              console.log('✅ Иконка заменена для reyohoho_mod');
             }
           }, 50);
         }
+      });
+    }
+
+    // Обрабатываем кнопки online_mod - используем ту же иконку что и для reyohoho
+    if (REYOHOHO_SVG_SOURCE) {
+      var onlineModButtons = document.querySelectorAll('.full-start__button.view--online_mod.selector');
+      onlineModButtons.forEach(function (btn) {
+        // Всегда добавляем обработчики hover
+        attachHoverEnter(btn);
+
+        // Пропускаем если уже обработана
+        if (btn.classList.contains('online-mod-svg-applied')) return;
+
+        var pluginName = getPluginName(btn);
+        console.log('🔧 Обрабатываем online_mod кнопку:', pluginName, btn);
+
+        setTimeout(function() {
+          if (!btn.parentNode) {
+            console.log('❌ Кнопка online_mod больше не существует, пропускаем');
+            return;
+          }
+
+          var svg = btn.querySelector('svg');
+          var span = btn.querySelector('span');
+
+          // Заменяем иконку на ту же, что и для reyohoho_mod
+          if (svg && !svg.classList.contains('online-mod-svg-replaced')) {
+            if (replaceIconPreservingAttrs(svg, REYOHOHO_SVG_SOURCE, {
+              className: 'reyohoho-custom-icon' // Используем тот же класс
+            })) {
+              svg.classList.add('online-mod-svg-replaced');
+              count++;
+              console.log('✅ Иконка заменена для online_mod (на иконку reyohoho)');
+            }
+          }
+
+          btn.classList.add('online-mod-svg-applied');
+          console.log('✅ Применены изменения для плагина online_mod');
+        }, 50);
       });
     }
 
@@ -305,23 +407,6 @@ Lampa.Platform.tv();
     });
   }
 
-  function init() {
-    // Добавляем кастомные стили
-    addCustomStyles();
-
-    loadOnlineSVG();
-    loadReyohohoSVG();
-    // Запускаем обработку несколько раз с задержками
-    setTimeout(process, 100);
-    setTimeout(process, 500);
-    setTimeout(process, 1000);
-    observe();
-    watchTitle();
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    setTimeout(init, 1000);
-  }
+  // Запускаем стратегию загрузки последним
+  loadAsLast();
 })();
