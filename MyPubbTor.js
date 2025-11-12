@@ -37,24 +37,20 @@
     }
 
     var parsersInfo = [
-      { base: 'lampa_app', name: 'Lampa.app', settings: { url: 'lampa.app', key: '', parser_torrent_type: 'jackett' } },
+      { base: 'lampa_app', name: 'Lampa', settings: { url: 'lampa.app', key: '', parser_torrent_type: 'jackett' } },
       { base: 'jacred_viewbox_dev', name: 'Viewbox', settings: { url: 'jacred.viewbox.dev', key: 'viewbox', parser_torrent_type: 'jackett' } },
       { base: 'unknown', name: 'Unknown', settings: { url: '188.119.113.252:9117', key: '1', parser_torrent_type: 'jackett' } },
-      { base: 'trs_my_to', name: 'Trs.my.to', settings: { url: 'trs.my.to:9118', key: '', parser_torrent_type: 'jackett' } },
-      { base: 'jacred_my_to', name: 'Jacred.my.to', settings: { url: 'jacred.my.to', key: '', parser_torrent_type: 'jackett' } },
-      { base: 'jacred_xyz', name: 'Jacred.xyz', settings: { url: 'jacred.xyz', key: '', parser_torrent_type: 'jackett' } },
-      { base: 'jac_red_ru', name: 'jac-red.ru', settings: { url: 'jac-red.ru', key: '', parser_torrent_type: 'jackett' } },
-
-      // Добавленные новые парсеры
-      { base: 'jacred_pro', name: 'Jacred.pro', settings: { url: 'jacred.pro', key: '', parser_torrent_type: 'jackett' } },
-      { base: 'ru_jacred_pro', name: 'Ru.jacred.pro', settings: { url: 'ru.jacred.pro', key: '', parser_torrent_type: 'jackett' } },
-      { base: 'jr_maxvol_pro', name: 'Jr.maxvol.pro', settings: { url: 'jr.maxvol.pro', key: '', parser_torrent_type: 'jackett' } },
-      { base: 'jacblack_ru', name: 'Jacblack.ru:9117', settings: { url: 'jacblack.ru:9117', key: '', parser_torrent_type: 'jackett' } },
-      { base: 'spawn_pp_ua', name: 'Spawn.pp', settings: { url: 'spawn.pp.ua:59117', key: '2', parser_torrent_type: 'jackett' } },
-      
-      // Новые парсеры
+      { base: 'trs_my_to', name: 'Trs', settings: { url: 'trs.my.to:9118', key: '', parser_torrent_type: 'jackett' } },
+      { base: 'jacred_my_to', name: 'Jacred', settings: { url: 'jacred.my.to', key: '', parser_torrent_type: 'jackett' } },
+      { base: 'jacred_xyz', name: 'Jacred XYZ', settings: { url: 'jacred.xyz', key: '', parser_torrent_type: 'jackett' } },
+      { base: 'jac_red_ru', name: 'Jac-red', settings: { url: 'jac-red.ru', key: '', parser_torrent_type: 'jackett' } },
+      { base: 'jacred_pro', name: 'Jacred Pro', settings: { url: 'jacred.pro', key: '', parser_torrent_type: 'jackett' } },
+      { base: 'ru_jacred_pro', name: 'Jacred RU Pro', settings: { url: 'ru.jacred.pro', key: '', parser_torrent_type: 'jackett' } },
+      { base: 'jr_maxvol_pro', name: 'Maxvol', settings: { url: 'jr.maxvol.pro', key: '', parser_torrent_type: 'jackett' } },
+      { base: 'jacblack_ru', name: 'Jacblack', settings: { url: 'jacblack.ru:9117', key: '', parser_torrent_type: 'jackett' } },
+      { base: 'spawn_pp_ua', name: 'Spawn', settings: { url: 'spawn.pp.ua:59117', key: '2', parser_torrent_type: 'jackett' } },
       { base: 'lampa32', name: 'Lampa32', settings: { url: '62.60.149.237:2601', key: '', parser_torrent_type: 'jackett' } },
-      { base: 'jacred_maxvol_pro', name: 'Jacred Maxvol Pro', settings: { url: 'jr.maxvol.pro', key: '', parser_torrent_type: 'jackett' } },
+      { base: 'jacred_maxvol_pro', name: 'Jacred Maxvol', settings: { url: 'jr.maxvol.pro', key: '', parser_torrent_type: 'jackett' } },
       { base: 'jacred_ru', name: 'Jacred RU', settings: { url: 'jac-red.ru', key: '', parser_torrent_type: 'jackett' } },
       { base: 'jac_black', name: 'Jac Black', settings: { url: 'jacblack.ru:9117', key: '', parser_torrent_type: 'jackett' } }
     ];
@@ -136,11 +132,13 @@
       });
     }
 
-    // Обновление цветов в выпадающем списке
+    // Обновление цветов в выпадающем списке БЕЗ точек + блокировка красных
     function updateSelectOptions() {
       setTimeout(function() {
         $('.selectbox-item').each(function() {
-          var itemText = $(this).text().trim();
+          var $item = $(this);
+          var itemText = $item.text().trim();
+          
           var parser = parsersInfo.find(function(p) {
             return p.name === itemText;
           });
@@ -149,33 +147,64 @@
             var status = parserStatuses[parser.base];
             var color = status === 'checking' ? '#ffeb3b' : status === 'online' ? '#4caf50' : '#f44336';
             
-            $(this).css({
-              'color': color,
-              'transition': 'color 0.3s ease'
-            });
-            
-            // Добавляем индикатор статуса
-            $(this).find('.status-indicator').remove();
-            var indicator = status === 'checking' ? '⟳' : status === 'online' ? '●' : '●';
-            $(this).prepend('<span class="status-indicator" style="margin-right: 8px; color: ' + color + ';">' + indicator + '</span>');
+            // Если парсер offline - блокируем его
+            if (status === 'offline') {
+              $item.css({
+                'color': color + ' !important',
+                'font-weight': '700 !important',
+                'opacity': '0.5 !important',
+                'pointer-events': 'none !important',
+                'cursor': 'not-allowed !important',
+                'transition': 'color 0.3s ease'
+              });
+              
+              $item.attr('style', 'color: ' + color + ' !important; font-weight: 700 !important; opacity: 0.5 !important; pointer-events: none !important; cursor: not-allowed !important; transition: color 0.3s ease;');
+              
+              // Блокируем клики
+              $item.off('click').on('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+              });
+              
+              // Добавляем класс для идентификации
+              $item.addClass('parser-disabled');
+            } else {
+              // Разблокируем если парсер работает
+              $item.css({
+                'color': color + ' !important',
+                'font-weight': '700 !important',
+                'opacity': '1 !important',
+                'pointer-events': 'auto !important',
+                'cursor': 'pointer !important',
+                'transition': 'color 0.3s ease'
+              });
+              
+              $item.attr('style', 'color: ' + color + ' !important; font-weight: 700 !important; opacity: 1 !important; pointer-events: auto !important; cursor: pointer !important; transition: color 0.3s ease;');
+              
+              $item.removeClass('parser-disabled');
+            }
           }
         });
       }, 100);
     }
 
-    // Обновление отображения парсеров с цветами и индикаторами
+    // Обновление отображения выбранного парсера
     function updateParserDisplay() {
       var settingsItem = $('div[data-name="lme_url_two"]');
       var currentParser = Lampa.Storage.get("lme_url_two");
       
-      // Обновляем цвет выбранного парсера
       if (parserStatuses[currentParser]) {
         var status = parserStatuses[currentParser];
         var color = status === 'checking' ? '#ffeb3b' : status === 'online' ? '#4caf50' : '#f44336';
+        
         settingsItem.find('.settings-param__value').css({
-          'color': color,
+          'color': color + ' !important',
+          'font-weight': '700 !important',
           'transition': 'color 0.3s ease'
         });
+        
+        settingsItem.find('.settings-param__value').attr('style', 'color: ' + color + ' !important; font-weight: 700 !important; transition: color 0.3s ease;');
       }
     }
 
@@ -188,9 +217,9 @@
         if (parser) {
           var settingsItem = $('div[data-name="lme_url_two"]');
           
-          // Устанавливаем желтый цвет с анимацией во время проверки
           settingsItem.find('.settings-param__value').css({
-            'color': '#ffeb3b',
+            'color': '#ffeb3b !important',
+            'font-weight': '700 !important',
             'transition': 'color 0.3s ease'
           });
           
@@ -199,7 +228,8 @@
           checkSingleParser(parser, function(isOnline) {
             var color = isOnline ? '#4caf50' : '#f44336';
             settingsItem.find('.settings-param__value').css({
-              'color': color,
+              'color': color + ' !important',
+              'font-weight': '700 !important',
               'transition': 'color 0.3s ease'
             });
           });
@@ -207,7 +237,7 @@
       }
     }
 
-    // Обновляем список значений для селектора с индикаторами
+    // Обновляем список значений для селектора
     var s_values = parsersInfo.reduce(function (prev, _ref) {
       var base = _ref.base,
         name = _ref.name;
@@ -231,6 +261,14 @@
           description: Lampa.Lang.translate('lme_parser_description') + " " + parsersInfo.length
         },
         onChange: function (value) {
+          // Проверяем, не заблокирован ли выбранный парсер
+          var parser = parsersInfo.find(function(p) { return p.base === value; });
+          if (parser && parserStatuses[parser.base] === 'offline') {
+            console.warn('Нельзя выбрать недоступный парсер');
+            Lampa.Noty.show('Этот парсер недоступен');
+            return;
+          }
+          
           changeParser();
           checkAlive("parser");
           Lampa.Settings.update();
@@ -243,7 +281,7 @@
             var settingsItem = $('div[data-name="lme_url_two"]');
             var currentParser = Lampa.Storage.get("lme_url_two");
             
-            // Добавляем индикатор выбора (галочку/кружок)
+            // Добавляем индикатор выбора (галочку)
             if (currentParser && currentParser !== 'no_parser') {
               var indicator = '<span style="color: #4caf50; margin-left: 8px;">✓</span>';
               settingsItem.find('.settings-param__value').append(indicator);
@@ -261,7 +299,6 @@
               $('.settings-param__name', item).css('color', 'f3d900');
               $('div[data-name="lme_url_two"]').insertAfter('div[data-children="parser"]');
               
-              // Проверяем состояние текущего парсера при рендере
               checkAlive("parser");
             } else {
               item.hide();
@@ -275,7 +312,7 @@
       parserSetting: parserSetting
     };
 
-    // Слушатель открытия раздела парсеров - запускаем проверку заранее
+    // Слушатель открытия раздела парсеров
     Lampa.Settings.listener.follow('open', function(e) {
       if (e.name === 'parser') {
         console.log('Раздел парсеров открыт - запускаем предварительную проверку');
@@ -283,7 +320,7 @@
       }
     });
 
-    // Восстанавливаем слушатель для вызова проверки живости при переключении выбора
+    // Слушатель для вызова проверки при переключении
     Lampa.Controller.listener.follow('toggle', (e) => {
       if (e.name === 'select') {
         checkAlive("parser");
