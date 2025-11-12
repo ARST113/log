@@ -156,7 +156,7 @@ Lampa.Platform.tv();
       }
     });
 
-    // Онлайн-кнопки - обрабатываем только BwaRC
+    // Онлайн-кнопки - обрабатываем только BwaRC и Cinema
     if (ONLINE_SVG_SOURCE) {
       var onlineButtons = document.querySelectorAll('.full-start__button.view--online.selector');
       onlineButtons.forEach(function (btn) {
@@ -167,27 +167,50 @@ Lampa.Platform.tv();
         if (btn.classList.contains('online-svg-applied')) return;
         
         var pluginName = getPluginName(btn);
-        console.log('Проверяем плагин:', pluginName);
+        console.log('Проверяем плагин:', pluginName, btn);
         
-        // Меняем иконку и текст только для BwaRC
+        // Меняем иконку и текст для BwaRC
         if (pluginName.toLowerCase().includes('bwa')) {
-          var svg = btn.querySelector('svg');
-          var span = btn.querySelector('span');
-          
-          if (svg) {
-            if (replaceIconPreservingAttrs(svg, ONLINE_SVG_SOURCE)) {
-              btn.classList.add('online-svg-applied');
-              count++;
+          // Используем setTimeout для отложенного выполнения, чтобы не мешать рендерингу Lampa
+          setTimeout(function() {
+            if (!btn.parentNode) {
+              console.log('❌ Кнопка BwaRC больше не существует, пропускаем');
+              return;
             }
-          }
-          
-          if (span) {
-            span.textContent = 'BWA';
-          }
-          
-          console.log('✅ Применены изменения для плагина BwaRC');
-        } else {
-          // Для других плагинов просто отмечаем как обработанные, чтобы не трогать в будущем
+            
+            var svg = btn.querySelector('svg');
+            var span = btn.querySelector('span');
+            
+            if (svg && !svg.classList.contains('custom-svg-replaced')) {
+              if (replaceIconPreservingAttrs(svg, ONLINE_SVG_SOURCE)) {
+                svg.classList.add('custom-svg-replaced');
+                count++;
+              }
+            }
+            
+            if (span && span.textContent !== 'BWA') {
+              span.textContent = 'BWA';
+            }
+            
+            btn.classList.add('online-svg-applied');
+            console.log('✅ Применены изменения для плагина BwaRC');
+          }, 50);
+        } 
+        // Меняем только текст для Cinema
+        else if (pluginName.toLowerCase().includes('cinema')) {
+          setTimeout(function() {
+            if (!btn.parentNode) return;
+            
+            var span = btn.querySelector('span');
+            if (span && span.textContent !== 'Cinema') {
+              span.textContent = 'Cinema';
+            }
+            btn.classList.add('online-svg-applied');
+            console.log('✅ Текст изменен на Cinema для плагина cinema');
+          }, 50);
+        } 
+        // Для других плагинов просто отмечаем как обработанные, чтобы не трогать в будущем
+        else {
           btn.classList.add('online-svg-applied');
           console.log('⚠️ Плагин ' + pluginName + ' отмечен как обработанный (без изменений)');
         }
@@ -207,7 +230,10 @@ Lampa.Platform.tv();
         }
       }
       if (needsUpdate) {
+        // Используем несколько попыток с задержками для надежности
         setTimeout(process, 100);
+        setTimeout(process, 500);
+        setTimeout(process, 1000);
       }
     });
     mo.observe(document.body, {
@@ -218,7 +244,10 @@ Lampa.Platform.tv();
 
   function init() {
     loadOnlineSVG();
-    process();
+    // Запускаем обработку несколько раз с задержками
+    setTimeout(process, 100);
+    setTimeout(process, 500);
+    setTimeout(process, 1000);
     observe();
     watchTitle();
   }
