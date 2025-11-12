@@ -55,6 +55,7 @@
 
     // Хранилище статусов парсеров
     var parserStatuses = {};
+    var checkInProgress = false;
 
     function changeParser() {
       var jackettUrlTwo = Lampa.Storage.get("lme_url_two");
@@ -105,17 +106,26 @@
     }
 
     // Функция проверки всех парсеров
-    function checkAllParsers() {
+    function checkAllParsers(forceUpdate) {
+      if (checkInProgress && !forceUpdate) return;
+      checkInProgress = true;
+
       parsersInfo.forEach(function(parser) {
         parserStatuses[parser.base] = 'checking';
       });
       
       updateSelectOptions();
       
+      var checkedCount = 0;
       parsersInfo.forEach(function(parser) {
         checkSingleParser(parser, function(isOnline) {
+          checkedCount++;
           updateSelectOptions();
           updateParserDisplay();
+          
+          if (checkedCount === parsersInfo.length) {
+            checkInProgress = false;
+          }
         });
       });
     }
@@ -233,15 +243,11 @@
               settingsItem.find('.settings-param__value').append(indicator);
             }
             
-            // Слушатель клика на селектор для запуска проверки
+            // Слушатель клика на селектор для обновления отображения
             settingsItem.on('click', function() {
-              checkAllParsers();
-            });
-            
-            $('div[data-children="parser"]').on('hover:enter', function () {
-              // Запускаем проверку всех парсеров при открытии раздела
-              checkAllParsers();
-              Lampa.Settings.update();
+              setTimeout(function() {
+                updateSelectOptions();
+              }, 150);
             });
             
             if (Lampa.Storage.field('parser_use')) {
@@ -262,6 +268,14 @@
     var Parser = {
       parserSetting: parserSetting
     };
+
+    // Слушатель открытия раздела парсеров - запускаем проверку заранее
+    Lampa.Settings.listener.follow('open', function(e) {
+      if (e.name === 'parser') {
+        console.log('Раздел парсеров открыт - запускаем предварительную проверку');
+        checkAllParsers();
+      }
+    });
 
     // Восстанавливаем слушатель для вызова проверки живости при переключении выбора
     Lampa.Controller.listener.follow('toggle', (e) => {
