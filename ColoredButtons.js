@@ -12,6 +12,34 @@ Lampa.Platform.tv();
   var lastActiveButton = null;
   var isInitialized = false;
 
+  // Размеры иконок для разных устройств
+  var ICON_SIZES = {
+    mobile: {
+      width: '20',
+      height: '20'
+    },
+    tablet: {
+      width: '20', 
+      height: '20'
+    },
+    desktop: {
+      width: '30',
+      height: '30'
+    }
+  };
+
+  // Функция для определения типа устройства и размера иконки
+  function getIconSize() {
+    var screenWidth = window.innerWidth;
+    if (screenWidth <= 768) {
+      return ICON_SIZES.mobile; // Mobile
+    } else if (screenWidth <= 1024) {
+      return ICON_SIZES.tablet; // Tablet
+    } else {
+      return ICON_SIZES.desktop; // Desktop
+    }
+  }
+
   // Основная функция инициализации
   function initializePlugin() {
     if (isInitialized) return;
@@ -103,11 +131,18 @@ Lampa.Platform.tv();
         if (v != null && v !== '') fresh.setAttribute(a, v);
       });
 
+      // Получаем размеры для текущего устройства
+      var iconSize = getIconSize();
+
       // Применяем кастомные настройки если есть
       if (options) {
         if (options.width) fresh.setAttribute('width', options.width);
         if (options.height) fresh.setAttribute('height', options.height);
         if (options.className) fresh.classList.add(options.className);
+      } else {
+        // Устанавливаем размеры по умолчанию для устройства
+        fresh.setAttribute('width', iconSize.width);
+        fresh.setAttribute('height', iconSize.height);
       }
 
       origSvg.replaceWith(fresh);
@@ -229,10 +264,42 @@ Lampa.Platform.tv();
         transform: none !important;
       }
       
-      /* Стили для кастомных иконок */
-      .reyohoho-custom-icon {
-        width: 24px !important;
-        height: 24px !important;
+      /* Адаптивные размеры для иконок на разных устройствах */
+      /* Мобильные устройства (до 768px) */
+      @media (max-width: 768px) {
+        .full-start__button.selector svg {
+          width: 20px !important;
+          height: 20px !important;
+          min-width: 20px !important;
+          min-height: 20px !important;
+        }
+      }
+      
+      /* Планшеты (769px - 1024px) */
+      @media (min-width: 769px) and (max-width: 1024px) {
+        .full-start__button.selector svg {
+          width: 20px !important;
+          height: 20px !important;
+          min-width: 20px !important;
+          min-height: 20px !important;
+        }
+      }
+      
+      /* Десктоп (1025px и выше) */
+      @media (min-width: 1025px) {
+        .full-start__button.selector svg {
+          width: 30px !important;
+          height: 30px !important;
+          min-width: 30px !important;
+          min-height: 30px !important;
+        }
+      }
+      
+      /* Специфичные стили для кастомных иконок */
+      .reyohoho-custom-icon,
+      .online-mod-custom-icon,
+      .custom-svg-replaced {
+        /* Размеры управляются медиа-запросами выше */
       }
     `;
     document.head.appendChild(style);
@@ -242,6 +309,7 @@ Lampa.Platform.tv();
     if (!isInitialized) return;
     
     var count = 0;
+    var iconSize = getIconSize();
 
     // Торрент-кнопки - обрабатываем все
     var torrentButtons = document.querySelectorAll('.full-start__button.view--torrent.selector');
@@ -249,7 +317,10 @@ Lampa.Platform.tv();
       if (btn.classList.contains('utorrent-svg-applied')) return;
       var svg = btn.querySelector('svg');
       if (svg) {
-        if (replaceIconPreservingAttrs(svg, TORRENT_SVG_SOURCE)) {
+        if (replaceIconPreservingAttrs(svg, TORRENT_SVG_SOURCE, {
+          width: iconSize.width,
+          height: iconSize.height
+        })) {
           btn.classList.add('utorrent-svg-applied');
           count++;
         }
@@ -281,7 +352,10 @@ Lampa.Platform.tv();
             var span = btn.querySelector('span');
 
             if (svg && !svg.classList.contains('custom-svg-replaced')) {
-              if (replaceIconPreservingAttrs(svg, ONLINE_SVG_SOURCE)) {
+              if (replaceIconPreservingAttrs(svg, ONLINE_SVG_SOURCE, {
+                width: iconSize.width,
+                height: iconSize.height
+              })) {
                 svg.classList.add('custom-svg-replaced');
                 count++;
               }
@@ -332,6 +406,8 @@ Lampa.Platform.tv();
             if (!btn.parentNode) return;
 
             if (replaceIconPreservingAttrs(svg, REYOHOHO_SVG_SOURCE, {
+              width: iconSize.width,
+              height: iconSize.height,
               className: 'reyohoho-custom-icon'
             })) {
               btn.classList.add('reyohoho-svg-applied');
@@ -368,7 +444,9 @@ Lampa.Platform.tv();
           // Заменяем иконку на ту же, что и для reyohoho_mod
           if (svg && !svg.classList.contains('online-mod-svg-replaced')) {
             if (replaceIconPreservingAttrs(svg, REYOHOHO_SVG_SOURCE, {
-              className: 'reyohoho-custom-icon' // Используем тот же класс
+              width: iconSize.width,
+              height: iconSize.height,
+              className: 'online-mod-custom-icon'
             })) {
               svg.classList.add('online-mod-svg-replaced');
               count++;
