@@ -6,7 +6,7 @@
     function startPlugin() {
         console.log('[ContinueWatch] ========================================');
         console.log('[ContinueWatch] ПЛАГИН "ПРОДОЛЖИТЬ ПРОСМОТР" ЗАПУЩЕН');
-        console.log('[ContinueWatch] Версия: 1.1 с пропуском рекламы');
+        console.log('[ContinueWatch] Версия: 1.2 с исправлением для аниме');
         console.log('[ContinueWatch] ========================================');
 
         var STORAGE_KEY = 'continue_watch_urls';
@@ -52,7 +52,11 @@
             console.log('[ContinueWatch] Обработка карточки');
               
             var movie = e.data.movie;
-            var title = movie.original_title || movie.original_name;
+            
+            // ✅ ИСПРАВЛЕНО: Правильный порядок для аниме/сериалов
+            var title = movie.number_of_seasons ? 
+                (movie.original_name || movie.original_title) : 
+                (movie.original_title || movie.original_name);
               
             if (!title) {
                 console.log('[ContinueWatch] ⚠️ Название не найдено, выход');
@@ -60,6 +64,7 @@
             }
               
             console.log('[ContinueWatch] Название:', title);
+            console.log('[ContinueWatch] Тип:', movie.number_of_seasons ? 'Сериал/Аниме' : 'Фильм');
               
             // Получаем hash и прогресс
             var hash = Lampa.Utils.hash(title);
@@ -68,20 +73,35 @@
             console.log('[ContinueWatch] Hash:', hash);
             console.log('[ContinueWatch] Прогресс из Timeline:', view.percent + '%');
               
-            // Для сериалов - проверяем последний эпизод
+            // ✅ ИСПРАВЛЕНО: Для сериалов/аниме - проверяем последний эпизод
             if (movie.number_of_seasons) {
                 var last = Lampa.Storage.get('online_watched_last', '{}');
-                var filed = last[Lampa.Utils.hash(title)];
+                if (typeof last === 'string') {
+                    try {
+                        last = JSON.parse(last);
+                    } catch(e) {
+                        last = {};
+                    }
+                }
+                
+                // ✅ Используем original_name для сериалов (как в Lampa)
+                var titleHash = Lampa.Utils.hash(movie.original_name || movie.original_title);
+                var filed = last[titleHash];
                   
+                console.log('[ContinueWatch] TitleHash для сериала:', titleHash);
+                console.log('[ContinueWatch] Данные последнего эпизода:', filed);
+                
                 if (filed && filed.season && filed.episode) {
+                    // ✅ Используем original_name для hash эпизода
                     hash = Lampa.Utils.hash([
                         filed.season,
                         filed.season > 10 ? ':' : '',
                         filed.episode,
-                        title
+                        movie.original_name || movie.original_title
                     ].join(''));
                     view = Lampa.Timeline.view(hash);
-                    console.log('[ContinueWatch] Сериал - эпизод S' + filed.season + 'E' + filed.episode);
+                    console.log('[ContinueWatch] Эпизод S' + filed.season + 'E' + filed.episode);
+                    console.log('[ContinueWatch] Hash эпизода:', hash);
                     console.log('[ContinueWatch] Прогресс эпизода:', view.percent + '%');
                 }
             }
@@ -128,23 +148,20 @@
                         title: savedUrl.title,
                         timeline: view,
                         card: movie,
-                        continue_play: true  // ФЛАГ ПРОПУСКА РЕКЛАМЫ
+                        continue_play: true
                     };
                       
                     console.log('[ContinueWatch] Запуск плеера с Timeline:', view.percent + '%,', view.time, 'сек');
                     console.log('[ContinueWatch] 🚫 Реклама будет пропущена (continue_play: true)');
                       
                     try {
-                        // Проверяем платформу Android
                         if (Lampa.Platform.is('android')) {
                             console.log('[ContinueWatch] 📱 Платформа Android обнаружена');
                               
-                            // Подготавливаем URL для воспроизведения
                             var playUrl = savedUrl.url.replace('&preload', '&play');
                             playerData.url = playUrl;
                             playerData.position = view.time || -1;
                               
-                            // Запускаем внешний плеер через Android API
                             if (typeof Lampa.Android !== 'undefined' && typeof Lampa.Android.openPlayer === 'function') {
                                 Lampa.Android.openPlayer(playUrl, playerData);
                                 console.log('[ContinueWatch] ✅ Внешний плеер запущен через Lampa.Android.openPlayer');
@@ -152,12 +169,10 @@
                                 AndroidJS.openPlayer(playUrl, JSON.stringify(playerData));
                                 console.log('[ContinueWatch] ✅ Внешний плеер запущен через AndroidJS.openPlayer');
                             } else {
-                                // Fallback на встроенный плеер если Android API недоступен
                                 console.log('[ContinueWatch] ⚠️ Android API недоступен, используем встроенный плеер');
                                 Lampa.Player.play(playerData);
                             }
                         } else {
-                            // Для других платформ используем встроенный плеер
                             console.log('[ContinueWatch] 🖥️ Запуск встроенного плеера');
                             Lampa.Player.play(playerData);
                         }
@@ -228,14 +243,34 @@
             if (data && data.url) {
                 console.log('[ContinueWatch] URL:', data.url);
                 console.log('[ContinueWatch] Title:', data.title);
+                console.log('[ContinueWatch] Season:', data.season);
+                console.log('[ContinueWatch] Episode:', data.episode);
                   
-                // Определяем hash
+                // ✅ ИСПРАВЛЕНО: Определяем hash правильно
                 var hash = null;
                 if (data.timeline && data.timeline.hash) {
                     hash = data.timeline.hash;
                     console.log('[ContinueWatch] Hash из timeline:', hash);
-                } else if (data.card && (data.card.original_title || data.card.original_name)) {
-                    hash = Lampa.Utils.hash(data.card.original_title || data.card.original_name);
+                } else if (data.season && data.episode && data.card) {
+                    // ✅ Для сериалов/аниме используем original_name
+                    var baseTitle = data.card.number_of_seasons ? 
+                        (data.card.original_name || data.card.original_title) :
+                        (data.card.original_title || data.card.original_name);
+                    
+                    hash = Lampa.Utils.hash([
+                        data.season,
+                        data.season > 10 ? ':' : '',
+                        data.episode,
+                        baseTitle
+                    ].join(''));
+                    console.log('[ContinueWatch] Hash для эпизода S' + data.season + 'E' + data.episode + ':', hash);
+                    console.log('[ContinueWatch] BaseTitle:', baseTitle);
+                } else if (data.card) {
+                    // ✅ Правильный порядок для фильмов/сериалов
+                    var cardTitle = data.card.number_of_seasons ? 
+                        (data.card.original_name || data.card.original_title) :
+                        (data.card.original_title || data.card.original_name);
+                    hash = Lampa.Utils.hash(cardTitle);
                     console.log('[ContinueWatch] Hash из card:', hash);
                 } else if (data.title) {
                     hash = Lampa.Utils.hash(data.title);
@@ -246,7 +281,6 @@
                     currentHash = hash;
                     console.log('[ContinueWatch] ✓ currentHash установлен:', currentHash);
                       
-                    // Сохраняем URL
                     saveUrl(hash, {
                         url: data.url,
                         title: data.title || 'Unknown',
@@ -274,7 +308,6 @@
               
             if (!time || !duration || duration === 0) return;
               
-            // Сохраняем каждые 10 секунд
             if (Math.floor(time) % 10 === 0 && Math.floor(time) !== Math.floor(video.lastSavedTime || 0)) {
                 video.lastSavedTime = time;
                   
