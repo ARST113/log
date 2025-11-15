@@ -1,16 +1,29 @@
-// Lampa.Plugin - Continue Watch v5.1 (Production + Enhancements)
+// Lampa.Plugin - Continue Watch v5.2 (Enhanced Debug + Fixes)
 
 (function() {
     'use strict';
 
     function startPlugin() {
         console.log('[ContinueWatch] ========================================');
-        console.log('[ContinueWatch] ПЛАГИН "ПРОДОЛЖИТЬ ПРОСМОТР" ЗАПУЩЕН');
-        console.log('[ContinueWatch] Версия: 5.1 - Production с улучшениями');
+        console.log('[ContinueWatch] ПЛАГИН "ПРОДОЛЖИТЬ ПРОСМОТР" v5.2');
         console.log('[ContinueWatch] ========================================');
 
         var currentHash = null;
         var activeButtons = {};
+
+        // ========== ПРОВЕРКА ANDROID VERSION ==========
+        if (Lampa.Platform.is('android') && typeof AndroidJS !== 'undefined') {
+            try {
+                var version = AndroidJS.appVersion().split('-').pop();
+                console.log('[ContinueWatch] 📱 Android app version:', version);
+                
+                if (parseInt(version, 10) < 98) {
+                    console.log('[ContinueWatch] ⚠️ Android < v98, timeCall не поддерживается');
+                }
+            } catch(e) {
+                console.error('[ContinueWatch] Ошибка проверки версии:', e);
+            }
+        }
 
         // ========== УТИЛИТЫ ==========
           
@@ -75,7 +88,6 @@
             return url;
         }
 
-        // ✅ НОВОЕ: Проверка доступности торрента в кэше
         function checkTorrentAvailability(torrent_link, onSuccess, onError) {
             if (typeof Lampa.Torserver === 'undefined' || typeof Lampa.Torserver.cache !== 'function') {
                 console.log('[ContinueWatch] ⚠️ Torserver.cache недоступен, пропускаем проверку');
@@ -83,7 +95,7 @@
                 return;
             }
             
-            console.log('[ContinueWatch] 🔍 Проверка доступности торрента в кэше...');
+            console.log('[ContinueWatch] 🔍 Проверка доступности торрента...');
             
             Lampa.Torserver.cache(
                 torrent_link,
@@ -108,7 +120,18 @@
                 torrent_hash: currentSavedParams.stream_params.torrent_link
             };
             
-            console.log('[ContinueWatch] Запуск плеера с Timeline:', currentView.percent + '%,', currentView.time, 'сек');
+            // ✅ НОВОЕ: Обновляем Timeline перед запуском
+            if (currentView.hash) {
+                Lampa.Timeline.update({
+                    hash: currentView.hash,
+                    percent: currentView.percent,
+                    time: currentView.time,
+                    duration: currentView.duration
+                });
+                console.log('[ContinueWatch] 💾 Timeline обновлен перед запуском:', currentView.percent + '%');
+            }
+            
+            console.log('[ContinueWatch] 🎬 Запуск плеера:', currentView.percent + '%,', currentView.time, 'сек');
             
             try {
                 if (Lampa.Platform.is('android') || Lampa.Platform.is('webos')) {
@@ -118,13 +141,13 @@
                     
                     if (typeof Lampa.Android !== 'undefined' && typeof Lampa.Android.openPlayer === 'function') {
                         Lampa.Android.openPlayer(url, playerData);
-                        console.log('[ContinueWatch] ✅ Внешний плеер запущен через Lampa.Android.openPlayer');
+                        console.log('[ContinueWatch] ✅ Запущен Lampa.Android.openPlayer');
                         return;
                     }
                     
                     if (typeof AndroidJS !== 'undefined' && typeof AndroidJS.openPlayer === 'function') {
                         AndroidJS.openPlayer(url, JSON.stringify(playerData));
-                        console.log('[ContinueWatch] ✅ Внешний плеер запущен через AndroidJS.openPlayer');
+                        console.log('[ContinueWatch] ✅ Запущен AndroidJS.openPlayer');
                         return;
                     }
                     
@@ -135,37 +158,8 @@
                 Lampa.Player.play(playerData);
                 
             } catch(err) {
-                console.error('[ContinueWatch] ❌ Ошибка запуска плеера:', err);
-                
-                Lampa.Select.show({
-                    title: 'Ошибка запуска плеера',
-                    items: [
-                        {
-                            title: 'Выбрать другой источник',
-                            subtitle: 'Открыть список торрентов',
-                            value: 'reselect'
-                        },
-                        {
-                            title: 'Попробовать ещё раз',
-                            subtitle: 'Повторить попытку',
-                            value: 'retry'
-                        }
-                    ],
-                    onSelect: function(item) {
-                        if (item.value === 'reselect') {
-                            Lampa.Activity.push({
-                                url: '',
-                                title: currentData.movie.title || currentData.movie.name,
-                                component: 'torrents',
-                                movie: currentData.movie,
-                                page: 1
-                            });
-                        } else if (item.value === 'retry') {
-                            launchPlayer(url, currentSavedParams, currentView, currentData);
-                        }
-                    },
-                    onBack: function() {}
-                });
+                console.error('[ContinueWatch] ❌ Ошибка запуска:', err);
+                Lampa.Noty.show('Ошибка запуска: ' + err.message);
             }
         }
 
@@ -194,9 +188,9 @@
                 
                 Lampa.Storage.set(Lampa.Timeline.filename(), viewed);
                 
-                console.log('[ContinueWatch] ✓ Параметры сохранены в Timeline для hash:', hash);
+                console.log('[ContinueWatch] ✓ Параметры сохранены для hash:', hash);
             } catch(e) {
-                console.error('[ContinueWatch] Ошибка сохранения параметров:', e);
+                console.error('[ContinueWatch] Ошибка сохранения:', e);
             }
         }
 
@@ -205,20 +199,34 @@
                 var viewed = Lampa.Storage.get(Lampa.Timeline.filename(), {});
                 return viewed[hash] && viewed[hash].stream_params ? viewed[hash] : null;
             } catch(e) {
-                console.error('[ContinueWatch] Ошибка чтения параметров:', e);
+                console.error('[ContinueWatch] Ошибка чтения:', e);
                 return null;
             }
         }
 
+        // ✅ УЛУЧШЕНО: Расширенная диагностика
         function createOrUpdateButton(movie, container) {
+            console.log('[ContinueWatch] ========================================');
+            console.log('[ContinueWatch] 🔍 ДИАГНОСТИКА СОЗДАНИЯ КНОПКИ');
+            
             var title = movie.number_of_seasons ? 
                 (movie.original_name || movie.original_title) : 
                 (movie.original_title || movie.original_name);
+            
+            console.log('[ContinueWatch] - Title:', title);
+            console.log('[ContinueWatch] - Is series:', !!movie.number_of_seasons);
               
-            if (!title) return;
+            if (!title) {
+                console.log('[ContinueWatch] ❌ Title не найден');
+                console.log('[ContinueWatch] - Movie object:', movie);
+                return;
+            }
               
             var hash = Lampa.Utils.hash(title);
             var view = Lampa.Timeline.view(hash);
+            
+            console.log('[ContinueWatch] - Hash:', hash);
+            console.log('[ContinueWatch] - Timeline:', view);
               
             if (movie.number_of_seasons) {
                 var last = Lampa.Storage.get('online_watched_last', '{}');
@@ -233,6 +241,9 @@
                 var titleHash = Lampa.Utils.hash(movie.original_name || movie.original_title);
                 var filed = last[titleHash];
                 
+                console.log('[ContinueWatch] - Series titleHash:', titleHash);
+                console.log('[ContinueWatch] - Last watched:', filed);
+                
                 if (filed && filed.season && filed.episode) {
                     hash = Lampa.Utils.hash([
                         filed.season,
@@ -241,17 +252,29 @@
                         movie.original_name || movie.original_title
                     ].join(''));
                     view = Lampa.Timeline.view(hash);
+                    console.log('[ContinueWatch] - Episode hash:', hash);
+                    console.log('[ContinueWatch] - Episode view:', view);
                 }
             }
               
+            // ✅ УЛУЧШЕНО: Детальное логирование проверки
+            console.log('[ContinueWatch] - Percent:', view.percent);
+            console.log('[ContinueWatch] - Условие: percent >= 5 и <= 95');
+            
             if (!view.percent || view.percent < 5 || view.percent > 95) {
+                console.log('[ContinueWatch] ❌ Прогресс не подходит:', view.percent);
+                
                 if (activeButtons[hash]) {
                     activeButtons[hash].button.remove();
                     delete activeButtons[hash];
-                    console.log('[ContinueWatch] 🗑️ Кнопка удалена (прогресс не подходит)');
+                    console.log('[ContinueWatch] 🗑️ Кнопка удалена');
                 }
+                
+                console.log('[ContinueWatch] ========================================');
                 return;
             }
+            
+            console.log('[ContinueWatch] ✅ Условия выполнены!');
               
             var percent = view.percent;
             var timeStr = formatTime(view.time);
@@ -268,6 +291,7 @@
                 activeButtons[hash].view = view;
                 activeButtons[hash].savedParams = savedParams;
                 
+                console.log('[ContinueWatch] ========================================');
                 return;
             }
             
@@ -294,8 +318,7 @@
             };
               
             button.on('hover:enter', function() {
-                console.log('[ContinueWatch] ========================================');
-                console.log('[ContinueWatch] 🎬 КНОПКА "ПРОДОЛЖИТЬ" НАЖАТА');
+                console.log('[ContinueWatch] 🎬 КНОПКА НАЖАТА');
                 
                 var currentData = activeButtons[hash];
                 if (!currentData) return;
@@ -311,26 +334,21 @@
                         return;
                     }
                     
-                    // ✅ НОВОЕ: Проверяем доступность торрента перед запуском
                     checkTorrentAvailability(
                         currentSavedParams.stream_params.torrent_link,
                         function() {
-                            // Торрент доступен - запускаем
                             launchPlayer(url, currentSavedParams, currentView, currentData);
                         },
                         function() {
-                            // Торрент не доступен - предлагаем выбрать заново
                             Lampa.Select.show({
                                 title: 'Торрент не доступен',
                                 items: [
                                     {
                                         title: 'Выбрать другой источник',
-                                        subtitle: 'Открыть список торрентов',
                                         value: 'reselect'
                                     },
                                     {
                                         title: 'Попробовать запустить',
-                                        subtitle: 'Возможно торрент загрузится',
                                         value: 'try'
                                     }
                                 ],
@@ -343,7 +361,7 @@
                                             movie: currentData.movie,
                                             page: 1
                                         });
-                                    } else if (item.value === 'try') {
+                                    } else {
                                         launchPlayer(url, currentSavedParams, currentView, currentData);
                                     }
                                 },
@@ -361,52 +379,75 @@
                         page: 1
                     });
                 }
-                  
-                console.log('[ContinueWatch] ========================================');
             });
               
             container.prepend(button);
-            console.log('[ContinueWatch] ✅ Кнопка добавлена на карточку');
+            console.log('[ContinueWatch] ✅ Кнопка добавлена!');
+            console.log('[ContinueWatch] ========================================');
         }
 
         Lampa.Listener.follow('full', function(e) {
             if (e.type !== 'complite') return;
               
-            console.log('[ContinueWatch] ========================================');
-            console.log('[ContinueWatch] Обработка карточки');
+            console.log('[ContinueWatch] ======== Событие FULL ========');
               
-            var movie = e.data.movie;
-            var container = e.object.activity.render().find('.full-start-new__buttons');
-              
-            if (!container.length) {
-                console.log('[ContinueWatch] ⚠️ Контейнер .full-start-new__buttons не найден');
-                return;
-            }
-            
-            createOrUpdateButton(movie, container);
-            
-            console.log('[ContinueWatch] ========================================');
+            setTimeout(function() {
+                var movie = e.data.movie;
+                var container = e.object.activity.render().find('.full-start-new__buttons');
+                
+                console.log('[ContinueWatch] Поиск контейнера .full-start-new__buttons:', container.length);
+                
+                if (!container.length) {
+                    container = e.object.activity.render().find('.full-start__buttons');
+                    console.log('[ContinueWatch] Поиск .full-start__buttons:', container.length);
+                }
+                
+                if (!container.length) {
+                    container = e.object.activity.render().find('.full__buttons');
+                    console.log('[ContinueWatch] Поиск .full__buttons:', container.length);
+                }
+                
+                if (!container.length) {
+                    container = e.object.activity.render().find('[class*="buttons"]').first();
+                    console.log('[ContinueWatch] Поиск [class*="buttons"]:', container.length);
+                }
+                
+                if (!container.length) {
+                    console.log('[ContinueWatch] ❌ Контейнер не найден!');
+                    // ✅ НОВОЕ: Показываем все классы для диагностики
+                    var allClasses = [];
+                    e.object.activity.render().find('[class]').each(function() {
+                        var cls = $(this).attr('class');
+                        if (cls && allClasses.indexOf(cls) === -1) allClasses.push(cls);
+                    });
+                    console.log('[ContinueWatch] Доступные классы:', allClasses.slice(0, 20));
+                    return;
+                }
+                
+                console.log('[ContinueWatch] ✅ Контейнер найден!');
+                createOrUpdateButton(movie, container);
+                
+            }, 100);
         });
         
         Lampa.Timeline.listener.follow('update', function(data) {
-            console.log('[ContinueWatch] 📡 Timeline обновлен, hash:', data.hash);
+            console.log('[ContinueWatch] 📡 Timeline update, hash:', data.hash);
             
             if (data.hash && activeButtons[data.hash]) {
                 var buttonData = activeButtons[data.hash];
                 var container = buttonData.button.parent();
                 
-                if (container.length && $.contains(document, container[0])) {
-                    console.log('[ContinueWatch] 🔄 Обновляем кнопку для hash:', data.hash);
+                if (container.length && document.contains(container[0])) {
                     createOrUpdateButton(buttonData.movie, container);
                 } else {
                     delete activeButtons[data.hash];
-                    console.log('[ContinueWatch] 🗑️ Кнопка удалена (контейнер не в DOM)');
+                    console.log('[ContinueWatch] 🗑️ Кнопка удалена (не в DOM)');
                 }
             }
         });
         
         Lampa.Activity.listener.follow('backward', function() {
-            console.log('[ContinueWatch] 🧹 Очистка активных кнопок');
+            console.log('[ContinueWatch] 🧹 Очистка');
             activeButtons = {};
         });
           
@@ -437,13 +478,11 @@
                   
                 return originalOpenPlayer.call(this, link, data);
             };
-            console.log('[ContinueWatch] ✅ Android.openPlayer перехвачен');
         }
           
         var originalPlay = Lampa.Player.play;
         Lampa.Player.play = function(data) {
-            console.log('[ContinueWatch] ----------------------------------------');
-            console.log('[ContinueWatch] 📺 Перехват Player.play()');
+            console.log('[ContinueWatch] 📺 Перехват Player.play');
               
             if (data && data.url) {
                 var hash = null;
@@ -489,7 +528,6 @@
                 }
             }
               
-            console.log('[ContinueWatch] ----------------------------------------');
             return originalPlay.call(this, data);
         };
           
@@ -521,13 +559,9 @@
         });
 
         Lampa.Player.listener.follow('destroy', function() {
-            console.log('[ContinueWatch] ========================================');
             console.log('[ContinueWatch] 🛑 Плеер закрывается');
               
-            if (!currentHash) {
-                console.log('[ContinueWatch] ⚠️ currentHash не установлен');
-                return;
-            }
+            if (!currentHash) return;
               
             var video = document.querySelector('video');
             if (video) {
@@ -544,12 +578,29 @@
                         duration: duration
                     });
                       
-                    console.log('[ContinueWatch] 💾 Прогресс сохранен при закрытии:', Math.floor(time), 'сек (' + percent + '%)');
+                    console.log('[ContinueWatch] 💾 Прогресс сохранен:', Math.floor(time), 'сек (' + percent + '%)');
                 }
             }
             
             currentHash = null;
         });
+        
+        // ✅ НОВОЕ: Команда для диагностики Timeline
+        window.ContinueWatchDebug = function() {
+            var timeline = Lampa.Storage.get(Lampa.Timeline.filename(), {});
+            console.log('========== TIMELINE DEBUG ==========');
+            console.log('Timeline data:', timeline);
+            console.log('Keys count:', Object.keys(timeline).length);
+            Object.keys(timeline).forEach(function(hash) {
+                var item = timeline[hash];
+                console.log('Hash:', hash);
+                console.log('  Percent:', item.percent);
+                console.log('  Time:', item.time);
+                console.log('  Params:', item.stream_params);
+            });
+            console.log('====================================');
+        };
+        console.log('[ContinueWatch] 💡 Для диагностики выполните: ContinueWatchDebug()');
     }
 
     if (window.Lampa && Lampa.Listener) {
