@@ -1,4 +1,4 @@
-// Lampa.Plugin - Continue Watch v4.1 (Dynamic Update)
+// Lampa.Plugin - Continue Watch v5.1 (Production + Enhancements)
 
 (function() {
     'use strict';
@@ -6,11 +6,11 @@
     function startPlugin() {
         console.log('[ContinueWatch] ========================================');
         console.log('[ContinueWatch] ПЛАГИН "ПРОДОЛЖИТЬ ПРОСМОТР" ЗАПУЩЕН');
-        console.log('[ContinueWatch] Версия: 4.1 с динамическим обновлением');
+        console.log('[ContinueWatch] Версия: 5.1 - Production с улучшениями');
         console.log('[ContinueWatch] ========================================');
 
         var currentHash = null;
-        var activeButtons = {}; // Храним активные кнопки по hash
+        var activeButtons = {};
 
         // ========== УТИЛИТЫ ==========
           
@@ -75,6 +75,100 @@
             return url;
         }
 
+        // ✅ НОВОЕ: Проверка доступности торрента в кэше
+        function checkTorrentAvailability(torrent_link, onSuccess, onError) {
+            if (typeof Lampa.Torserver === 'undefined' || typeof Lampa.Torserver.cache !== 'function') {
+                console.log('[ContinueWatch] ⚠️ Torserver.cache недоступен, пропускаем проверку');
+                onSuccess();
+                return;
+            }
+            
+            console.log('[ContinueWatch] 🔍 Проверка доступности торрента в кэше...');
+            
+            Lampa.Torserver.cache(
+                torrent_link,
+                function(json) {
+                    console.log('[ContinueWatch] ✅ Торрент найден в кэше');
+                    onSuccess();
+                },
+                function() {
+                    console.log('[ContinueWatch] ⚠️ Торрент не найден в кэше');
+                    onError();
+                }
+            );
+        }
+
+        function launchPlayer(url, currentSavedParams, currentView, currentData) {
+            var playerData = {
+                url: url,
+                title: currentSavedParams.stream_params.title,
+                timeline: currentView,
+                card: currentData.movie,
+                continue_play: true,
+                torrent_hash: currentSavedParams.stream_params.torrent_link
+            };
+            
+            console.log('[ContinueWatch] Запуск плеера с Timeline:', currentView.percent + '%,', currentView.time, 'сек');
+            
+            try {
+                if (Lampa.Platform.is('android') || Lampa.Platform.is('webos')) {
+                    playerData.position = currentView.time || -1;
+                    
+                    console.log('[ContinueWatch] 📱 Попытка запуска внешнего плеера...');
+                    
+                    if (typeof Lampa.Android !== 'undefined' && typeof Lampa.Android.openPlayer === 'function') {
+                        Lampa.Android.openPlayer(url, playerData);
+                        console.log('[ContinueWatch] ✅ Внешний плеер запущен через Lampa.Android.openPlayer');
+                        return;
+                    }
+                    
+                    if (typeof AndroidJS !== 'undefined' && typeof AndroidJS.openPlayer === 'function') {
+                        AndroidJS.openPlayer(url, JSON.stringify(playerData));
+                        console.log('[ContinueWatch] ✅ Внешний плеер запущен через AndroidJS.openPlayer');
+                        return;
+                    }
+                    
+                    console.log('[ContinueWatch] ⚠️ Android API недоступен, fallback на встроенный плеер');
+                }
+                
+                console.log('[ContinueWatch] 🖥️ Запуск встроенного плеера');
+                Lampa.Player.play(playerData);
+                
+            } catch(err) {
+                console.error('[ContinueWatch] ❌ Ошибка запуска плеера:', err);
+                
+                Lampa.Select.show({
+                    title: 'Ошибка запуска плеера',
+                    items: [
+                        {
+                            title: 'Выбрать другой источник',
+                            subtitle: 'Открыть список торрентов',
+                            value: 'reselect'
+                        },
+                        {
+                            title: 'Попробовать ещё раз',
+                            subtitle: 'Повторить попытку',
+                            value: 'retry'
+                        }
+                    ],
+                    onSelect: function(item) {
+                        if (item.value === 'reselect') {
+                            Lampa.Activity.push({
+                                url: '',
+                                title: currentData.movie.title || currentData.movie.name,
+                                component: 'torrents',
+                                movie: currentData.movie,
+                                page: 1
+                            });
+                        } else if (item.value === 'retry') {
+                            launchPlayer(url, currentSavedParams, currentView, currentData);
+                        }
+                    },
+                    onBack: function() {}
+                });
+            }
+        }
+
         function saveUrlParams(hash, data) {
             try {
                 var viewed = Lampa.Storage.get(Lampa.Timeline.filename(), {});
@@ -116,7 +210,6 @@
             }
         }
 
-        // ✅ НОВОЕ: Создание/обновление кнопки
         function createOrUpdateButton(movie, container) {
             var title = movie.number_of_seasons ? 
                 (movie.original_name || movie.original_title) : 
@@ -127,7 +220,6 @@
             var hash = Lampa.Utils.hash(title);
             var view = Lampa.Timeline.view(hash);
               
-            // Для сериалов - проверяем последний эпизод
             if (movie.number_of_seasons) {
                 var last = Lampa.Storage.get('online_watched_last', '{}');
                 if (typeof last === 'string') {
@@ -152,9 +244,7 @@
                 }
             }
               
-            // Проверяем подходит ли прогресс
             if (!view.percent || view.percent < 5 || view.percent > 95) {
-                // Удаляем кнопку если она была
                 if (activeButtons[hash]) {
                     activeButtons[hash].button.remove();
                     delete activeButtons[hash];
@@ -167,24 +257,20 @@
             var timeStr = formatTime(view.time);
             var savedParams = getUrlParams(hash);
             
-            // Если кнопка уже существует - обновляем её
             if (activeButtons[hash]) {
                 console.log('[ContinueWatch] 🔄 Обновление существующей кнопки');
                 var button = activeButtons[hash].button;
                 
-                // Обновляем прогресс
                 button.find('circle').attr('stroke-dasharray', (percent * 65.97 / 100).toFixed(2) + ' 65.97');
                 button.find('span').text('Продолжить ' + percent + '%');
                 button.find('div').last().text(timeStr);
                 
-                // Обновляем данные
                 activeButtons[hash].view = view;
                 activeButtons[hash].savedParams = savedParams;
                 
                 return;
             }
             
-            // Создаем новую кнопку
             console.log('[ContinueWatch] ➕ Создание новой кнопки');
             
             var button = $('<div class="full-start__button selector button--continue-watch" style="position: relative;">' +
@@ -199,7 +285,6 @@
                 '</div>' +
             '</div>');
             
-            // Сохраняем ссылки
             activeButtons[hash] = {
                 button: button,
                 movie: movie,
@@ -226,37 +311,47 @@
                         return;
                     }
                     
-                    var playerData = {
-                        url: url,
-                        title: currentSavedParams.stream_params.title,
-                        timeline: currentView,
-                        card: currentData.movie,
-                        continue_play: true,
-                        torrent_hash: currentSavedParams.stream_params.torrent_link
-                    };
-                      
-                    console.log('[ContinueWatch] Запуск плеера с Timeline:', currentView.percent + '%,', currentView.time, 'сек');
-                      
-                    try {
-                        if (Lampa.Platform.is('android')) {
-                            playerData.position = currentView.time || -1;
-                              
-                            if (typeof Lampa.Android !== 'undefined' && typeof Lampa.Android.openPlayer === 'function') {
-                                Lampa.Android.openPlayer(url, playerData);
-                            } else if (typeof AndroidJS !== 'undefined' && typeof AndroidJS.openPlayer === 'function') {
-                                AndroidJS.openPlayer(url, JSON.stringify(playerData));
-                            } else {
-                                Lampa.Player.play(playerData);
-                            }
-                        } else {
-                            Lampa.Player.play(playerData);
+                    // ✅ НОВОЕ: Проверяем доступность торрента перед запуском
+                    checkTorrentAvailability(
+                        currentSavedParams.stream_params.torrent_link,
+                        function() {
+                            // Торрент доступен - запускаем
+                            launchPlayer(url, currentSavedParams, currentView, currentData);
+                        },
+                        function() {
+                            // Торрент не доступен - предлагаем выбрать заново
+                            Lampa.Select.show({
+                                title: 'Торрент не доступен',
+                                items: [
+                                    {
+                                        title: 'Выбрать другой источник',
+                                        subtitle: 'Открыть список торрентов',
+                                        value: 'reselect'
+                                    },
+                                    {
+                                        title: 'Попробовать запустить',
+                                        subtitle: 'Возможно торрент загрузится',
+                                        value: 'try'
+                                    }
+                                ],
+                                onSelect: function(item) {
+                                    if (item.value === 'reselect') {
+                                        Lampa.Activity.push({
+                                            url: '',
+                                            title: currentData.movie.title || currentData.movie.name,
+                                            component: 'torrents',
+                                            movie: currentData.movie,
+                                            page: 1
+                                        });
+                                    } else if (item.value === 'try') {
+                                        launchPlayer(url, currentSavedParams, currentView, currentData);
+                                    }
+                                },
+                                onBack: function() {}
+                            });
                         }
-                          
-                        console.log('[ContinueWatch] ✅ Плеер запущен успешно!');
-                    } catch(err) {
-                        console.error('[ContinueWatch] ❌ Ошибка запуска:', err);
-                        Lampa.Noty.show('Ошибка запуска: ' + err.message);
-                    }
+                    );
+                    
                 } else {
                     Lampa.Activity.push({
                         url: '',
@@ -274,8 +369,6 @@
             console.log('[ContinueWatch] ✅ Кнопка добавлена на карточку');
         }
 
-        // ========== ОБРАБОТЧИК КАРТОЧКИ ==========
-          
         Lampa.Listener.follow('full', function(e) {
             if (e.type !== 'complite') return;
               
@@ -290,37 +383,32 @@
                 return;
             }
             
-            // Создаем/обновляем кнопку
             createOrUpdateButton(movie, container);
             
             console.log('[ContinueWatch] ========================================');
         });
         
-        // ✅ НОВОЕ: Слушаем изменения Timeline
         Lampa.Timeline.listener.follow('update', function(data) {
             console.log('[ContinueWatch] 📡 Timeline обновлен, hash:', data.hash);
             
-            // Проверяем все активные кнопки
-            for (var hash in activeButtons) {
-                if (activeButtons[hash]) {
-                    var buttonData = activeButtons[hash];
-                    var container = buttonData.button.parent();
-                    
-                    if (container.length) {
-                        console.log('[ContinueWatch] 🔄 Обновляем кнопку для hash:', hash);
-                        createOrUpdateButton(buttonData.movie, container);
-                    }
+            if (data.hash && activeButtons[data.hash]) {
+                var buttonData = activeButtons[data.hash];
+                var container = buttonData.button.parent();
+                
+                if (container.length && $.contains(document, container[0])) {
+                    console.log('[ContinueWatch] 🔄 Обновляем кнопку для hash:', data.hash);
+                    createOrUpdateButton(buttonData.movie, container);
+                } else {
+                    delete activeButtons[data.hash];
+                    console.log('[ContinueWatch] 🗑️ Кнопка удалена (контейнер не в DOM)');
                 }
             }
         });
         
-        // ✅ НОВОЕ: Очистка при выходе с карточки
         Lampa.Activity.listener.follow('backward', function() {
             console.log('[ContinueWatch] 🧹 Очистка активных кнопок');
             activeButtons = {};
         });
-          
-        // ========== ПЕРЕХВАТ ANDROID.OPENPLAYER ==========
           
         if (Lampa.Platform.is('android') && typeof Lampa.Android !== 'undefined' && Lampa.Android.openPlayer) {
             var originalOpenPlayer = Lampa.Android.openPlayer;
@@ -351,8 +439,6 @@
             };
             console.log('[ContinueWatch] ✅ Android.openPlayer перехвачен');
         }
-          
-        // ========== ПЕРЕХВАТ PLAYER.PLAY ==========
           
         var originalPlay = Lampa.Player.play;
         Lampa.Player.play = function(data) {
@@ -407,8 +493,6 @@
             return originalPlay.call(this, data);
         };
           
-        // ========== АВТОСОХРАНЕНИЕ ПРОГРЕССА ==========
-          
         Lampa.Player.listener.follow('timeupdate', function(e) {
             if (!currentHash) return;
               
@@ -436,8 +520,6 @@
             }
         });
 
-        // ========== ФИНАЛЬНОЕ СОХРАНЕНИЕ ПРИ ЗАКРЫТИИ ==========
-          
         Lampa.Player.listener.follow('destroy', function() {
             console.log('[ContinueWatch] ========================================');
             console.log('[ContinueWatch] 🛑 Плеер закрывается');
