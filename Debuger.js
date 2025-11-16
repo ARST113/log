@@ -1,9 +1,9 @@
-// Lampa.Plugin - Continue Watch v7.3 (Improved Timeline & Android Support)
+// Lampa.Plugin - Continue Watch v7.4 (Playlist Support for Series)
 (function() {
     'use strict';
 
     function startPlugin() {
-        console.log('[ContinueWatch] 🔧 ВЕРСИЯ 7.3: УЛУЧШЕННАЯ РАБОТА С TIMELINE');
+        console.log('[ContinueWatch] 🔧 ВЕРСИЯ 7.4: ПОДДЕРЖКА ПЛЕЙЛИСТОВ ДЛЯ СЕРИАЛОВ');
 
         var currentButton = null;
         var buttonClickLock = false;
@@ -80,7 +80,6 @@
                     var filed = last[titleHash];
                     
                     if (filed && filed.season !== undefined && filed.episode !== undefined) {
-                        // УЛУЧШЕННЫЙ HASH ДЛЯ СЕРИАЛОВ
                         var separator = filed.season > 10 ? ':' : '';
                         var episodeHash = Lampa.Utils.hash([filed.season, separator, filed.episode, title].join(''));
                         hash = episodeHash;
@@ -161,8 +160,20 @@
                 card: movie,
                 torrent_hash: streamParams.torrent_link,
                 timeline: view
-                // Убираем continue_play чтобы показывать рекламу при необходимости
             };
+            
+            // ДОБАВЛЯЕМ: ФОРМИРОВАНИЕ PLAYLIST ДЛЯ СЕРИАЛОВ
+            if (streamParams.season && streamParams.episode) {
+                console.log('[ContinueWatch] 📺 Формируем playlist для сериала');
+                var playlist = buildSeriesPlaylist(streamParams, movie);
+                
+                if (playlist && playlist.length > 1) {
+                    playerData.playlist = playlist;
+                    console.log('[ContinueWatch] ✅ Playlist создан, эпизодов:', playlist.length);
+                } else {
+                    console.log('[ContinueWatch] ℹ️ Playlist не создан (мало эпизодов)');
+                }
+            }
             
             if (view && view.percent > 0) {
                 console.log('[ContinueWatch] ⏱️ Восстанавливаем позицию:', view.time + 'сек');
@@ -173,7 +184,6 @@
             try {
                 Lampa.Noty.show('Запуск плеера...');
                 
-                // Автоматический выбор плеера на основе настроек Lampa
                 console.log('[ContinueWatch] ✅ Используем Lampa.Player.play с torrent_hash');
                 Lampa.Player.play(playerData);
                 
@@ -185,6 +195,80 @@
                 Lampa.Noty.show('Ошибка: ' + err.message);
                 resetButton();
             }
+        }
+
+        function buildSeriesPlaylist(currentStreamParams, movie) {
+            console.log('[ContinueWatch] 🔄 Сборка playlist для сериала');
+            
+            var playlist = [];
+            var viewed = Lampa.Storage.get(Lampa.Timeline.filename(), {});
+            var baseTitle = movie.original_title || movie.original_name;
+            
+            if (!baseTitle) {
+                console.log('[ContinueWatch] ❌ Не удалось определить baseTitle для playlist');
+                return playlist;
+            }
+            
+            // Получить все сохраненные эпизоды этого сериала
+            for (var key in viewed) {
+                var item = viewed[key];
+                if (item.stream_params && 
+                    item.stream_params.season && 
+                    item.stream_params.episode &&
+                    item.stream_params.title === currentStreamParams.title) {
+                    
+                    var episodeUrl = buildStreamUrl(item.stream_params);
+                    if (!episodeUrl) continue;
+                    
+                    // Создаем hash для эпизода (такой же как при сохранении)
+                    var separator = item.stream_params.season > 10 ? ':' : '';
+                    var episodeHash = Lampa.Utils.hash([
+                        item.stream_params.season,
+                        separator,
+                        item.stream_params.episode,
+                        baseTitle
+                    ].join(''));
+                    
+                    var episodeView = Lampa.Timeline.view(episodeHash);
+                    
+                    // Добавляем handler для каждого эпизода в playlist
+                    if (episodeView) {
+                        episodeView.handler = function(percent, time, duration, episodeHash) {
+                            return function(percent, time, duration) {
+                                console.log('[ContinueWatch] 🔄 Обновление прогресса эпизода:', episodeHash, percent + '%');
+                                Lampa.Timeline.update({
+                                    hash: episodeHash,
+                                    percent: percent,
+                                    time: time,
+                                    duration: duration
+                                });
+                            };
+                        }(episodeHash);
+                    }
+                    
+                    playlist.push({
+                        title: 'Сезон ' + item.stream_params.season + ' / Эпизод ' + item.stream_params.episode,
+                        url: episodeUrl,
+                        timeline: episodeView,
+                        season: item.stream_params.season,
+                        episode: item.stream_params.episode
+                    });
+                }
+            }
+            
+            // Сортировать по сезону/эпизоду
+            if (playlist.length > 0) {
+                playlist.sort(function(a, b) {
+                    if (a.season !== b.season) {
+                        return a.season - b.season;
+                    }
+                    return a.episode - b.episode;
+                });
+                
+                console.log('[ContinueWatch] 📋 Отсортированный playlist:', playlist.length + ' эпизодов');
+            }
+            
+            return playlist;
         }
 
         function openTorrentsComponent(movie) {
@@ -244,7 +328,6 @@
             
             url += '?' + urlParams.join('&');
             
-            console.log('[ContinueWatch] ✅ URL построен:', url);
             return url;
         }
 
@@ -285,7 +368,7 @@
             console.log('[ContinueWatch] ✅ Кнопка создана (всегда видима)');
         }
 
-        // ========== ПАТЧ ДЛЯ СОХРАНЕНИЯ ПАРАМЕТРОВ С ИСПРАВЛЕННЫМ HASH ==========
+        // ========== ПАТЧ ДЛЯ СОХРАНЕНИЯ ПАРАМЕТРОВ ==========
         function patchPlayerForPlayline() {
             console.log('[ContinueWatch] 🔧 Установка патча Player.play()');
             
@@ -376,7 +459,7 @@
                     season: data.season,
                     episode: data.episode,
                     timestamp: Date.now(),
-                    source: 'continue_watch_v7.3'
+                    source: 'continue_watch_v7.4'
                 };
                 
                 Lampa.Storage.set(Lampa.Timeline.filename(), viewed);
@@ -416,7 +499,7 @@
             buttonClickLock = false;
         });
         
-        console.log('[ContinueWatch] ✅ Версия 7.3 загружена (улучшенный timeline handler)');
+        console.log('[ContinueWatch] ✅ Версия 7.4 загружена (поддержка playlist для сериалов)');
     }
 
     if (window.Lampa && Lampa.Listener) {
