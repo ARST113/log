@@ -1,14 +1,14 @@
-// Lampa.Plugin - Continue Watch v6.5 (Android Internal Player Test)
+// Lampa.Plugin - Continue Watch v6.8 (Fixed External Android Player)
 (function() {
     'use strict';
 
     function startPlugin() {
-        console.log('[ContinueWatch] 🔧 ТЕСТ: Внутренний плеер на Android');
+        console.log('[ContinueWatch] 🔧 ВЕРСИЯ 6.8: ИСПРАВЛЕННЫЙ ВНЕШНИЙ ПЛЕЕР ДЛЯ ANDROID');
 
         var currentButton = null;
         var buttonClickLock = false;
 
-        // ========== ПРОСТОЙ ОБРАБОТЧИК ==========
+        // ========== ОБРАБОТЧИКИ КНОПКИ ==========
         function setupButtonHandler(button, movie) {
             console.log('[ContinueWatch] 🔧 Настройка обработчика');
             
@@ -25,15 +25,11 @@
         }
 
         function handleButtonClick(movie) {
-            if (buttonClickLock) {
-                console.log('[ContinueWatch] 🔒 Заблокировано');
-                return;
-            }
+            if (buttonClickLock) return;
             
             buttonClickLock = true;
             console.log('[ContinueWatch] 🎬 Обработка клика для:', movie.title);
             
-            // Визуальная обратная связь
             if (currentButton) {
                 currentButton.addClass('button--active');
                 currentButton.find('span').text('Загрузка...');
@@ -66,20 +62,16 @@
                 (movie.original_title || movie.original_name || movie.title || movie.name);
             
             if (!title) {
-                console.error('[ContinueWatch] ❌ Title не найден');
                 Lampa.Noty.show('Ошибка: заголовок не найден');
                 resetButton();
                 return;
             }
-            
-            console.log('[ContinueWatch] 📝 Title:', title);
             
             var hash = Lampa.Utils.hash(title);
             console.log('[ContinueWatch] 🔑 Hash:', hash);
             
             // Для сериалов
             if (movie.number_of_seasons) {
-                console.log('[ContinueWatch] 📺 Поиск эпизода сериала');
                 try {
                     var last = Lampa.Storage.get('online_watched_last', '{}');
                     if (typeof last === 'string') last = JSON.parse(last);
@@ -97,12 +89,11 @@
                 }
             }
             
-            console.log('[ContinueWatch] 🔎 Поиск параметров для hash:', hash);
             var savedParams = getUrlParams(hash);
             
             if (savedParams && savedParams.stream_params) {
                 console.log('[ContinueWatch] ✅ Параметры найдены!');
-                launchWithInternalPlayer(savedParams.stream_params, movie, hash);
+                launchWithExternalPlayer(savedParams.stream_params, movie, hash);
             } else {
                 console.log('[ContinueWatch] ❌ Параметры не найдены');
                 Lampa.Noty.show('Параметры не найдены');
@@ -118,14 +109,12 @@
                     var altParams = getUrlParams(alternativeHashes[i]);
                     if (altParams && altParams.stream_params) {
                         console.log('[ContinueWatch] ✅ Найдено по альтернативному hash');
-                        launchWithInternalPlayer(altParams.stream_params, movie, alternativeHashes[i]);
+                        launchWithExternalPlayer(altParams.stream_params, movie, alternativeHashes[i]);
                         return;
                     }
                 }
                 
-                console.log('[ContinueWatch] ❌ Ничего не найдено');
                 Lampa.Noty.show('Открываем выбор источника...');
-                
                 setTimeout(function() {
                     Lampa.Activity.push({
                         url: '',
@@ -139,8 +128,8 @@
             }
         }
 
-        function launchWithInternalPlayer(streamParams, movie, hash) {
-            console.log('[ContinueWatch] 🚀 ТЕСТ: Запуск ВНУТРЕННЕГО плеера');
+        function launchWithExternalPlayer(streamParams, movie, hash) {
+            console.log('[ContinueWatch] 🚀 ЗАПУСК ВНЕШНЕГО ANDROID ПЛЕЕРА');
             
             var url = buildStreamUrl(streamParams);
             if (!url) {
@@ -149,14 +138,16 @@
                 return;
             }
             
-            console.log('[ContinueWatch] 🌐 URL:', url);
+            // ВАЖНО: Заменяем &preload на &play для Android
+            url = url.replace('&preload', '&play');
+            console.log('[ContinueWatch] 🌐 Android URL:', url);
             
             var playerData = {
                 url: url,
                 title: streamParams.title || movie.title,
                 card: movie,
-                continue_play: true,
-                torrent_hash: streamParams.torrent_link
+                torrent_hash: streamParams.torrent_link, // Оставляем для внешнего плеера
+                continue_play: true
             };
             
             // Добавляем прогресс воспроизведения
@@ -167,20 +158,30 @@
                 console.log('[ContinueWatch] ⏱️ Восстанавливаем позицию:', view.time + 'сек');
             }
             
-            console.log('[ContinueWatch] 🎬 Данные плеера:', playerData);
+            console.log('[ContinueWatch] 🎬 Данные для внешнего плеера:', playerData);
             
             try {
-                Lampa.Noty.show('Запуск внутреннего плеера...');
+                Lampa.Noty.show('Запуск Android плеера...');
                 
-                // ВСЕГДА используем внутренний плеер для теста
-                console.log('[ContinueWatch] ✅ ТЕСТ: Используем Lampa.Player.play');
-                Lampa.Player.play(playerData);
+                // ВАЖНО: Прямой вызов Android.openPlayer с правильными параметрами
+                if (typeof Lampa.Android !== 'undefined' && Lampa.Android.openPlayer) {
+                    console.log('[ContinueWatch] ✅ Прямой вызов Lampa.Android.openPlayer');
+                    Lampa.Android.openPlayer(url, playerData);
+                } else if (typeof AndroidJS !== 'undefined' && AndroidJS.openPlayer) {
+                    console.log('[ContinueWatch] ✅ Прямой вызов AndroidJS.openPlayer');
+                    AndroidJS.openPlayer(url, JSON.stringify(playerData));
+                } else {
+                    console.log('[ContinueWatch] ⚠️ Android API недоступно, используем стандартный метод');
+                    // Используем стандартный метод с установкой плеера
+                    Lampa.Player.runas('android');
+                    Lampa.Player.play(playerData);
+                }
                 
-                console.log('[ContinueWatch] ✅ Плеер запущен!');
+                console.log('[ContinueWatch] ✅ Внешний плеер запущен!');
                 resetButton();
                 
             } catch(err) {
-                console.error('[ContinueWatch] ❌ Ошибка запуска:', err);
+                console.error('[ContinueWatch] ❌ Ошибка запуска внешнего плеера:', err);
                 Lampa.Noty.show('Ошибка: ' + err.message);
                 resetButton();
             }
@@ -242,10 +243,8 @@
         function createButton(movie, container) {
             console.log('[ContinueWatch] 🔘 Создание кнопки');
             
-            // Удаляем старую кнопку если есть
             $('.button--continue-watch').remove();
             
-            // Простая кнопка
             var button = $('<div class="full-start__button selector button--continue-watch" style="border: 2px solid rgba(255,255,255,0.3); margin: 10px 0; padding: 12px 20px; border-radius: 8px; background: rgba(255,255,255,0.1);">' +
                 '<div style="display: flex; align-items: center; justify-content: center;">' +
                     '<svg viewBox="0 0 24 24" width="24" height="24" fill="none">' +
@@ -255,21 +254,11 @@
                 '</div>' +
             '</div>');
             
-            // Настраиваем обработчики
             setupButtonHandler(button, movie);
-            
-            // Добавляем в DOM
             container.prepend(button);
             currentButton = button;
             
             console.log('[ContinueWatch] ✅ Кнопка создана');
-            
-            // Диагностика через 3 секунды
-            setTimeout(function() {
-                console.log('[ContinueWatch] 🧪 ДИАГНОСТИКА:');
-                console.log('[ContinueWatch] 🧪 В DOM:', document.contains(button[0]));
-                console.log('[ContinueWatch] 🧪 Видимость:', button.is(':visible'));
-            }, 3000);
         }
 
         // ========== ИНИЦИАЛИЗАЦИЯ ==========
@@ -280,10 +269,7 @@
                 var movie = e.data.movie;
                 var container = e.object.activity.render().find('.full-start-new__buttons, .full-start__buttons, .full__buttons, [class*="buttons"]').first();
                 
-                if (!container.length) {
-                    console.log('[ContinueWatch] ❌ Контейнер не найден');
-                    return;
-                }
+                if (!container.length) return;
                 
                 createButton(movie, container);
             }, 100);
@@ -298,7 +284,7 @@
             buttonClickLock = false;
         });
         
-        console.log('[ContinueWatch] ✅ Версия 6.5 загружена (тест внутреннего плеера)');
+        console.log('[ContinueWatch] ✅ Версия 6.8 загружена (исправленный внешний плеер)');
     }
 
     if (window.Lampa && Lampa.Listener) {
@@ -306,4 +292,4 @@
     } else {
         console.error('[ContinueWatch] ❌ Lampa не найдена');
     }
-})(); 
+})();
