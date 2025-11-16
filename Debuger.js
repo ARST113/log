@@ -1,9 +1,9 @@
-// Lampa.Plugin - Continue Watch v7.2 (Fixed External Android Player)
+// Lampa.Plugin - Continue Watch v7.3 (Improved Timeline & Android Support)
 (function() {
     'use strict';
 
     function startPlugin() {
-        console.log('[ContinueWatch] 🔧 ВЕРСИЯ 7.2: ИСПРАВЛЕННЫЙ ВНЕШНИЙ ANDROID ПЛЕЕР');
+        console.log('[ContinueWatch] 🔧 ВЕРСИЯ 7.3: УЛУЧШЕННАЯ РАБОТА С TIMELINE');
 
         var currentButton = null;
         var buttonClickLock = false;
@@ -70,7 +70,7 @@
             var hash = Lampa.Utils.hash(title);
             console.log('[ContinueWatch] 🔑 Hash:', hash);
             
-            // Для сериалов
+            // Для сериалов - улучшенная обработка
             if (movie.number_of_seasons) {
                 try {
                     var last = Lampa.Storage.get('online_watched_last', '{}');
@@ -80,9 +80,11 @@
                     var filed = last[titleHash];
                     
                     if (filed && filed.season !== undefined && filed.episode !== undefined) {
-                        var episodeHash = Lampa.Utils.hash([filed.season, filed.episode, title].join(''));
+                        // УЛУЧШЕННЫЙ HASH ДЛЯ СЕРИАЛОВ
+                        var separator = filed.season > 10 ? ':' : '';
+                        var episodeHash = Lampa.Utils.hash([filed.season, separator, filed.episode, title].join(''));
                         hash = episodeHash;
-                        console.log('[ContinueWatch] 🔑 Episode hash:', hash);
+                        console.log('[ContinueWatch] 🔑 Improved episode hash:', hash, 'for S' + filed.season + 'E' + filed.episode);
                     }
                 } catch(e) {
                     console.error('[ContinueWatch] ❌ Ошибка сериала:', e);
@@ -138,18 +140,31 @@
             // Получаем прогресс воспроизведения
             var view = Lampa.Timeline.view(hash);
             
-            // КРИТИЧЕСКИ ВАЖНО: Добавляем torrent_hash для внешнего плеера!
+            // ДОБАВЛЯЕМ HANDLER ДЛЯ ОБНОВЛЕНИЯ ПРОГРЕССА
+            if (view) {
+                view.handler = function(percent, time, duration) {
+                    console.log('[ContinueWatch] 🔄 Обновление прогресса:', percent + '%, ' + time + 'сек');
+                    Lampa.Timeline.update({
+                        hash: hash,
+                        percent: percent,
+                        time: time,
+                        duration: duration
+                    });
+                };
+                console.log('[ContinueWatch] ✅ Handler прогресса добавлен');
+            }
+            
+            // ОСНОВНЫЕ ДАННЫЕ ПЛЕЕРА
             var playerData = {
                 url: url,
                 title: streamParams.title || movie.title,
                 card: movie,
-                continue_play: true,
-                torrent_hash: streamParams.torrent_link // ДОБАВЛЯЕМ torrent_hash!
+                torrent_hash: streamParams.torrent_link,
+                timeline: view
+                // Убираем continue_play чтобы показывать рекламу при необходимости
             };
             
-            // Добавляем timeline (position будет взят из timeline.time автоматически)
             if (view && view.percent > 0) {
-                playerData.timeline = view;
                 console.log('[ContinueWatch] ⏱️ Восстанавливаем позицию:', view.time + 'сек');
             }
             
@@ -159,7 +174,6 @@
                 Lampa.Noty.show('Запуск плеера...');
                 
                 // Автоматический выбор плеера на основе настроек Lampa
-                // Lampa сама решит использовать внешний или внутренний плеер на основе torrent_hash
                 console.log('[ContinueWatch] ✅ Используем Lampa.Player.play с torrent_hash');
                 Lampa.Player.play(playerData);
                 
@@ -214,13 +228,9 @@
                 return null;
             }
             
-            // НЕ меняем протокол автоматически - это может сломать соединение
-            // TorrServer обычно работает только по HTTP
-            console.log('[ContinueWatch] 🔗 Используем оригинальный протокол TorrServer');
-            
-            // Убеждаемся, что URL имеет протокол
+            // Используем оригинальный протокол TorrServer
             if (!server_url.match(/^https?:\/\//)) {
-                server_url = 'http://' + server_url; // По умолчанию HTTP для TorrServer
+                server_url = 'http://' + server_url;
             }
             
             var encodedFileName = encodeURIComponent(params.file_name);
@@ -256,13 +266,11 @@
         function createButton(movie, container) {
             console.log('[ContinueWatch] 🔘 СОЗДАНИЕ КНОПКИ (ВСЕГДА ВИДИМА) для:', movie.title);
             
-            // Удаляем старую кнопку если есть
             if (currentButton) {
                 currentButton.remove();
                 currentButton = null;
             }
             
-            // Создаем кнопку с улучшенными стилями
             var button = $('<div class="full-start__button selector button--continue-watch" style="position: relative; border: 2px solid rgba(255,255,255,0.3);">' +
                 '<svg viewBox="0 0 24 24" width="24" height="24" fill="none">' +
                     '<path d="M8 5v14l11-7L8 5z" fill="currentColor"/>' +
@@ -270,10 +278,7 @@
                 '<span style="margin-left: 8px;">Продолжить просмотр</span>' +
             '</div>');
             
-            // Настраиваем обработчики
             setupButtonHandler(button, movie);
-            
-            // Добавляем в DOM
             container.prepend(button);
             currentButton = button;
             
@@ -371,7 +376,7 @@
                     season: data.season,
                     episode: data.episode,
                     timestamp: Date.now(),
-                    source: 'continue_watch_v7.2'
+                    source: 'continue_watch_v7.3'
                 };
                 
                 Lampa.Storage.set(Lampa.Timeline.filename(), viewed);
@@ -382,7 +387,7 @@
             }
         }
 
-        // ========== ИНИЦИАЛИЗАЦИЯ - СОЗДАЕМ КНОПКУ ВСЕГДА ==========
+        // ========== ИНИЦИАЛИЗАЦИЯ ==========
         patchPlayerForPlayline();
         
         Lampa.Listener.follow('full', function(e) {
@@ -397,7 +402,6 @@
                     return;
                 }
                 
-                // ВАЖНО: Создаем кнопку ВСЕГДА, без проверки прогресса!
                 createButton(movie, container);
                 
             }, 100);
@@ -412,7 +416,7 @@
             buttonClickLock = false;
         });
         
-        console.log('[ContinueWatch] ✅ Версия 7.2 загружена (исправленный torrent_hash)');
+        console.log('[ContinueWatch] ✅ Версия 7.3 загружена (улучшенный timeline handler)');
     }
 
     if (window.Lampa && Lampa.Listener) {
