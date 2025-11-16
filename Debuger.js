@@ -1,9 +1,9 @@
-// Lampa.Plugin - Continue Watch v7.0 (HTTPS & API Fix)
+// Lampa.Plugin - Continue Watch v7.1 (External Android Player Support)
 (function() {
     'use strict';
 
     function startPlugin() {
-        console.log('[ContinueWatch] 🔧 ВЕРСИЯ 7.0: HTTPS & API FIX');
+        console.log('[ContinueWatch] 🔧 ВЕРСИЯ 7.1: ПОДДЕРЖКА ВНЕШНЕГО ANDROID ПЛЕЕРА');
 
         var currentButton = null;
         var buttonClickLock = false;
@@ -135,20 +135,23 @@
             
             console.log('[ContinueWatch] 🌐 Final URL:', url);
             
+            // Добавляем прогресс воспроизведения
+            var view = Lampa.Timeline.view(hash);
+            var position = (view && view.percent > 0) ? view.time : -1;
+            
+            // Основные данные плеера
             var playerData = {
                 url: url,
                 title: streamParams.title || movie.title,
                 card: movie,
-                continue_play: true
-                // Убираем torrent_hash для использования внутреннего плеера
+                continue_play: true,
+                torrent_hash: streamParams.torrent_link // ДОБАВЛЯЕМ torrent_hash!
             };
             
-            // Добавляем прогресс воспроизведения
-            var view = Lampa.Timeline.view(hash);
             if (view && view.percent > 0) {
                 playerData.timeline = view;
-                playerData.position = view.time;
-                console.log('[ContinueWatch] ⏱️ Восстанавливаем позицию:', view.time + 'сек');
+                playerData.position = position;
+                console.log('[ContinueWatch] ⏱️ Восстанавливаем позицию:', position + 'сек');
             }
             
             console.log('[ContinueWatch] 🎬 Данные плеера:', playerData);
@@ -156,9 +159,38 @@
             try {
                 Lampa.Noty.show('Запуск плеера...');
                 
-                // Всегда используем внутренний плеер для избежания HTTPS проблем
-                console.log('[ContinueWatch] ✅ Используем внутренний плеер');
-                Lampa.Player.play(playerData);
+                // ВАРИАНТ 1: Прямой вызов Android.openPlayer для внешнего плеера
+                if (Lampa.Platform.is('android') && Lampa.Storage.field('player_torrent') == 'android') {
+                    console.log('[ContinueWatch] ✅ Запуск внешнего Android плеера');
+                    
+                    var androidData = {
+                        url: url,
+                        title: streamParams.title || movie.title,
+                        position: position,
+                        timeline: view,
+                        torrent_hash: streamParams.torrent_link,
+                        card: movie
+                    };
+                    
+                    // Заменяем &preload на &play для Android
+                    var androidUrl = url.replace('&preload', '&play');
+                    
+                    if (typeof Lampa.Android !== 'undefined' && Lampa.Android.openPlayer) {
+                        console.log('[ContinueWatch] ✅ Используем Lampa.Android.openPlayer');
+                        Lampa.Android.openPlayer(androidUrl, androidData);
+                    } else if (typeof AndroidJS !== 'undefined' && AndroidJS.openPlayer) {
+                        console.log('[ContinueWatch] ✅ Используем AndroidJS.openPlayer');
+                        AndroidJS.openPlayer(androidUrl, JSON.stringify(androidData));
+                    } else {
+                        console.log('[ContinueWatch] ⚠️ Android API недоступно, используем стандартный метод');
+                        Lampa.Player.play(playerData);
+                    }
+                } 
+                // ВАРИАНТ 2: Стандартный вызов (внутренний плеер или другой)
+                else {
+                    console.log('[ContinueWatch] ✅ Используем стандартный плеер');
+                    Lampa.Player.play(playerData);
+                }
                 
                 console.log('[ContinueWatch] ✅ Плеер запущен!');
                 resetButton();
@@ -173,7 +205,6 @@
         function openTorrentsComponent(movie) {
             console.log('[ContinueWatch] 📺 Открываем компонент torrents');
             
-            // Используем безопасный способ открытия torrents
             try {
                 Lampa.Activity.push({
                     url: '',
@@ -183,7 +214,6 @@
                 });
             } catch(e) {
                 console.error('[ContinueWatch] ❌ Ошибка открытия torrents:', e);
-                // Fallback - открываем полную карточку
                 Lampa.Activity.push({
                     url: '',
                     title: movie.title || movie.name,
@@ -220,7 +250,7 @@
             // Если Lampa на HTTPS, а TorrServer на HTTP - используем HTTPS или предупреждаем
             if (currentProtocol === 'https:' && serverProtocol === 'http') {
                 console.warn('[ContinueWatch] ⚠️ Смешанный контент: HTTPS -> HTTP');
-                // Пробуем заменить на HTTPS
+                // Для внешнего плеера это не критично, но пробуем заменить на HTTPS
                 server_url = server_url.replace('http://', 'https://');
                 console.log('[ContinueWatch] 🔄 Заменяем на HTTPS:', server_url);
             }
@@ -375,7 +405,7 @@
                     season: data.season,
                     episode: data.episode,
                     timestamp: Date.now(),
-                    source: 'continue_watch_v7.0'
+                    source: 'continue_watch_v7.1'
                 };
                 
                 Lampa.Storage.set(Lampa.Timeline.filename(), viewed);
@@ -416,7 +446,7 @@
             buttonClickLock = false;
         });
         
-        console.log('[ContinueWatch] ✅ Версия 7.0 загружена (HTTPS fix)');
+        console.log('[ContinueWatch] ✅ Версия 7.1 загружена (внешний Android плеер)');
     }
 
     if (window.Lampa && Lampa.Listener) {
