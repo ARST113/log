@@ -1,9 +1,9 @@
-// Lampa.Plugin - Continue Watch v7.1 (External Android Player Support)
+// Lampa.Plugin - Continue Watch v7.2 (Fixed External Android Player)
 (function() {
     'use strict';
 
     function startPlugin() {
-        console.log('[ContinueWatch] 🔧 ВЕРСИЯ 7.1: ПОДДЕРЖКА ВНЕШНЕГО ANDROID ПЛЕЕРА');
+        console.log('[ContinueWatch] 🔧 ВЕРСИЯ 7.2: ИСПРАВЛЕННЫЙ ВНЕШНИЙ ANDROID ПЛЕЕР');
 
         var currentButton = null;
         var buttonClickLock = false;
@@ -135,11 +135,10 @@
             
             console.log('[ContinueWatch] 🌐 Final URL:', url);
             
-            // Добавляем прогресс воспроизведения
+            // Получаем прогресс воспроизведения
             var view = Lampa.Timeline.view(hash);
-            var position = (view && view.percent > 0) ? view.time : -1;
             
-            // Основные данные плеера
+            // КРИТИЧЕСКИ ВАЖНО: Добавляем torrent_hash для внешнего плеера!
             var playerData = {
                 url: url,
                 title: streamParams.title || movie.title,
@@ -148,10 +147,10 @@
                 torrent_hash: streamParams.torrent_link // ДОБАВЛЯЕМ torrent_hash!
             };
             
+            // Добавляем timeline (position будет взят из timeline.time автоматически)
             if (view && view.percent > 0) {
                 playerData.timeline = view;
-                playerData.position = position;
-                console.log('[ContinueWatch] ⏱️ Восстанавливаем позицию:', position + 'сек');
+                console.log('[ContinueWatch] ⏱️ Восстанавливаем позицию:', view.time + 'сек');
             }
             
             console.log('[ContinueWatch] 🎬 Данные плеера:', playerData);
@@ -159,38 +158,10 @@
             try {
                 Lampa.Noty.show('Запуск плеера...');
                 
-                // ВАРИАНТ 1: Прямой вызов Android.openPlayer для внешнего плеера
-                if (Lampa.Platform.is('android') && Lampa.Storage.field('player_torrent') == 'android') {
-                    console.log('[ContinueWatch] ✅ Запуск внешнего Android плеера');
-                    
-                    var androidData = {
-                        url: url,
-                        title: streamParams.title || movie.title,
-                        position: position,
-                        timeline: view,
-                        torrent_hash: streamParams.torrent_link,
-                        card: movie
-                    };
-                    
-                    // Заменяем &preload на &play для Android
-                    var androidUrl = url.replace('&preload', '&play');
-                    
-                    if (typeof Lampa.Android !== 'undefined' && Lampa.Android.openPlayer) {
-                        console.log('[ContinueWatch] ✅ Используем Lampa.Android.openPlayer');
-                        Lampa.Android.openPlayer(androidUrl, androidData);
-                    } else if (typeof AndroidJS !== 'undefined' && AndroidJS.openPlayer) {
-                        console.log('[ContinueWatch] ✅ Используем AndroidJS.openPlayer');
-                        AndroidJS.openPlayer(androidUrl, JSON.stringify(androidData));
-                    } else {
-                        console.log('[ContinueWatch] ⚠️ Android API недоступно, используем стандартный метод');
-                        Lampa.Player.play(playerData);
-                    }
-                } 
-                // ВАРИАНТ 2: Стандартный вызов (внутренний плеер или другой)
-                else {
-                    console.log('[ContinueWatch] ✅ Используем стандартный плеер');
-                    Lampa.Player.play(playerData);
-                }
+                // Автоматический выбор плеера на основе настроек Lampa
+                // Lampa сама решит использовать внешний или внутренний плеер на основе torrent_hash
+                console.log('[ContinueWatch] ✅ Используем Lampa.Player.play с torrent_hash');
+                Lampa.Player.play(playerData);
                 
                 console.log('[ContinueWatch] ✅ Плеер запущен!');
                 resetButton();
@@ -243,21 +214,13 @@
                 return null;
             }
             
-            // Автоматически определяем протокол
-            var currentProtocol = window.location.protocol;
-            var serverProtocol = server_url.split('://')[0];
-            
-            // Если Lampa на HTTPS, а TorrServer на HTTP - используем HTTPS или предупреждаем
-            if (currentProtocol === 'https:' && serverProtocol === 'http') {
-                console.warn('[ContinueWatch] ⚠️ Смешанный контент: HTTPS -> HTTP');
-                // Для внешнего плеера это не критично, но пробуем заменить на HTTPS
-                server_url = server_url.replace('http://', 'https://');
-                console.log('[ContinueWatch] 🔄 Заменяем на HTTPS:', server_url);
-            }
+            // НЕ меняем протокол автоматически - это может сломать соединение
+            // TorrServer обычно работает только по HTTP
+            console.log('[ContinueWatch] 🔗 Используем оригинальный протокол TorrServer');
             
             // Убеждаемся, что URL имеет протокол
             if (!server_url.match(/^https?:\/\//)) {
-                server_url = currentProtocol + '//' + server_url;
+                server_url = 'http://' + server_url; // По умолчанию HTTP для TorrServer
             }
             
             var encodedFileName = encodeURIComponent(params.file_name);
@@ -317,7 +280,7 @@
             console.log('[ContinueWatch] ✅ Кнопка создана (всегда видима)');
         }
 
-        // ========== ПАТЧ ДЛЯ СОХРАНЕНИЯ ПАРАМЕТРОВ ==========
+        // ========== ПАТЧ ДЛЯ СОХРАНЕНИЯ ПАРАМЕТРОВ С ИСПРАВЛЕННЫМ HASH ==========
         function patchPlayerForPlayline() {
             console.log('[ContinueWatch] 🔧 Установка патча Player.play()');
             
@@ -337,8 +300,11 @@
                             (movie.original_title || movie.original_name);
                         
                         if (baseTitle) {
+                            // ИСПРАВЛЕННЫЙ HASH ДЛЯ СЕРИАЛОВ
                             if (params.season && params.episode) {
-                                hash = Lampa.Utils.hash([params.season, params.episode, baseTitle].join(''));
+                                var separator = params.season > 10 ? ':' : '';
+                                hash = Lampa.Utils.hash([params.season, separator, params.episode, baseTitle].join(''));
+                                console.log('[ContinueWatch] 🔑 Fixed episode hash:', hash, 'for S' + params.season + 'E' + params.episode);
                             } else {
                                 hash = Lampa.Utils.hash(baseTitle);
                             }
@@ -405,7 +371,7 @@
                     season: data.season,
                     episode: data.episode,
                     timestamp: Date.now(),
-                    source: 'continue_watch_v7.1'
+                    source: 'continue_watch_v7.2'
                 };
                 
                 Lampa.Storage.set(Lampa.Timeline.filename(), viewed);
@@ -446,7 +412,7 @@
             buttonClickLock = false;
         });
         
-        console.log('[ContinueWatch] ✅ Версия 7.1 загружена (внешний Android плеер)');
+        console.log('[ContinueWatch] ✅ Версия 7.2 загружена (исправленный torrent_hash)');
     }
 
     if (window.Lampa && Lampa.Listener) {
