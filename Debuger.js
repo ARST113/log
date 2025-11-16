@@ -1,229 +1,192 @@
-// Lampa.Plugin - Continue Watch v6.2 (Android Button Fix)
+// Lampa.Plugin - Continue Watch v6.5 (Android Internal Player Test)
 (function() {
     'use strict';
 
     function startPlugin() {
-        console.log('[ContinueWatch] ========================================');
-        console.log('[ContinueWatch] ПЛАГИН "ПРОДОЛЖИТЬ ПРОСМОТР" v6.2');
-        console.log('[ContinueWatch] ========================================');
+        console.log('[ContinueWatch] 🔧 ТЕСТ: Внутренний плеер на Android');
 
-        var currentHash = null;
-        var buttonClickLock = false;
         var currentButton = null;
+        var buttonClickLock = false;
 
-        // ========== УЛУЧШЕННАЯ ОБРАБОТКА СОБЫТИЙ ==========
+        // ========== ПРОСТОЙ ОБРАБОТЧИК ==========
         function setupButtonHandler(button, movie) {
-            console.log('[ContinueWatch] 🔧 Настройка обработчика кнопки');
+            console.log('[ContinueWatch] 🔧 Настройка обработчика');
             
-            // ✅ Вариант 1: Стандартный hover:enter
             button.on('hover:enter', function() {
                 handleButtonClick(movie);
             });
             
-            // ✅ Вариант 2: Прямой click для Android
             button.on('click', function(e) {
-                console.log('[ContinueWatch] 🖱️ Click событие поймано');
+                console.log('[ContinueWatch] 🖱️ Click событие');
                 e.preventDefault();
                 e.stopPropagation();
                 handleButtonClick(movie);
             });
-            
-            // ✅ Вариант 3: Touch события для мобильных устройств
-            button.on('touchstart', function(e) {
-                console.log('[ContinueWatch] 📱 Touch событие поймано');
-                e.preventDefault();
-                e.stopPropagation();
-            });
-            
-            button.on('touchend', function(e) {
-                console.log('[ContinueWatch] 📱 Touch end событие поймано');
-                e.preventDefault();
-                e.stopPropagation();
-                handleButtonClick(movie);
-            });
-            
-            // ✅ Добавляем атрибуты для лучшей доступности
-            button.attr('tabindex', '0');
-            button.attr('role', 'button');
-            button.attr('aria-label', 'Продолжить просмотр');
-            
-            console.log('[ContinueWatch] ✅ Обработчики настроены');
         }
 
         function handleButtonClick(movie) {
             if (buttonClickLock) {
-                console.log('[ContinueWatch] 🔒 Кнопка заблокирована');
+                console.log('[ContinueWatch] 🔒 Заблокировано');
                 return;
             }
             
             buttonClickLock = true;
-            console.log('[ContinueWatch] 🎬 КНОПКА НАЖАТА - начинаем обработку');
+            console.log('[ContinueWatch] 🎬 Обработка клика для:', movie.title);
             
-            // Показываем визуальную обратную связь
-            currentButton.addClass('button--active');
-            
+            // Визуальная обратная связь
+            if (currentButton) {
+                currentButton.addClass('button--active');
+                currentButton.find('span').text('Загрузка...');
+            }
+
             try {
                 processButtonClick(movie);
             } catch (error) {
-                console.error('[ContinueWatch] ❌ Ошибка в обработчике:', error);
+                console.error('[ContinueWatch] ❌ Ошибка:', error);
                 Lampa.Noty.show('Ошибка: ' + error.message);
+                resetButton();
             }
-            
-            // Восстанавливаем через 1 секунду
+        }
+
+        function resetButton() {
             setTimeout(function() {
                 buttonClickLock = false;
                 if (currentButton) {
                     currentButton.removeClass('button--active');
+                    currentButton.find('span').text('Продолжить просмотр');
                 }
-                console.log('[ContinueWatch] 🔓 Кнопка разблокирована');
-            }, 1000);
+            }, 2000);
         }
 
         function processButtonClick(movie) {
-            console.log('[ContinueWatch] 🔍 Получаем данные фильма:', movie.title);
+            console.log('[ContinueWatch] 🔍 Поиск данных для:', movie.title);
             
             var title = movie.number_of_seasons ? 
-                (movie.original_name || movie.original_title) : 
-                (movie.original_title || movie.original_name);
+                (movie.original_name || movie.original_title || movie.name || movie.title) : 
+                (movie.original_title || movie.original_name || movie.title || movie.name);
             
             if (!title) {
-                console.error('[ContinueWatch] ❌ Не удалось определить title');
-                Lampa.Noty.show('Ошибка: не найден заголовок');
+                console.error('[ContinueWatch] ❌ Title не найден');
+                Lampa.Noty.show('Ошибка: заголовок не найден');
+                resetButton();
                 return;
             }
             
             console.log('[ContinueWatch] 📝 Title:', title);
             
             var hash = Lampa.Utils.hash(title);
-            console.log('[ContinueWatch] 🔑 Basic hash:', hash);
+            console.log('[ContinueWatch] 🔑 Hash:', hash);
             
-            // Для сериалов используем последний просмотренный эпизод
+            // Для сериалов
             if (movie.number_of_seasons) {
-                console.log('[ContinueWatch] 📺 Это сериал, ищем последний эпизод');
-                var last = Lampa.Storage.get('online_watched_last', '{}');
-                if (typeof last === 'string') {
-                    try { 
-                        last = JSON.parse(last); 
-                        console.log('[ContinueWatch] 📋 Last watched data:', last);
-                    } catch(e) { 
-                        console.error('[ContinueWatch] ❌ Ошибка парсинга last_watched:', e);
-                        last = {}; 
+                console.log('[ContinueWatch] 📺 Поиск эпизода сериала');
+                try {
+                    var last = Lampa.Storage.get('online_watched_last', '{}');
+                    if (typeof last === 'string') last = JSON.parse(last);
+                    
+                    var titleHash = Lampa.Utils.hash(movie.original_name || movie.original_title || title);
+                    var filed = last[titleHash];
+                    
+                    if (filed && filed.season !== undefined && filed.episode !== undefined) {
+                        var episodeHash = Lampa.Utils.hash([filed.season, filed.episode, title].join(''));
+                        hash = episodeHash;
+                        console.log('[ContinueWatch] 🔑 Episode hash:', hash);
                     }
-                }
-                
-                var titleHash = Lampa.Utils.hash(movie.original_name || movie.original_title);
-                console.log('[ContinueWatch] 🔑 Title hash для сериала:', titleHash);
-                
-                var filed = last[titleHash];
-                console.log('[ContinueWatch] 📊 Последний эпизод:', filed);
-                
-                if (filed && filed.season && filed.episode) {
-                    var episodeHashString = [filed.season, filed.episode, movie.original_name || movie.original_title].join('');
-                    hash = Lampa.Utils.hash(episodeHashString);
-                    console.log('[ContinueWatch] 🔑 Episode hash:', hash, 'для S' + filed.season + 'E' + filed.episode);
+                } catch(e) {
+                    console.error('[ContinueWatch] ❌ Ошибка сериала:', e);
                 }
             }
             
-            console.log('[ContinueWatch] 🔎 Ищем параметры для hash:', hash);
+            console.log('[ContinueWatch] 🔎 Поиск параметров для hash:', hash);
             var savedParams = getUrlParams(hash);
             
             if (savedParams && savedParams.stream_params) {
-                console.log('[ContinueWatch] ✅ Параметры найдены:', savedParams.stream_params);
-                launchPlayerWithParams(savedParams.stream_params, movie, hash);
+                console.log('[ContinueWatch] ✅ Параметры найдены!');
+                launchWithInternalPlayer(savedParams.stream_params, movie, hash);
             } else {
-                console.log('[ContinueWatch] ❌ Параметры не найдены для hash:', hash);
-                Lampa.Noty.show('Параметры не найдены, открываем выбор источника...');
+                console.log('[ContinueWatch] ❌ Параметры не найдены');
+                Lampa.Noty.show('Параметры не найдены');
                 
-                // Показываем выбор источника
+                // Альтернативный поиск
+                var alternativeHashes = [
+                    Lampa.Utils.hash(title),
+                    Lampa.Utils.hash(movie.original_title || title),
+                    Lampa.Utils.hash(movie.original_name || title)
+                ];
+                
+                for (var i = 0; i < alternativeHashes.length; i++) {
+                    var altParams = getUrlParams(alternativeHashes[i]);
+                    if (altParams && altParams.stream_params) {
+                        console.log('[ContinueWatch] ✅ Найдено по альтернативному hash');
+                        launchWithInternalPlayer(altParams.stream_params, movie, alternativeHashes[i]);
+                        return;
+                    }
+                }
+                
+                console.log('[ContinueWatch] ❌ Ничего не найдено');
+                Lampa.Noty.show('Открываем выбор источника...');
+                
                 setTimeout(function() {
                     Lampa.Activity.push({
                         url: '',
                         title: movie.title || movie.name,
-                        component: 'torrents',
-                        movie: movie,
-                        page: 1
+                        component: 'full',
+                        movie: movie
                     });
-                }, 500);
+                }, 1000);
+                
+                resetButton();
             }
         }
 
-        function launchPlayerWithParams(streamParams, movie, hash) {
-            console.log('[ContinueWatch] 🚀 Запуск плеера с параметрами:', streamParams);
+        function launchWithInternalPlayer(streamParams, movie, hash) {
+            console.log('[ContinueWatch] 🚀 ТЕСТ: Запуск ВНУТРЕННЕГО плеера');
             
             var url = buildStreamUrl(streamParams);
-            
             if (!url) {
-                Lampa.Noty.show('Ошибка: не удалось сформировать URL');
+                Lampa.Noty.show('Ошибка формирования URL');
+                resetButton();
                 return;
             }
             
+            console.log('[ContinueWatch] 🌐 URL:', url);
+            
             var playerData = {
                 url: url,
-                title: streamParams.title,
+                title: streamParams.title || movie.title,
                 card: movie,
                 continue_play: true,
                 torrent_hash: streamParams.torrent_link
             };
             
-            // Добавляем timeline если есть прогресс
+            // Добавляем прогресс воспроизведения
             var view = Lampa.Timeline.view(hash);
-            if (view && view.percent && view.percent > 0) {
+            if (view && view.percent > 0) {
                 playerData.timeline = view;
-                console.log('[ContinueWatch] ⏱️ Восстанавливаем позицию:', view.time + 'сек');
                 playerData.position = view.time;
+                console.log('[ContinueWatch] ⏱️ Восстанавливаем позицию:', view.time + 'сек');
             }
             
-            console.log('[ContinueWatch] 🎬 Player data:', playerData);
+            console.log('[ContinueWatch] 🎬 Данные плеера:', playerData);
             
             try {
-                Lampa.Noty.show('Запуск продолжения...');
+                Lampa.Noty.show('Запуск внутреннего плеера...');
                 
-                if (Lampa.Platform.is('android')) {
-                    console.log('[ContinueWatch] 📱 Android платформа');
-                    
-                    // Для Android используем внешний плеер
-                    if (typeof Lampa.Android !== 'undefined' && Lampa.Android.openPlayer) {
-                        console.log('[ContinueWatch] ✅ Используем Lampa.Android.openPlayer');
-                        Lampa.Android.openPlayer(url, playerData);
-                    } else if (typeof AndroidJS !== 'undefined' && AndroidJS.openPlayer) {
-                        console.log('[ContinueWatch] ✅ Используем AndroidJS.openPlayer');
-                        AndroidJS.openPlayer(url, JSON.stringify(playerData));
-                    } else {
-                        console.log('[ContinueWatch] ⚠️ Android API недоступно, используем встроенный плеер');
-                        Lampa.Player.play(playerData);
-                    }
-                } else {
-                    console.log('[ContinueWatch] 🖥️ Используем встроенный плеер');
-                    Lampa.Player.play(playerData);
-                }
+                // ВСЕГДА используем внутренний плеер для теста
+                console.log('[ContinueWatch] ✅ ТЕСТ: Используем Lampa.Player.play');
+                Lampa.Player.play(playerData);
                 
-                console.log('[ContinueWatch] ✅ Плеер запущен');
+                console.log('[ContinueWatch] ✅ Плеер запущен!');
+                resetButton();
                 
             } catch(err) {
-                console.error('[ContinueWatch] ❌ Ошибка запуска плеера:', err);
-                Lampa.Noty.show('Ошибка запуска: ' + err.message);
+                console.error('[ContinueWatch] ❌ Ошибка запуска:', err);
+                Lampa.Noty.show('Ошибка: ' + err.message);
+                resetButton();
             }
         }
 
-        // ========== ОСТАЛЬНЫЕ ФУНКЦИИ ==========
-        function extractFileName(url) {
-            if (!url) return null;
-            var match = url.match(/\/stream\/([^?]+)/);
-            return match ? decodeURIComponent(match[1]) : null;
-        }
-
-        function extractTorrentLink(url) {
-            if (!url) return null;
-            var match = url.match(/[?&]link=([^&]+)/);
-            return match ? match[1] : null;
-        }
-
-        function extractFileIndex(url) {
-            if (!url) return 0;
-            var match = url.match(/[?&]index=(\d+)/);
-            return match ? parseInt(match[1]) : 0;
-        }
-
+        // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
         function buildStreamUrl(params) {
             if (!params || !params.file_name || !params.torrent_link) {
                 console.error('[ContinueWatch] ❌ Недостаточно параметров');
@@ -238,7 +201,8 @@
                 : (torrserver_url || torrserver_url_two);
             
             if (!server_url) {
-                console.error('[ContinueWatch] ❌ TorrServer URL не настроен!');
+                console.error('[ContinueWatch] ❌ TorrServer URL не настроен');
+                Lampa.Noty.show('Ошибка: TorrServer не настроен');
                 return null;
             }
             
@@ -252,43 +216,13 @@
             var url = server_url + '/stream/' + encodedFileName;
             var urlParams = [];
             if (params.torrent_link) urlParams.push('link=' + params.torrent_link);
-            urlParams.push('index=' + params.file_index);
+            urlParams.push('index=' + (params.file_index || 0));
             urlParams.push(playMode);
             
             url += '?' + urlParams.join('&');
             
-            console.log('[ContinueWatch] ✅ URL:', url);
+            console.log('[ContinueWatch] ✅ URL построен');
             return url;
-        }
-
-        function saveUrlParams(hash, data) {
-            if (!hash || !data) return;
-            
-            try {
-                var viewed = Lampa.Storage.get(Lampa.Timeline.filename(), {});
-                
-                if (!viewed[hash]) {
-                    viewed[hash] = { duration: 0, time: 0, percent: 0, profile: 0 };
-                }
-                
-                viewed[hash].stream_params = {
-                    file_name: data.file_name,
-                    torrent_link: data.torrent_link,
-                    file_index: data.file_index,
-                    path: data.path,
-                    title: data.title,
-                    season: data.season,
-                    episode: data.episode,
-                    timestamp: Date.now(),
-                    source: 'continue_watch_v6.2'
-                };
-                
-                Lampa.Storage.set(Lampa.Timeline.filename(), viewed);
-                console.log('[ContinueWatch] 💾 Сохранено для hash:', hash);
-                
-            } catch(e) {
-                console.error('[ContinueWatch] ❌ Ошибка сохранения:', e);
-            }
         }
 
         function getUrlParams(hash) {
@@ -297,7 +231,7 @@
             try {
                 var viewed = Lampa.Storage.get(Lampa.Timeline.filename(), {});
                 var result = viewed[hash] && viewed[hash].stream_params ? viewed[hash] : null;
-                console.log('[ContinueWatch] 🔍 Поиск параметров для hash:', hash, '- найдено:', !!result);
+                console.log('[ContinueWatch] 🔍 Поиск параметров:', !!result);
                 return result;
             } catch(e) {
                 console.error('[ContinueWatch] ❌ Ошибка чтения:', e);
@@ -305,83 +239,20 @@
             }
         }
 
-        function patchPlayerForPlayline() {
-            console.log('[ContinueWatch] 🔧 Установка патча Player.play()');
-            
-            var originalPlay = Lampa.Player.play;
-            Lampa.Player.play = function(params) {
-                console.log('[ContinueWatch] 📺 Перехват Player.play()');
-                
-                if (params && (params.torrent_hash || (params.url && params.url.includes('/stream/')))) {
-                    console.log('[ContinueWatch] 💾 Сохраняем параметры');
-                    
-                    var hash = null;
-                    var movie = params.card || params.movie || (Lampa.Activity.active() && Lampa.Activity.active().movie);
-                    
-                    if (movie) {
-                        var baseTitle = movie.number_of_seasons ? 
-                            (movie.original_name || movie.original_title) :
-                            (movie.original_title || movie.original_name);
-                        
-                        if (baseTitle) {
-                            if (params.season && params.episode) {
-                                hash = Lampa.Utils.hash([params.season, params.episode, baseTitle].join(''));
-                            } else {
-                                hash = Lampa.Utils.hash(baseTitle);
-                            }
-                            
-                            if (hash) {
-                                currentHash = hash;
-                                
-                                var file_name = null;
-                                var torrent_link = null;
-                                var file_index = 0;
-                                
-                                if (params.torrent_hash && params.path) {
-                                    file_name = params.path.split(/[\\\/]/).pop();
-                                    torrent_link = params.torrent_hash;
-                                    file_index = params.id || params.file_id || 0;
-                                } else if (params.url) {
-                                    file_name = extractFileName(params.url);
-                                    torrent_link = extractTorrentLink(params.url);
-                                    file_index = extractFileIndex(params.url);
-                                }
-                                
-                                if (file_name && torrent_link) {
-                                    saveUrlParams(hash, {
-                                        file_name: file_name,
-                                        torrent_link: torrent_link,
-                                        file_index: file_index,
-                                        path: params.path,
-                                        title: params.title || 'Unknown',
-                                        season: params.season,
-                                        episode: params.episode
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                return originalPlay.call(this, params);
-            };
-        }
-
         function createButton(movie, container) {
-            console.log('[ContinueWatch] 🔘 Создание кнопки для:', movie.title);
+            console.log('[ContinueWatch] 🔘 Создание кнопки');
             
             // Удаляем старую кнопку если есть
-            if (currentButton) {
-                currentButton.remove();
-                currentButton = null;
-            }
+            $('.button--continue-watch').remove();
             
-            // Создаем кнопку с улучшенными стилями
-            var button = $('<div class="full-start__button selector button--continue-watch" style="position: relative; border: 2px solid rgba(255,255,255,0.3);">' +
-                '<svg viewBox="0 0 24 24" width="24" height="24" fill="none">' +
-                    '<path d="M8 5v14l11-7L8 5z" fill="currentColor"/>' +
-                '</svg>' +
-                '<span style="margin-left: 8px;">Продолжить просмотр</span>' +
+            // Простая кнопка
+            var button = $('<div class="full-start__button selector button--continue-watch" style="border: 2px solid rgba(255,255,255,0.3); margin: 10px 0; padding: 12px 20px; border-radius: 8px; background: rgba(255,255,255,0.1);">' +
+                '<div style="display: flex; align-items: center; justify-content: center;">' +
+                    '<svg viewBox="0 0 24 24" width="24" height="24" fill="none">' +
+                        '<path d="M8 5v14l11-7L8 5z" fill="currentColor"/>' +
+                    '</svg>' +
+                    '<span style="margin-left: 12px; font-weight: bold;">Продолжить просмотр</span>' +
+                '</div>' +
             '</div>');
             
             // Настраиваем обработчики
@@ -391,20 +262,17 @@
             container.prepend(button);
             currentButton = button;
             
-            console.log('[ContinueWatch] ✅ Кнопка создана и настроена');
+            console.log('[ContinueWatch] ✅ Кнопка создана');
             
-            // ✅ ТЕСТ: Добавляем принудительный тест через 3 секунды
+            // Диагностика через 3 секунды
             setTimeout(function() {
-                console.log('[ContinueWatch] 🧪 ТЕСТ: Проверка доступности кнопки в DOM');
-                console.log('[ContinueWatch] 🧪 Кнопка в DOM:', document.contains(button[0]));
-                console.log('[ContinueWatch] 🧪 Видимость кнопки:', button.is(':visible'));
-                console.log('[ContinueWatch] 🧪 Координаты кнопки:', button.offset());
+                console.log('[ContinueWatch] 🧪 ДИАГНОСТИКА:');
+                console.log('[ContinueWatch] 🧪 В DOM:', document.contains(button[0]));
+                console.log('[ContinueWatch] 🧪 Видимость:', button.is(':visible'));
             }, 3000);
         }
 
         // ========== ИНИЦИАЛИЗАЦИЯ ==========
-        patchPlayerForPlayline();
-        
         Lampa.Listener.follow('full', function(e) {
             if (e.type !== 'complite') return;
             
@@ -430,7 +298,7 @@
             buttonClickLock = false;
         });
         
-        console.log('[ContinueWatch] 🚀 Версия 6.2 загружена с улучшенной обработкой кнопок');
+        console.log('[ContinueWatch] ✅ Версия 6.5 загружена (тест внутреннего плеера)');
     }
 
     if (window.Lampa && Lampa.Listener) {
@@ -438,4 +306,4 @@
     } else {
         console.error('[ContinueWatch] ❌ Lampa не найдена');
     }
-})();
+})(); 
