@@ -1,9 +1,9 @@
-// Lampa.Plugin - Continue Watch v7.5 (Playlist Support + CUB Sync)
+// Lampa.Plugin - Continue Watch v7.6 (Optimized CUB Sync)
 (function() {
     'use strict';
 
     function startPlugin() {
-        console.log('[ContinueWatch] 🔧 ВЕРСИЯ 7.5: ПОДДЕРЖКА ПЛЕЙЛИСТОВ И СИНХРОНИЗАЦИЯ CUB');
+        console.log('[ContinueWatch] 🔧 ВЕРСИЯ 7.6: ОПТИМИЗИРОВАННАЯ СИНХРОНИЗАЦИЯ CUB');
 
         var currentButton = null;
         var buttonClickLock = false;
@@ -11,6 +11,30 @@
         // ========== РЕГИСТРАЦИЯ СИНХРОНИЗАЦИИ CUB ==========
         Lampa.Storage.sync('continue_watch_params', 'object_object');
         console.log('[ContinueWatch] 🔄 Зарегистрирована синхронизация CUB для continue_watch_params');
+
+        // ========== ОЧИСТКА СТАРЫХ ДАННЫХ ==========
+        function cleanupOldParams() {
+            try {
+                var params = Lampa.Storage.get('continue_watch_params', {});
+                var now = Date.now();
+                var thirtyDays = 30 * 24 * 60 * 60 * 1000; // 30 дней
+                var changed = false;
+
+                for (var hash in params) {
+                    if (params[hash].timestamp && (now - params[hash].timestamp) > thirtyDays) {
+                        delete params[hash];
+                        changed = true;
+                        console.log('[ContinueWatch] 🗑️ Удалены устаревшие параметры для hash:', hash);
+                    }
+                }
+
+                if (changed) {
+                    Lampa.Storage.set('continue_watch_params', params);
+                }
+            } catch(e) {
+                console.error('[ContinueWatch] ❌ Ошибка очистки старых данных:', e);
+            }
+        }
 
         // ========== ОБРАБОТЧИКИ КНОПКИ ==========
         function setupButtonHandler(button, movie) {
@@ -94,11 +118,11 @@
                 }
             }
             
-            var savedParams = getUrlParams(hash);
+            var streamParams = getStreamParams(hash);
             
-            if (savedParams && savedParams.stream_params) {
+            if (streamParams) {
                 console.log('[ContinueWatch] ✅ Параметры найдены!');
-                launchPlayer(savedParams.stream_params, movie, hash);
+                launchPlayer(streamParams, movie, hash);
             } else {
                 console.log('[ContinueWatch] ❌ Параметры не найдены');
                 Lampa.Noty.show('Параметры не найдены');
@@ -111,10 +135,10 @@
                 ];
                 
                 for (var i = 0; i < alternativeHashes.length; i++) {
-                    var altParams = getUrlParams(alternativeHashes[i]);
-                    if (altParams && altParams.stream_params) {
+                    var altParams = getStreamParams(alternativeHashes[i]);
+                    if (altParams) {
                         console.log('[ContinueWatch] ✅ Найдено по альтернативному hash');
-                        launchPlayer(altParams.stream_params, movie, alternativeHashes[i]);
+                        launchPlayer(altParams, movie, alternativeHashes[i]);
                         return;
                     }
                 }
@@ -140,13 +164,14 @@
             
             console.log('[ContinueWatch] 🌐 Final URL:', url);
             
-            // Получаем прогресс воспроизведения (синхронизируется через CUB отдельно)
+            // 🔄 ВАЖНО: Прогресс получаем из Timeline (синхронизируется автоматически)
             var view = Lampa.Timeline.view(hash);
+            console.log('[ContinueWatch] 📊 Прогресс из Timeline:', view.percent + '%', view.time + 'сек');
             
-            // HANDLER ДЛЯ ОБНОВЛЕНИЯ ПРОГРЕССА
+            // HANDLER ДЛЯ ОБНОВЛЕНИЯ ПРОГРЕССА В TIMELINE
             if (view) {
                 view.handler = function(percent, time, duration) {
-                    console.log('[ContinueWatch] 🔄 Обновление прогресса:', percent + '%, ' + time + 'сек');
+                    console.log('[ContinueWatch] 🔄 Обновление прогресса в Timeline:', percent + '%, ' + time + 'сек');
                     Lampa.Timeline.update({
                         hash: hash,
                         percent: percent,
@@ -154,7 +179,7 @@
                         duration: duration
                     });
                 };
-                console.log('[ContinueWatch] ✅ Handler прогресса добавлен');
+                console.log('[ContinueWatch] ✅ Handler прогресса добавлен в Timeline');
             }
             
             // ОСНОВНЫЕ ДАННЫЕ ПЛЕЕРА
@@ -163,10 +188,10 @@
                 title: streamParams.title || movie.title,
                 card: movie,
                 torrent_hash: streamParams.torrent_link,
-                timeline: view
+                timeline: view  // ✅ Используем Timeline для прогресса
             };
             
-            // ФОРМИРОВАНИЕ PLAYLIST ДЛЯ СЕРИАЛОВ (с синхронизированными параметрами)
+            // ФОРМИРОВАНИЕ PLAYLIST ДЛЯ СЕРИАЛОВ
             if (streamParams.season && streamParams.episode) {
                 console.log('[ContinueWatch] 📺 Формируем playlist для сериала');
                 var playlist = buildSeriesPlaylist(streamParams, movie);
@@ -180,7 +205,8 @@
             }
             
             if (view && view.percent > 0) {
-                console.log('[ContinueWatch] ⏱️ Восстанавливаем позицию:', view.time + 'сек');
+                console.log('[ContinueWatch] ⏱️ Восстанавливаем позицию из Timeline:', view.time + 'сек');
+                Lampa.Noty.show('Восстанавливаем позицию...');
             }
             
             console.log('[ContinueWatch] 🎬 Данные плеера:', playerData);
@@ -188,7 +214,6 @@
             try {
                 Lampa.Noty.show('Запуск плеера...');
                 
-                console.log('[ContinueWatch] ✅ Используем Lampa.Player.play с torrent_hash');
                 Lampa.Player.play(playerData);
                 
                 console.log('[ContinueWatch] ✅ Плеер запущен!');
@@ -205,7 +230,7 @@
             console.log('[ContinueWatch] 🔄 Сборка playlist для сериала');
             
             var playlist = [];
-            // ИСПОЛЬЗУЕМ СИНХРОНИЗИРОВАННОЕ ХРАНИЛИЩЕ
+            // ИСПОЛЬЗУЕМ СИНХРОНИЗИРОВАННОЕ ХРАНИЛИЩЕ ДЛЯ ПАРАМЕТРОВ
             var params = Lampa.Storage.get('continue_watch_params', {});
             var baseTitle = movie.original_title || movie.original_name;
             
@@ -216,7 +241,7 @@
             
             console.log('[ContinueWatch] 🔍 Поиск эпизодов в синхронизированном хранилище:', Object.keys(params).length, 'записей');
             
-            // Получить все сохраненные эпизоды этого сериала из синхронизированного хранилища
+            // Получить все сохраненные эпизоды этого сериала
             for (var key in params) {
                 var item = params[key];
                 if (item && 
@@ -227,7 +252,7 @@
                     var episodeUrl = buildStreamUrl(item);
                     if (!episodeUrl) continue;
                     
-                    // Создаем hash для эпизода (такой же как при сохранении)
+                    // Создаем hash для эпизода
                     var separator = item.season > 10 ? ':' : '';
                     var episodeHash = Lampa.Utils.hash([
                         item.season,
@@ -236,13 +261,15 @@
                         baseTitle
                     ].join(''));
                     
+                    // 🔄 ВАЖНО: Прогресс получаем из Timeline, а не из params
                     var episodeView = Lampa.Timeline.view(episodeHash);
+                    console.log('[ContinueWatch] 📊 Прогресс эпизода из Timeline S' + item.season + 'E' + item.episode + ':', episodeView.percent + '%');
                     
-                    // Добавляем handler для каждого эпизода в playlist
+                    // Добавляем handler для обновления прогресса в Timeline
                     if (episodeView) {
                         episodeView.handler = function(episodeHash) {
                             return function(percent, time, duration) {
-                                console.log('[ContinueWatch] 🔄 Обновление прогресса эпизода:', episodeHash, percent + '%');
+                                console.log('[ContinueWatch] 🔄 Обновление прогресса эпизода в Timeline:', episodeHash, percent + '%');
                                 Lampa.Timeline.update({
                                     hash: episodeHash,
                                     percent: percent,
@@ -256,12 +283,12 @@
                     playlist.push({
                         title: 'Сезон ' + item.season + ' / Эпизод ' + item.episode,
                         url: episodeUrl,
-                        timeline: episodeView,
+                        timeline: episodeView,  // ✅ Используем Timeline для прогресса
                         season: item.season,
                         episode: item.episode
                     });
                     
-                    console.log('[ContinueWatch] 📺 Добавлен эпизод S' + item.season + 'E' + item.episode);
+                    console.log('[ContinueWatch] 📺 Добавлен эпизод S' + item.season + 'E' + item.episode, '- прогресс:', episodeView.percent + '%');
                 }
             }
             
@@ -321,7 +348,6 @@
                 return null;
             }
             
-            // Используем оригинальный протокол TorrServer
             if (!server_url.match(/^https?:\/\//)) {
                 server_url = 'http://' + server_url;
             }
@@ -341,14 +367,14 @@
         }
 
         // ========== ФУНКЦИИ ДЛЯ СИНХРОНИЗИРОВАННОГО ХРАНИЛИЩА ==========
-        function getUrlParams(hash) {
+        function getStreamParams(hash) {
             if (!hash) return null;
             
             try {
-                // ИСПОЛЬЗУЕМ СИНХРОНИЗИРОВАННОЕ ХРАНИЛИЩЕ
+                // ИСПОЛЬЗУЕМ СИНХРОНИЗИРОВАННОЕ ХРАНИЛИЩЕ ТОЛЬКО ДЛЯ ПАРАМЕТРОВ ПОТОКА
                 var params = Lampa.Storage.get('continue_watch_params', {});
-                var result = params[hash] ? { stream_params: params[hash] } : null;
-                console.log('[ContinueWatch] 🔍 Поиск параметров в синхронизированном хранилище:', !!result);
+                var result = params[hash] || null;
+                console.log('[ContinueWatch] 🔍 Поиск параметров потока в синхронизированном хранилище:', !!result);
                 return result;
             } catch(e) {
                 console.error('[ContinueWatch] ❌ Ошибка чтения синхронизированного хранилища:', e);
@@ -356,13 +382,17 @@
             }
         }
 
-        function saveUrlParams(hash, data) {
+        function saveStreamParams(hash, data) {
             if (!hash || !data) return;
             
             try {
-                // ИСПОЛЬЗУЕМ СИНХРОНИЗИРОВАННОЕ ХРАНИЛИЩЕ
+                // Очищаем старые данные перед сохранением
+                cleanupOldParams();
+                
+                // ИСПОЛЬЗУЕМ СИНХРОНИЗИРОВАННОЕ ХРАНИЛИЩЕ ТОЛЬКО ДЛЯ ПАРАМЕТРОВ ПОТОКА
                 var params = Lampa.Storage.get('continue_watch_params', {});
                 
+                // ✅ СОХРАНЯЕМ ТОЛЬКО ПАРАМЕТРЫ ПОТОКА (без прогресса)
                 params[hash] = {
                     file_name: data.file_name,
                     torrent_link: data.torrent_link,
@@ -372,29 +402,30 @@
                     season: data.season,
                     episode: data.episode,
                     timestamp: Date.now(),
-                    source: 'continue_watch_v7.5_cub'
+                    source: 'continue_watch_v7.6_cub'
+                    // ❌ НЕ сохраняем: percent, time, duration - они в Timeline
                 };
                 
                 // СОХРАНЕНИЕ С АВТОМАТИЧЕСКОЙ СИНХРОНИЗАЦИЕЙ CUB
                 Lampa.Storage.set('continue_watch_params', params);
                 
-                console.log('[ContinueWatch] 💾 Сохранено в синхронизированное хранилище для hash:', hash);
+                console.log('[ContinueWatch] 💾 Сохранены параметры потока в синхронизированное хранилище для hash:', hash);
                 
             } catch(e) {
-                console.error('[ContinueWatch] ❌ Ошибка сохранения в синхронизированное хранилище:', e);
+                console.error('[ContinueWatch] ❌ Ошибка сохранения параметров потока:', e);
             }
         }
 
         // ========== ПАТЧ ДЛЯ СОХРАНЕНИЯ ПАРАМЕТРОВ ==========
         function patchPlayerForPlayline() {
-            console.log('[ContinueWatch] 🔧 Установка патча Player.play() с синхронизацией CUB');
+            console.log('[ContinueWatch] 🔧 Установка патча Player.play() с оптимизированной синхронизацией');
             
             var originalPlay = Lampa.Player.play;
             Lampa.Player.play = function(params) {
                 console.log('[ContinueWatch] 📺 Перехват Player.play()');
                 
                 if (params && (params.torrent_hash || (params.url && params.url.includes('/stream/')))) {
-                    console.log('[ContinueWatch] 💾 Сохраняем параметры в синхронизированное хранилище');
+                    console.log('[ContinueWatch] 💾 Сохраняем параметры потока в синхронизированное хранилище');
                     
                     var hash = null;
                     var movie = params.card || params.movie || (Lampa.Activity.active() && Lampa.Activity.active().movie);
@@ -420,7 +451,7 @@
                                 var file_index = extractFileIndex(params.url);
                                 
                                 if (file_name && torrent_link) {
-                                    saveUrlParams(hash, {
+                                    saveStreamParams(hash, {
                                         file_name: file_name,
                                         torrent_link: torrent_link,
                                         file_index: file_index,
@@ -457,9 +488,9 @@
             return match ? parseInt(match[1]) : 0;
         }
 
-        // ========== СОЗДАНИЕ КНОПКИ - ВСЕГДА! ==========
+        // ========== СОЗДАНИЕ КНОПКИ ==========
         function createButton(movie, container) {
-            console.log('[ContinueWatch] 🔘 СОЗДАНИЕ КНОПКИ (ВСЕГДА ВИДИМА) для:', movie.title);
+            console.log('[ContinueWatch] 🔘 СОЗДАНИЕ КНОПКИ для:', movie.title);
             
             if (currentButton) {
                 currentButton.remove();
@@ -477,11 +508,14 @@
             container.prepend(button);
             currentButton = button;
             
-            console.log('[ContinueWatch] ✅ Кнопка создана (всегда видима)');
+            console.log('[ContinueWatch] ✅ Кнопка создана');
         }
 
         // ========== ИНИЦИАЛИЗАЦИЯ ==========
         patchPlayerForPlayline();
+        
+        // Очищаем старые данные при запуске
+        cleanupOldParams();
         
         Lampa.Listener.follow('full', function(e) {
             if (e.type !== 'complite') return;
@@ -509,7 +543,7 @@
             buttonClickLock = false;
         });
         
-        console.log('[ContinueWatch] ✅ Версия 7.5 загружена (поддержка playlist + синхронизация CUB)');
+        console.log('[ContinueWatch] ✅ Версия 7.6 загружена (оптимизированная синхронизация CUB)');
     }
 
     if (window.Lampa && Lampa.Listener) {
