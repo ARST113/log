@@ -54,10 +54,10 @@
       parser_torrent_type: 'jackett'
     }
   }, {
-    base: 'unknown',
-    name: 'Unknown',
+    base: 'freebie_tom_ru',
+    name: 'Freebie',
     settings: {
-      url: '188.119.113.252:9117',
+      url: 'jacred.freebie.tom.ru',
       key: '1',
       parser_torrent_type: 'jackett'
     }
