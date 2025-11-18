@@ -3,34 +3,28 @@
 (function () {
   'use strict';
 
-  // Функция раскрытия кнопок с логами
   function showAllButtonsWithLogs() {
-    console.log('showAllButtonsWithLogs: Инициализация функции');
+    console.log('showAllButtonsWithLogs: Инициализация');
     Lampa.Listener.follow('full', function (e) {
-      console.log('showAllButtonsWithLogs: Событие full с типом', e.type);
       if (e.type === 'complite') {
         setTimeout(function () {
           var fullContainer = e.object.activity.render();
           var targetContainer = fullContainer.find('.full-start-new__buttons');
           
-          if (targetContainer.length === 0) {
-            console.warn('showAllButtonsWithLogs: targetContainer не найден');
-            return;
-          }
+          if (targetContainer.length === 0) return;
 
-          // Удаляем стандартную кнопку Play, если она есть (часто мешает)
+          // Удаляем лишнюю кнопку Play
           fullContainer.find('.button--play').remove();
 
-          // Собираем ВСЕ кнопки (и из скрытого контейнера, и из видимого)
+          // Собираем все кнопки
           var allButtons = fullContainer.find('.buttons--container .full-start__button').add(targetContainer.find('.full-start__button'));
-          console.log('showAllButtonsWithLogs: Найдено кнопок всего:', allButtons.length);
-
+          
           var screenWidth = window.innerWidth || document.documentElement.clientWidth;
           var isSmallScreen = screenWidth < 1280;
 
-          // 1. ДОБАВИЛИ КАТЕГОРИЮ continue_view
+          // Категории
           var categories = {
-            continue_view: [], // Для кнопки "Продолжить"
+            continue_view: [], // Наша кнопка
             online: [],
             torrent: [],
             trailer: [],
@@ -41,39 +35,42 @@
             var $button = $(this);
             var className = $button.attr('class') || '';
 
-            // 2. ПРОВЕРЯЕМ НАЛИЧИЕ КЛАССА button--continue-watch (из твоего прошлого плагина)
+            // Распределяем кнопки
             if (className.includes('button--continue-watch')) {
                categories.continue_view.push($button);
-            } 
-            // Проверяем reyohoho_mod и относим к online
-            else if (className.includes('online') || className.includes('reyohoho_mod')) {
+            } else if (className.includes('online') || className.includes('reyohoho_mod')) {
               categories.online.push($button);
             } else if (className.includes('torrent')) {
               categories.torrent.push($button);
             } else if (className.includes('trailer')) {
               categories.trailer.push($button);
             } else {
-              // Клонируем остальные, чтобы сохранить привязки событий
-              categories.other.push($button); 
+              categories.other.push($button);
             }
           });
 
           var buttonSortOrder = Lampa.Storage.get('lme_buttonsort') || ['torrent', 'online', 'trailer', 'other'];
           
-          // Очищаем контейнер перед перестройкой
           targetContainer.empty();
 
-          // 3. СНАЧАЛА ВСЕГДА ВСТАВЛЯЕМ КНОПКУ "ПРОДОЛЖИТЬ" (если она есть)
-          // Это гарантирует, что она будет ПЕРЕД торрентами
+          // --- ЛОГИКА ПОРЯДКА ---
+
+          // 1. Сначала добавляем ТОРРЕНТЫ (чтобы фокус встал на них корректно)
+          for (var t = 0; t < categories.torrent.length; t++) {
+              targetContainer.append(categories.torrent[t]);
+          }
+
+          // 2. Вторым номером - кнопка "ПРОДОЛЖИТЬ ПРОСМОТР"
           for (var c = 0; c < categories.continue_view.length; c++) {
              targetContainer.append(categories.continue_view[c]);
           }
 
-          // Затем вставляем остальные кнопки согласно настройкам сортировки
+          // 3. Добавляем остальные категории из настроек (пропуская торренты, т.к. уже добавили)
           for (var i = 0; i < buttonSortOrder.length; i++) {
             var category = buttonSortOrder[i];
-            // Если в настройках вдруг есть continue_view, пропускаем, т.к. уже вставили
-            if (category === 'continue_view') continue; 
+            
+            // Пропускаем 'torrent' (уже вставили) и 'continue_view' (нет в настройках, но на всякий случай)
+            if (category === 'torrent' || category === 'continue_view') continue; 
             
             var buttons = categories[category];
             if (buttons) {
@@ -83,34 +80,31 @@
             }
           }
 
-          // Удаляем спаны если включена настройка
+          // Удаление span (текста) если нужно
           if (Lampa.Storage.get('lme_showbuttonwn') == true) {
             targetContainer.find("span").remove();
-          } else {
-            if (isSmallScreen) {
-              targetContainer.find('.view--reyohoho_mod span').remove();
-            }
+          } else if (isSmallScreen) {
+            targetContainer.find('.view--reyohoho_mod span').remove();
           }
 
+          // Стили контейнера
           targetContainer.css({
             display: 'flex',
             flexWrap: 'wrap',
             gap: '10px'
           });
 
-          // Стили для анимации
+          // Стили анимации кнопок
           targetContainer.find('.full-start__button').css({
             'transition': 'opacity 0.5s ease-in-out, transform 0.5s ease-in-out',
             'transform': 'scale(1)',
             'opacity': '1'
           });
 
-          // 4. ВАЖНО: ОБНОВЛЯЕМ КОНТРОЛЛЕР
-          // Это исправляет проблему с фокусом и нажатиями влево/вправо
+          // Обновляем навигацию
           Lampa.Controller.toggle("full_start");
-          console.log('showAllButtonsWithLogs: Навигация обновлена');
           
-        }, 100); // Небольшая задержка, чтобы все плагины успели отработать
+        }, 150); // Чуть увеличил задержку для надежности отрисовки
       }
     });
   }
