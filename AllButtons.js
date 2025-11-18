@@ -4,9 +4,10 @@
   'use strict';
 
   function showAllButtonsWithLogs() {
-    console.log('showAllButtonsWithLogs: Инициализация');
+    console.log('ButtonSorter: Инициализация');
     Lampa.Listener.follow('full', function (e) {
       if (e.type === 'complite') {
+        // УВЕЛИЧИЛИ ЗАДЕРЖКУ до 700мс, чтобы кнопка "Продолжить" успела создаться
         setTimeout(function () {
           var fullContainer = e.object.activity.render();
           var targetContainer = fullContainer.find('.full-start-new__buttons');
@@ -40,7 +41,7 @@
                categories.continue_view.push($button);
             } else if (className.includes('online') || className.includes('reyohoho_mod')) {
               categories.online.push($button);
-            } else if (className.includes('torrent')) {
+            } else if (className.includes('torrent') || className.includes('view--torrent')) {
               categories.torrent.push($button);
             } else if (className.includes('trailer')) {
               categories.trailer.push($button);
@@ -55,21 +56,29 @@
 
           // --- ЛОГИКА ПОРЯДКА ---
 
-          // 1. Сначала добавляем ТОРРЕНТЫ (чтобы фокус встал на них корректно)
+          // 1. Сначала добавляем ТОРРЕНТЫ (чтобы фокус встал на них)
           for (var t = 0; t < categories.torrent.length; t++) {
               targetContainer.append(categories.torrent[t]);
           }
 
           // 2. Вторым номером - кнопка "ПРОДОЛЖИТЬ ПРОСМОТР"
-          for (var c = 0; c < categories.continue_view.length; c++) {
-             targetContainer.append(categories.continue_view[c]);
+          // Если массив пустой, пробуем найти кнопку еще раз (на случай если она не попала в allButtons)
+          if (categories.continue_view.length === 0) {
+             var lateButton = $('.button--continue-watch');
+             if (lateButton.length) {
+                 targetContainer.append(lateButton);
+             }
+          } else {
+             for (var c = 0; c < categories.continue_view.length; c++) {
+                targetContainer.append(categories.continue_view[c]);
+             }
           }
 
-          // 3. Добавляем остальные категории из настроек (пропуская торренты, т.к. уже добавили)
+          // 3. Добавляем остальные категории из настроек
           for (var i = 0; i < buttonSortOrder.length; i++) {
             var category = buttonSortOrder[i];
             
-            // Пропускаем 'torrent' (уже вставили) и 'continue_view' (нет в настройках, но на всякий случай)
+            // Пропускаем уже добавленные
             if (category === 'torrent' || category === 'continue_view') continue; 
             
             var buttons = categories[category];
@@ -104,7 +113,7 @@
           // Обновляем навигацию
           Lampa.Controller.toggle("full_start");
           
-        }, 150); // Чуть увеличил задержку для надежности отрисовки
+        }, 700); // 700ms - оптимально, чтобы успели отработать другие плагины
       }
     });
   }
