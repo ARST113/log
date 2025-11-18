@@ -7,9 +7,10 @@
     console.log('ButtonSorter: Инициализация');
     Lampa.Listener.follow('full', function (e) {
       if (e.type === 'complite') {
-        // УВЕЛИЧИЛИ ЗАДЕРЖКУ до 700мс, чтобы кнопка "Продолжить" успела создаться
+        // Задержка 800мс, чтобы все плагины точно отработали
         setTimeout(function () {
           var fullContainer = e.object.activity.render();
+          // Это основной контейнер, где должны лежать все кнопки в ряд
           var targetContainer = fullContainer.find('.full-start-new__buttons');
           
           if (targetContainer.length === 0) return;
@@ -17,32 +18,34 @@
           // Удаляем лишнюю кнопку Play
           fullContainer.find('.button--play').remove();
 
-          // Собираем все кнопки
+          // 1. Ищем кнопку "Продолжить просмотр" ГДЕ УГОДНО в карточке
+          // (даже если она выпала в другой контейнер или висит отдельно)
+          var continueButton = fullContainer.find('.button--continue-watch');
+
+          // Собираем все остальные кнопки
           var allButtons = fullContainer.find('.buttons--container .full-start__button').add(targetContainer.find('.full-start__button'));
           
           var screenWidth = window.innerWidth || document.documentElement.clientWidth;
           var isSmallScreen = screenWidth < 1280;
 
-          // Категории
           var categories = {
-            continue_view: [], // Наша кнопка
-            online: [],
             torrent: [],
+            online: [],
             trailer: [],
             other: []
           };
 
           allButtons.each(function () {
             var $button = $(this);
+            // Пропускаем нашу кнопку "Продолжить", мы её уже нашли отдельно
+            if ($button.hasClass('button--continue-watch')) return;
+
             var className = $button.attr('class') || '';
 
-            // Распределяем кнопки
-            if (className.includes('button--continue-watch')) {
-               categories.continue_view.push($button);
+            if (className.includes('torrent') || className.includes('view--torrent')) {
+              categories.torrent.push($button);
             } else if (className.includes('online') || className.includes('reyohoho_mod')) {
               categories.online.push($button);
-            } else if (className.includes('torrent') || className.includes('view--torrent')) {
-              categories.torrent.push($button);
             } else if (className.includes('trailer')) {
               categories.trailer.push($button);
             } else {
@@ -52,34 +55,26 @@
 
           var buttonSortOrder = Lampa.Storage.get('lme_buttonsort') || ['torrent', 'online', 'trailer', 'other'];
           
+          // Очищаем контейнер, чтобы пересобрать заново
           targetContainer.empty();
 
-          // --- ЛОГИКА ПОРЯДКА ---
+          // --- СБОРКА КНОПОК В ОДИН РЯД ---
 
-          // 1. Сначала добавляем ТОРРЕНТЫ (чтобы фокус встал на них)
+          // 1. Ставим ТОРРЕНТЫ
           for (var t = 0; t < categories.torrent.length; t++) {
               targetContainer.append(categories.torrent[t]);
           }
 
-          // 2. Вторым номером - кнопка "ПРОДОЛЖИТЬ ПРОСМОТР"
-          // Если массив пустой, пробуем найти кнопку еще раз (на случай если она не попала в allButtons)
-          if (categories.continue_view.length === 0) {
-             var lateButton = $('.button--continue-watch');
-             if (lateButton.length) {
-                 targetContainer.append(lateButton);
-             }
-          } else {
-             for (var c = 0; c < categories.continue_view.length; c++) {
-                targetContainer.append(categories.continue_view[c]);
-             }
+          // 2. Сразу за ними - ПРОДОЛЖИТЬ (если нашли)
+          if (continueButton.length) {
+              // Важно: append перемещает элемент из старого места в новое
+              targetContainer.append(continueButton);
           }
 
-          // 3. Добавляем остальные категории из настроек
+          // 3. Ставим ОСТАЛЬНЫЕ по порядку
           for (var i = 0; i < buttonSortOrder.length; i++) {
             var category = buttonSortOrder[i];
-            
-            // Пропускаем уже добавленные
-            if (category === 'torrent' || category === 'continue_view') continue; 
+            if (category === 'torrent') continue; // Торренты уже поставили
             
             var buttons = categories[category];
             if (buttons) {
@@ -89,21 +84,22 @@
             }
           }
 
-          // Удаление span (текста) если нужно
+          // Удаление текста span если нужно
           if (Lampa.Storage.get('lme_showbuttonwn') == true) {
             targetContainer.find("span").remove();
           } else if (isSmallScreen) {
             targetContainer.find('.view--reyohoho_mod span').remove();
           }
 
-          // Стили контейнера
+          // Стили контейнера (в одну строку с переносом)
           targetContainer.css({
             display: 'flex',
             flexWrap: 'wrap',
-            gap: '10px'
+            gap: '10px',
+            alignItems: 'center' // Выравнивание по вертикали
           });
 
-          // Стили анимации кнопок
+          // Стили анимации
           targetContainer.find('.full-start__button').css({
             'transition': 'opacity 0.5s ease-in-out, transform 0.5s ease-in-out',
             'transform': 'scale(1)',
@@ -113,7 +109,7 @@
           // Обновляем навигацию
           Lampa.Controller.toggle("full_start");
           
-        }, 700); // 700ms - оптимально, чтобы успели отработать другие плагины
+        }, 800); 
       }
     });
   }
