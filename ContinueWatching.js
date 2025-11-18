@@ -1,11 +1,11 @@
 "use strict";
 
-// Lampa.Plugin - Continue Watch v7.6 (Optimized CUB Sync)
+// Lampa.Plugin - Continue Watch v7.6 (Optimized CUB Sync) - Fixed Navigation
 (function () {
   'use strict';
 
   function startPlugin() {
-    console.log('[ContinueWatch] 🔧 ВЕРСИЯ 7.6: ОПТИМИЗИРОВАННАЯ СИНХРОНИЗАЦИЯ CUB');
+    console.log('[ContinueWatch] 🔧 ВЕРСИЯ 7.6: ОПТИМИЗИРОВАННАЯ СИНХРОНИЗАЦИЯ CUB (FIXED NAV)');
     var currentButton = null;
     var buttonClickLock = false;
 
@@ -418,7 +418,14 @@
       setupButtonHandler(button, movie);
       container.prepend(button);
       currentButton = button;
-      console.log('[ContinueWatch] ✅ Кнопка создана');
+      
+      // --- ИСПРАВЛЕНИЕ НАВИГАЦИИ ---
+      // Принудительно обновляем контроллер, чтобы он увидел новую структуру
+      // Это исправляет баг "вправо -> меню" и ставит фокус на новую кнопку, так как она теперь первая
+      Lampa.Controller.toggle('content');
+      // -----------------------------
+      
+      console.log('[ContinueWatch] ✅ Кнопка создана и навигация обновлена');
     }
 
     // ========== ИНИЦИАЛИЗАЦИЯ ==========
