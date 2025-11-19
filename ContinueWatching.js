@@ -3,11 +3,19 @@
     'use strict';
 
     // ========================================================================
-    // 1. ЛОГИКА CONTINUE WATCH (Внутренние функции)
+    // 1. ЛОГИКА (Без изменений)
     // ========================================================================
-
-    // Настройки синхронизации
+    
     Lampa.Storage.sync('continue_watch_params', 'object_object');
+
+    function formatTime(seconds) {
+        if (!seconds) return '';
+        var h = Math.floor(seconds / 3600);
+        var m = Math.floor((seconds % 3600) / 60);
+        var s = Math.floor(seconds % 60);
+        if (h > 0) return h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+        return m + ':' + (s < 10 ? '0' : '') + s;
+    }
 
     function cleanupOldParams() {
         try {
@@ -28,10 +36,8 @@
         if (!movie) return null;
         var title = movie.number_of_seasons ? movie.original_name || movie.original_title || movie.name || movie.title : movie.original_title || movie.original_name || movie.title || movie.name;
         if (!title) return null;
-
         var hash = Lampa.Utils.hash(title);
 
-        // Логика для сериалов
         if (movie.number_of_seasons) {
             try {
                 var last = Lampa.Storage.get('online_watched_last', '{}');
@@ -44,7 +50,6 @@
                 }
             } catch (e) {}
         }
-
         var params = Lampa.Storage.get('continue_watch_params', {});
         return params[hash] || params[Lampa.Utils.hash(title)] || null;
     }
@@ -66,30 +71,24 @@
         if (params.torrent_link) query.push('link=' + params.torrent_link);
         query.push('index=' + (params.file_index || 0));
         query.push(Lampa.Storage.field('torrserver_preload') ? 'preload' : 'play');
-
         return url + '?' + query.join('&');
     }
 
     function launchPlayer(movie, params) {
         var url = buildStreamUrl(params);
         if (!url) return;
-
         var title = movie.number_of_seasons ? movie.original_name || movie.original_title || movie.name || movie.title : movie.original_title || movie.original_name || movie.title || movie.name;
         var hash = Lampa.Utils.hash(title);
-
         if (params.season && params.episode) {
             var separator = params.season > 10 ? ':' : '';
             hash = Lampa.Utils.hash([params.season, separator, params.episode, title].join(''));
         }
-
         var view = Lampa.Timeline.view(hash);
-
         if (view) {
             view.handler = function (percent, time, duration) {
                 Lampa.Timeline.update({ hash: hash, percent: percent, time: time, duration: duration });
             };
         }
-
         var playerData = {
             url: url,
             title: params.title || movie.title,
@@ -97,9 +96,7 @@
             torrent_hash: params.torrent_link,
             timeline: view
         };
-
         if (view && view.percent > 0) Lampa.Noty.show('Восстанавливаем позицию...');
-
         Lampa.Player.play(playerData);
     }
 
@@ -118,12 +115,10 @@
                         } else {
                             hash = Lampa.Utils.hash(baseTitle);
                         }
-
                         if (hash) {
                             var matchFile = params.url && params.url.match(/\/stream\/([^?]+)/);
                             var matchLink = params.url && params.url.match(/[?&]link=([^&]+)/);
                             var matchIndex = params.url && params.url.match(/[?&]index=(\d+)/);
-
                             if (matchFile && matchLink) {
                                 var store = Lampa.Storage.get('continue_watch_params', {});
                                 store[hash] = {
@@ -146,7 +141,7 @@
     }
 
     // ========================================================================
-    // 2. ИНТЕГРАЦИЯ КНОПКИ (Как в примере Multiparser)
+    // 2. ИНТЕГРАЦИЯ КНОПКИ (НАТИВНАЯ СТРУКТУРА ДЛЯ АНИМАЦИИ)
     // ========================================================================
 
     function handleContinueClick(movieData) {
@@ -160,77 +155,94 @@
 
     function setupContinueButton() {
         Lampa.Listener.follow('full', function (e) {
-            if (e.type == 'complite') {
-                
-                // Проверяем наличие истории, чтобы решить, показывать ли кнопку
-                // (Можно убрать проверку, если кнопка нужна всегда)
-                var params = getStreamParams(e.data.movie);
-                var labelText = 'Продолжить';
-                if (params && params.season && params.episode) {
-                    labelText += ' (S' + params.season + ' E' + params.episode + ')';
-                }
-
-                // Создаем кнопку с правильной структурой для Lampa (как в примере)
-                var continueButtonHtml = `
-                    <div class="full-start__button selector button--continue-watch" tabindex="0">
-                        <div class="full-start__button-icon">
-                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                            </svg>
-                        </div>
-                        <div class="full-start__button-text">${labelText}</div>
-                    </div>
-                `;
-
-                var continueBtn = $(continueButtonHtml);
-                
-                // Обработчик (как в примере)
-                continueBtn.on('hover:enter', function (event) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    handleContinueClick(e.data.movie);
-                }).on('click', function (event) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    handleContinueClick(e.data.movie);
-                });
-
-                // Добавляем кнопку в правильное место (копия логики Multiparser)
-                if (e.data && e.object) {
+            if (e.type === 'complite') {
+                setTimeout(function() {
                     var activity = e.object.activity;
                     var render = activity.render();
                     
-                    // Ищем кнопку торрентов
-                    var torrentBtn = render.find('.view--torrent').last();
+                    if (render.find('.button--continue-watch').length) return;
+
+                    var params = getStreamParams(e.data.movie);
                     
-                    if (torrentBtn.length) {
-                        // Вставляем ПОСЛЕ кнопки торрентов
-                        torrentBtn.after(continueBtn);
-                    } else {
-                        // Если кнопки торрентов нет, добавляем в конец контейнера кнопок
-                        var buttonsContainer = render.find('.full-start-new__buttons, .full-start__buttons');
-                        if (buttonsContainer.length) {
-                            buttonsContainer.append(continueBtn);
-                        } else {
-                            render.find('.full-start__button').last().after(continueBtn);
+                    // --- ПОДГОТОВКА ДАННЫХ ---
+                    var percent = 0;
+                    var timeStr = "";
+
+                    if (params) {
+                        var title = e.data.movie.number_of_seasons ? 
+                            (e.data.movie.original_name || e.data.movie.original_title) : 
+                            (e.data.movie.original_title || e.data.movie.original_name);
+                        
+                        var hash = Lampa.Utils.hash(title);
+                        if (params.season && params.episode) {
+                            var separator = params.season > 10 ? ':' : '';
+                            hash = Lampa.Utils.hash([params.season, separator, params.episode, title].join(''));
+                        }
+                        
+                        var view = Lampa.Timeline.view(hash);
+                        if (view) {
+                            percent = view.percent || 0;
+                            timeStr = formatTime(view.time || 0);
                         }
                     }
+
+                    // Текст кнопки
+                    var labelText = 'Продолжить';
+                    if (params && params.season && params.episode) {
+                        labelText += ' S' + params.season + ' E' + params.episode;
+                    }
                     
-                    console.log("[ContinueWatch] Кнопка добавлена");
-                }
+                    if (timeStr) {
+                        labelText += ' (' + timeStr + ')';
+                    }
+
+                    // --- HTML КНОПКИ (НАТИВНАЯ СТРУКТУРА) ---
+                    // ВАЖНО: Используем структуру <svg>...</svg><span>Текст</span>
+                    // Именно наличие тега <span> позволяет Lampa автоматически сворачивать/разворачивать кнопку
+                    var continueButtonHtml = `
+                        <div class="full-start__button selector button--continue-watch">
+                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none">
+                                <path d="M8 5v14l11-7L8 5z" fill="currentColor"/>
+                                <circle cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="1.5" fill="none" 
+                                    stroke-dasharray="${(percent * 65.97 / 100).toFixed(2)} 65.97" transform="rotate(-90 12 12)"/>
+                            </svg>
+                            <span>${labelText}</span>
+                        </div>
+                    `;
+
+                    var continueBtn = $(continueButtonHtml);
+                    
+                    continueBtn.on('hover:enter click', function (event) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        handleContinueClick(e.data.movie);
+                    });
+
+                    // --- ВСТАВКА ---
+                    var torrentBtn = render.find('.view--torrent').last();
+                    var buttonsContainer = render.find('.full-start-new__buttons, .full-start__buttons').first();
+
+                    if (torrentBtn.length) {
+                        torrentBtn.after(continueBtn);
+                    } else if (buttonsContainer.length) {
+                        buttonsContainer.append(continueBtn);
+                    } else {
+                        render.find('.full-start__button').last().after(continueBtn);
+                    }
+
+                    // Обновляем навигацию
+                    Lampa.Controller.toggle('content'); 
+                    console.log("[ContinueWatch] Кнопка добавлена (нативная структура)");
+
+                }, 100); 
             }
         });
     }
 
     function add() {
-        // Инициализация логики
         patchPlayer();
         cleanupOldParams();
-        
-        // Даем время Lampa полностью загрузиться (как в примере)
-        setTimeout(function() {
-            setupContinueButton();
-        }, 2000);
+        setupContinueButton();
     }
 
     function startPlugin() {
