@@ -3,62 +3,108 @@
     'use strict';
 
     // ========================================================================
-    // ДОБАВЛЕНО КЭШИРОВАНИЕ
+    // ПЕРЕМЕННЫЕ КЭША (ОПТИМИЗАЦИЯ)
     // ========================================================================
-    var MEMORY_CACHE = null;
+    var MEMORY_CACHE = null;        // Кэш параметров просмотра
+    var WATCHED_LAST_CACHE = null;  // Кэш истории просмотров (серии)
+    var TORRSERVER_CACHE = null;    // Кэш URL торсервера
+    var SAVE_TIMEOUT = null;        // Таймер для Debounce сохранения
+
+    // ========================================================================
+    // 1. СИСТЕМА КЭШИРОВАНИЯ И СИНХРОНИЗАЦИИ
+    // ========================================================================
+    
+    Lampa.Storage.sync('continue_watch_params', 'object_object');
+
+    // Слушаем изменения в хранилище (чтобы сбросить кэш, если прилетела синхра)
+    Lampa.Storage.listener.follow('change', function(e) {
+        if (e.name === 'continue_watch_params') MEMORY_CACHE = null;
+        if (e.name === 'online_watched_last') WATCHED_LAST_CACHE = null;
+        if (e.name === 'torrserver_url' || e.name === 'torrserver_url_two' || e.name === 'torrserver_use_link') TORRSERVER_CACHE = null;
+    });
 
     function getParams() {
         if (!MEMORY_CACHE) MEMORY_CACHE = Lampa.Storage.get('continue_watch_params', {});
         return MEMORY_CACHE;
     }
 
+    // Debounce для сохранения (не чаще раза в 500мс)
     function setParams(data) {
         MEMORY_CACHE = data;
-        Lampa.Storage.set('continue_watch_params', data);
+        clearTimeout(SAVE_TIMEOUT);
+        SAVE_TIMEOUT = setTimeout(function() {
+            Lampa.Storage.set('continue_watch_params', data);
+        }, 500);
+    }
+
+    // Оптимизированное получение истории просмотров
+    function getWatchedLast() {
+        if (!WATCHED_LAST_CACHE) {
+            var last = Lampa.Storage.get('online_watched_last', '{}');
+            WATCHED_LAST_CACHE = typeof last === 'string' ? JSON.parse(last) : last;
+        }
+        return WATCHED_LAST_CACHE;
+    }
+
+    // Оптимизированное получение URL Торсервера
+    function getTorrServerUrl() {
+        if (!TORRSERVER_CACHE) {
+            var url = Lampa.Storage.get('torrserver_url');
+            var url_two = Lampa.Storage.get('torrserver_url_two');
+            var use_two = Lampa.Storage.field('torrserver_use_link') == 'two';
+            var final_url = use_two ? (url_two || url) : (url || url_two);
+            
+            if (final_url) {
+                if (!final_url.match(/^https?:\/\//)) final_url = 'http://' + final_url;
+                final_url = final_url.replace(/\/$/, '');
+            }
+            TORRSERVER_CACHE = final_url;
+        }
+        return TORRSERVER_CACHE;
     }
 
     // ========================================================================
-    // 1. ЛОГИКА (Без изменений, кроме внедрения кэша)
+    // 2. ЛОГИКА
     // ========================================================================
-    
-    Lampa.Storage.sync('continue_watch_params', 'object_object');
 
     function formatTime(seconds) {
         if (!seconds) return '';
         var h = Math.floor(seconds / 3600);
         var m = Math.floor((seconds % 3600) / 60);
         var s = Math.floor(seconds % 60);
-        if (h > 0) return h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
-        return m + ':' + (s < 10 ? '0' : '') + s;
+        return h > 0 ? 
+            h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s : 
+            m + ':' + (s < 10 ? '0' : '') + s;
     }
 
     function cleanupOldParams() {
-        try {
-            // ИСПОЛЬЗУЕМ КЭШ
-            var params = getParams();
-            var now = Date.now();
-            var changed = false;
-            for (var hash in params) {
-                if (params[hash].timestamp && now - params[hash].timestamp > 30 * 24 * 60 * 60 * 1000) {
-                    delete params[hash];
-                    changed = true;
+        setTimeout(function() {
+            try {
+                var params = getParams();
+                var now = Date.now();
+                var changed = false;
+                for (var hash in params) {
+                    if (params[hash].timestamp && now - params[hash].timestamp > 30 * 24 * 60 * 60 * 1000) {
+                        delete params[hash];
+                        changed = true;
+                    }
                 }
-            }
-            // ОБНОВЛЯЕМ КЭШ
-            if (changed) setParams(params);
-        } catch (e) {}
+                if (changed) setParams(params);
+            } catch (e) {}
+        }, 5000);
     }
 
     function getStreamParams(movie) {
         if (!movie) return null;
-        var title = movie.number_of_seasons ? movie.original_name || movie.original_title || movie.name || movie.title : movie.original_title || movie.original_name || movie.title || movie.name;
+        var title = movie.number_of_seasons ? movie.original_name || movie.original_title || movie.name : movie.original_title || movie.title || movie.name;
         if (!title) return null;
+        
         var hash = Lampa.Utils.hash(title);
 
         if (movie.number_of_seasons) {
             try {
-                var last = Lampa.Storage.get('online_watched_last', '{}');
-                if (typeof last === 'string') last = JSON.parse(last);
+                // ИСПОЛЬЗУЕМ КЭШ
+                var last = getWatchedLast();
                 var titleHash = Lampa.Utils.hash(movie.original_name || movie.original_title || title);
                 var filed = last[titleHash];
                 if (filed && filed.season !== undefined && filed.episode !== undefined) {
@@ -67,22 +113,21 @@
                 }
             } catch (e) {}
         }
-        // ИСПОЛЬЗУЕМ КЭШ
+        
         var params = getParams();
         return params[hash] || params[Lampa.Utils.hash(title)] || null;
     }
 
     function buildStreamUrl(params) {
         if (!params || !params.file_name || !params.torrent_link) return null;
-        var torrserver_url = Lampa.Storage.get('torrserver_url');
-        var torrserver_url_two = Lampa.Storage.get('torrserver_url_two');
-        var server_url = Lampa.Storage.field('torrserver_use_link') == 'two' ? torrserver_url_two || torrserver_url : torrserver_url || torrserver_url_two;
+        
+        // ИСПОЛЬЗУЕМ КЭШ
+        var server_url = getTorrServerUrl();
 
         if (!server_url) {
             Lampa.Noty.show('TorrServer не настроен');
             return null;
         }
-        if (!server_url.match(/^https?:\/\//)) server_url = 'http://' + server_url;
 
         var url = server_url + '/stream/' + encodeURIComponent(params.file_name);
         var query = [];
@@ -138,7 +183,6 @@
                             var matchLink = params.url && params.url.match(/[?&]link=([^&]+)/);
                             var matchIndex = params.url && params.url.match(/[?&]index=(\d+)/);
                             if (matchFile && matchLink) {
-                                // ИСПОЛЬЗУЕМ КЭШ
                                 var store = getParams();
                                 store[hash] = {
                                     file_name: decodeURIComponent(matchFile[1]),
@@ -149,7 +193,7 @@
                                     episode: params.episode,
                                     timestamp: Date.now()
                                 };
-                                // ОБНОВЛЯЕМ КЭШ
+                                // Сохраняем через Debounce
                                 setParams(store);
                             }
                         }
@@ -161,7 +205,7 @@
     }
 
     // ========================================================================
-    // 2. ИНТЕГРАЦИЯ КНОПКИ (НАТИВНАЯ СТРУКТУРА ДЛЯ АНИМАЦИИ)
+    // 3. ИНТЕГРАЦИЯ КНОПКИ
     // ========================================================================
 
     function handleContinueClick(movieData) {
@@ -182,9 +226,9 @@
                     
                     if (render.find('.button--continue-watch').length) return;
 
+                    // getStreamParams теперь работает быстро благодаря кэшу
                     var params = getStreamParams(e.data.movie);
                     
-                    // --- ПОДГОТОВКА ДАННЫХ ---
                     var percent = 0;
                     var timeStr = "";
 
@@ -206,7 +250,6 @@
                         }
                     }
 
-                    // Текст кнопки
                     var labelText = 'Продолжить';
                     if (params && params.season && params.episode) {
                         labelText += ' S' + params.season + ' E' + params.episode;
@@ -216,9 +259,6 @@
                         labelText += ' (' + timeStr + ')';
                     }
 
-                    // --- HTML КНОПКИ (НАТИВНАЯ СТРУКТУРА) ---
-                    // ВАЖНО: Используем структуру <svg>...</svg><span>Текст</span>
-                    // Именно наличие тега <span> позволяет Lampa автоматически сворачивать/разворачивать кнопку
                     var continueButtonHtml = `
                         <div class="full-start__button selector button--continue-watch">
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="none">
@@ -232,14 +272,13 @@
 
                     var continueBtn = $(continueButtonHtml);
                     
-                    // УБРАЛ CLICK, ОСТАВИЛ ТОЛЬКО HOVER:ENTER
+                    // ТОЛЬКО HOVER:ENTER (как ты просил)
                     continueBtn.on('hover:enter', function (event) {
                         event.preventDefault();
                         event.stopPropagation();
                         handleContinueClick(e.data.movie);
                     });
 
-                    // --- ВСТАВКА ---
                     var torrentBtn = render.find('.view--torrent').last();
                     var buttonsContainer = render.find('.full-start-new__buttons, .full-start__buttons').first();
 
@@ -251,9 +290,8 @@
                         render.find('.full-start__button').last().after(continueBtn);
                     }
 
-                    // Обновляем навигацию
                     Lampa.Controller.toggle('content'); 
-                    console.log("[ContinueWatch] Кнопка добавлена (только hover:enter + кэш)");
+                    console.log("[ContinueWatch] v15 (Optimized + Cached)");
 
                 }, 100); 
             }
