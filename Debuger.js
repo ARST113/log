@@ -2,20 +2,15 @@
 (function () {
     'use strict';
 
-    // КЭШ В ПАМЯТИ (Для ускорения работы на ТВ)
-    var MEMORY_CACHE = null;
+    // 🔒 ГЛОБАЛЬНАЯ ЗАЩИТА И КЭШ
+    var LAUNCH_LOCK = false;   // Замок от двойных нажатий (пульт/тач)
+    var MEMORY_CACHE = null;   // Кэш для ускорения работы меню
 
-    // ========================================================================
-    // 1. ЛОГИКА РАБОТЫ С ДАННЫМИ
-    // ========================================================================
-    
     Lampa.Storage.sync('continue_watch_params', 'object_object');
 
+    // --- БЛОК РАБОТЫ С ПАМЯТЬЮ (ОПТИМИЗАЦИЯ) ---
     function getParams() {
-        if (!MEMORY_CACHE) {
-            // Читаем с диска только один раз при старте
-            MEMORY_CACHE = Lampa.Storage.get('continue_watch_params', {});
-        }
+        if (!MEMORY_CACHE) MEMORY_CACHE = Lampa.Storage.get('continue_watch_params', {});
         return MEMORY_CACHE;
     }
 
@@ -24,6 +19,7 @@
         Lampa.Storage.set('continue_watch_params', data);
     }
 
+    // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
     function formatTime(seconds) {
         if (!seconds) return '';
         var h = Math.floor(seconds / 3600);
@@ -34,7 +30,6 @@
             m + ':' + (s < 10 ? '0' : '') + s;
     }
 
-    // Очистка старых записей (стартует отложенно, чтобы не тормозить запуск Lampa)
     function cleanupOldParams() {
         setTimeout(function() {
             try {
@@ -42,6 +37,7 @@
                 var now = Date.now();
                 var changed = false;
                 for (var hash in params) {
+                    // Удаляем записи старше 30 дней
                     if (params[hash].timestamp && now - params[hash].timestamp > 30 * 24 * 60 * 60 * 1000) {
                         delete params[hash];
                         changed = true;
@@ -59,7 +55,7 @@
         
         var hash = Lampa.Utils.hash(title);
 
-        // Если сериал, пытаемся найти последнюю просмотренную серию через историю Lampa
+        // Для сериалов ищем последнюю серию в истории просмотров Lampa
         if (movie.number_of_seasons) {
             try {
                 var last = Lampa.Storage.get('online_watched_last', '{}');
@@ -88,7 +84,7 @@
             return null;
         }
         if (!server_url.match(/^https?:\/\//)) server_url = 'http://' + server_url;
-        server_url = server_url.replace(/\/$/, ''); // Убираем лишний слеш
+        server_url = server_url.replace(/\/$/, '');
 
         var url = server_url + '/stream/' + encodeURIComponent(params.file_name);
         var query = [];
@@ -110,7 +106,7 @@
             hash = Lampa.Utils.hash([params.season, separator, params.episode, title].join(''));
         }
         
-        // Получаем позицию из Timeline
+        // Синхронизация с Timeline (прогресс-бар)
         var view = Lampa.Timeline.view(hash);
         if (view) {
             view.handler = function (percent, time, duration) {
@@ -130,12 +126,13 @@
         Lampa.Player.play(playerData);
     }
 
-    // Патч плеера для сохранения данных при запуске
+    // --- ПАТЧ ПЛЕЕРА (СОХРАНЕНИЕ ДАННЫХ) ---
     function patchPlayer() {
         if (Lampa.Player.play._cw_patched) return;
 
         var originalPlay = Lampa.Player.play;
         Lampa.Player.play = function (params) {
+            // Если это торрент или поток TorrServer - сохраняем
             if (params && (params.torrent_hash || (params.url && params.url.indexOf('/stream/') !== -1))) {
                 try {
                     var movie = params.card || params.movie || (Lampa.Activity.active() && Lampa.Activity.active().movie);
@@ -178,14 +175,10 @@
         Lampa.Player.play._cw_patched = true;
     }
 
-    // ========================================================================
-    // 2. ИНТЕГРАЦИЯ КНОПКИ
-    // ========================================================================
-
+    // --- ОТРИСОВКА КНОПКИ ---
     function setupContinueButton() {
         Lampa.Listener.follow('full', function (e) {
             if (e.type === 'complite') {
-                // Небольшая задержка для рендера
                 setTimeout(function() {
                     var activity = e.object.activity;
                     var render = activity.render();
@@ -194,9 +187,9 @@
                     if (render.find('.button--continue-watch').length) return;
 
                     var params = getStreamParams(movie);
-                    if (!params) return; // Нет истории - нет кнопки
+                    if (!params) return; // Нет истории -> нет кнопки
 
-                    // Расчет прогресса для визуала
+                    // Визуальный прогресс (кружочек)
                     var percent = 0;
                     var timeStr = "";
                     
@@ -216,14 +209,13 @@
                         timeStr = formatTime(view.time || 0);
                     }
 
-                    // Текст кнопки
                     var labelText = 'Продолжить';
                     if (params.season && params.episode) {
                         labelText += ' S' + params.season + ' E' + params.episode;
                     }
                     if (timeStr) labelText += ' (' + timeStr + ')';
 
-                    // HTML Кнопки (Твой дизайн)
+                    // HTML Кнопки
                     var continueButtonHtml = 
                         '<div class="full-start__button selector button--continue-watch" style="transition: all 0.3s;">' +
                             '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" style="margin-right: 0.5em;">' +
@@ -236,12 +228,21 @@
 
                     var continueBtn = $(continueButtonHtml);
                     
-                    // ✅ ВОЗВРАЩАЕМ hover:enter + click для полной совместимости с пультом и мышью
+                    // 🔥 ОБРАБОТЧИК С ЗАЩИТОЙ ОТ СЕНСОРА И ПУЛЬТА 🔥
                     continueBtn.on('hover:enter click', function (event) {
                         event.preventDefault();
                         event.stopPropagation();
                         
-                        // Визуальная индикация нажатия
+                        // ЕСЛИ ЗАМОК ВКЛЮЧЕН (уже нажали секунду назад) -> ВЫХОДИМ
+                        if (LAUNCH_LOCK) return;
+                        
+                        // ВКЛЮЧАЕМ ЗАМОК
+                        LAUNCH_LOCK = true;
+                        
+                        // Снимаем замок через 2 секунды (когда интерфейс уже сменится)
+                        setTimeout(function() { LAUNCH_LOCK = false; }, 2000);
+                        
+                        // Анимация нажатия
                         continueBtn.find('span').text('Загрузка...');
                         continueBtn.addClass('button--active');
                         
@@ -250,16 +251,14 @@
                         }, 20);
                     });
 
-                    // Вставка кнопки (ставим первой в списке)
+                    // Вставка кнопки на первое место
                     var buttonsContainer = render.find('.full-start-new__buttons, .full-start__buttons').first();
-                    
                     if (buttonsContainer.length) {
                         buttonsContainer.prepend(continueBtn);
                     } else {
                         render.find('.full-start__button').last().after(continueBtn);
                     }
 
-                    // Обновляем контроллер навигации
                     Lampa.Controller.toggle('content'); 
 
                 }, 100); 
@@ -267,12 +266,13 @@
         });
     }
 
+    // --- СТАРТ ПЛАГИНА ---
     function startPlugin() {
         window.plugin_continue_watch_ready = true;
         patchPlayer();
         cleanupOldParams();
         setupContinueButton();
-        console.log("[ContinueWatch] Plugin v9 Loaded (Optimized + Remote Fix)");
+        console.log("[ContinueWatch] Plugin v10 (Universal Touch/Remote Fix)");
     }
 
     if (!window.plugin_continue_watch_ready) {
