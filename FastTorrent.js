@@ -1,12 +1,12 @@
 (function() {
     'use strict';
 
-    console.log('[FastTorrentStart] 🚀 Плагин загружается (Optimized Version)...');
+    console.log('[FastTorrentStart] 🚀 Плагин загружается (With Overlay Animation)...');
 
     // ========== КОНФИГУРАЦИЯ ==========
     const PLUGIN_NAME = 'fast_torrent_start';
     const MAX_PRELOAD_CACHE = 50;
-    const MAX_FILE_CHECK_ATTEMPTS = 8; // Уменьшено с 12
+    const MAX_FILE_CHECK_ATTEMPTS = 8;
     const FILE_CHECK_DELAY = 1500;
     
     const defaultSettings = {
@@ -25,7 +25,7 @@
         anime_mode: true
     };
 
-    // ОПТИМИЗИРОВАННЫЕ KEYWORDS - убраны проблемные символы
+    // ОПТИМИЗИРОВАННЫЕ KEYWORDS
     const voiceCategoriesData = {
         'dubbing': { 
             name: 'Дубляж', 
@@ -97,9 +97,252 @@
     let currentSearchId = null;
     const compiledVoiceRegex = {};
     let settingsCache = null;
-    let fileCheckTimeouts = []; // Для отслеживания таймаутов
+    let fileCheckTimeouts = [];
+    let currentOverlay = null; // Для управления оверлеем
 
-    // ========== УЛУЧШЕННАЯ КОМПИЛЯЦИЯ REGEX С КЭШИРОВАНИЕМ ==========
+    // ========== СИСТЕМА ОВЕРЛЕЙ ДЛЯ АНИМАЦИИ ==========
+    function createOverlayStyles() {
+        if ($('#fts-overlay-styles').length) return;
+        $('head').append(`
+            <style id="fts-overlay-styles">
+                .fts-overlay {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(0, 0, 0, 0.85);
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: center;
+                    align-items: center;
+                    z-index: 99999;
+                    color: white;
+                    font-family: Arial, sans-serif;
+                    backdrop-filter: blur(10px);
+                    transition: opacity 0.3s ease;
+                }
+                
+                .fts-overlay-content {
+                    text-align: center;
+                    max-width: 80%;
+                    animation: fts-fadeInUp 0.5s ease-out;
+                }
+                
+                .fts-spinner {
+                    width: 60px;
+                    height: 60px;
+                    border: 4px solid rgba(255, 107, 53, 0.3);
+                    border-top: 4px solid #ff6b35;
+                    border-radius: 50%;
+                    animation: fts-spin 1s linear infinite;
+                    margin-bottom: 20px;
+                }
+                
+                .fts-overlay-title {
+                    font-size: 24px;
+                    font-weight: bold;
+                    margin-bottom: 10px;
+                    background: linear-gradient(45deg, #ff6b35, #f7931e);
+                    -webkit-background-clip: text;
+                    -webkit-text-fill-color: transparent;
+                    background-clip: text;
+                }
+                
+                .fts-overlay-text {
+                    font-size: 16px;
+                    opacity: 0.9;
+                    margin-bottom: 20px;
+                    line-height: 1.4;
+                }
+                
+                .fts-progress-bar {
+                    width: 200px;
+                    height: 4px;
+                    background: rgba(255, 255, 255, 0.2);
+                    border-radius: 2px;
+                    overflow: hidden;
+                    margin: 10px 0;
+                }
+                
+                .fts-progress-fill {
+                    height: 100%;
+                    background: linear-gradient(45deg, #ff6b35, #f7931e);
+                    border-radius: 2px;
+                    transition: width 0.3s ease;
+                    width: 0%;
+                }
+                
+                .fts-steps {
+                    display: flex;
+                    gap: 10px;
+                    margin-top: 20px;
+                }
+                
+                .fts-step {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 50%;
+                    background: rgba(255, 255, 255, 0.3);
+                    transition: all 0.3s ease;
+                }
+                
+                .fts-step.active {
+                    background: #ff6b35;
+                    transform: scale(1.2);
+                }
+                
+                .fts-cancel-button {
+                    margin-top: 20px;
+                    padding: 8px 16px;
+                    background: rgba(255, 255, 255, 0.1);
+                    border: 1px solid rgba(255, 255, 255, 0.3);
+                    border-radius: 20px;
+                    color: white;
+                    font-size: 14px;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                }
+                
+                .fts-cancel-button:hover {
+                    background: rgba(255, 255, 255, 0.2);
+                }
+                
+                @keyframes fts-spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+                
+                @keyframes fts-fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(30px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+                
+                @keyframes fts-pulse {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0.7; }
+                }
+                
+                .fts-pulse {
+                    animation: fts-pulse 2s infinite;
+                }
+            </style>
+        `);
+    }
+
+    function showOverlay(stage = 'search', additionalText = '') {
+        hideOverlay(); // Сначала скрываем предыдущий оверлей
+        
+        const stages = {
+            'search': { title: '🔍 Поиск торрентов', text: 'Ищем лучшие раздачи...' },
+            'adding': { title: '📥 Добавление торрента', text: 'Добавляем в TorrServer...' },
+            'files': { title: '📁 Проверка файлов', text: 'Получаем список файлов...' },
+            'season': { title: '🎬 Поиск сезона', text: additionalText || 'Ищем выбранный сезон...' },
+            'loading': { title: '⏳ Загрузка', text: additionalText || 'Пожалуйста, подождите...' }
+        };
+        
+        const currentStage = stages[stage] || stages.loading;
+        
+        currentOverlay = $(`
+            <div class="fts-overlay">
+                <div class="fts-overlay-content">
+                    <div class="fts-spinner"></div>
+                    <div class="fts-overlay-title">${currentStage.title}</div>
+                    <div class="fts-overlay-text">${currentStage.text}</div>
+                    <div class="fts-progress-bar">
+                        <div class="fts-progress-fill" style="width: ${
+                            stage === 'search' ? '30%' : 
+                            stage === 'adding' ? '60%' : 
+                            stage === 'files' ? '90%' : '40%'
+                        }"></div>
+                    </div>
+                    <div class="fts-steps">
+                        <div class="fts-step ${stage === 'search' ? 'active' : ''}"></div>
+                        <div class="fts-step ${stage === 'adding' ? 'active' : ''}"></div>
+                        <div class="fts-step ${stage === 'files' ? 'active' : ''}"></div>
+                    </div>
+                    <div class="fts-cancel-button">Отменить</div>
+                </div>
+            </div>
+        `);
+        
+        // Обработчик отмены
+        currentOverlay.find('.fts-cancel-button').on('click', function() {
+            hideOverlay();
+            resetButton();
+            Lampa.Noty.show('Операция отменена');
+        });
+        
+        // Закрытие по клику на фон (опционально)
+        currentOverlay.on('click', function(e) {
+            if (e.target === this) {
+                hideOverlay();
+                resetButton();
+                Lampa.Noty.show('Операция отменена');
+            }
+        });
+        
+        $('body').append(currentOverlay);
+        
+        // Анимация появления
+        setTimeout(() => {
+            if (currentOverlay) {
+                currentOverlay.css('opacity', '1');
+            }
+        }, 10);
+    }
+
+    function updateOverlay(stage, text) {
+        if (!currentOverlay) return;
+        
+        const stages = {
+            'search': { title: '🔍 Поиск торрентов', text: 'Ищем лучшие раздачи...' },
+            'adding': { title: '📥 Добавление торрента', text: 'Добавляем в TorrServer...' },
+            'files': { title: '📁 Проверка файлов', text: 'Получаем список файлов...' },
+            'season': { title: '🎬 Поиск сезона', text: text || 'Ищем выбранный сезон...' },
+            'loading': { title: '⏳ Загрузка', text: text || 'Пожалуйста, подождите...' }
+        };
+        
+        const currentStage = stages[stage] || stages.loading;
+        
+        currentOverlay.find('.fts-overlay-title').text(currentStage.title);
+        currentOverlay.find('.fts-overlay-text').text(currentStage.text);
+        currentOverlay.find('.fts-progress-fill').css('width', 
+            stage === 'search' ? '30%' : 
+            stage === 'adding' ? '60%' : 
+            stage === 'files' ? '90%' : '40%'
+        );
+        
+        // Обновляем шаги
+        currentOverlay.find('.fts-step').removeClass('active');
+        if (stage === 'search') {
+            currentOverlay.find('.fts-step').eq(0).addClass('active');
+        } else if (stage === 'adding') {
+            currentOverlay.find('.fts-step').eq(1).addClass('active');
+        } else if (stage === 'files') {
+            currentOverlay.find('.fts-step').eq(2).addClass('active');
+        }
+    }
+
+    function hideOverlay() {
+        if (currentOverlay) {
+            currentOverlay.css('opacity', '0');
+            setTimeout(() => {
+                if (currentOverlay) {
+                    currentOverlay.remove();
+                    currentOverlay = null;
+                }
+            }, 300);
+        }
+    }
+
+    // ========== УЛУЧШЕННАЯ КОМПИЛЯЦИЯ REGEX ==========
     function compileVoiceRegex() {
         const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         
@@ -114,17 +357,14 @@
                 
                 const escaped = escapeRegExp(word.toLowerCase().trim());
                 
-                // УЛУЧШЕННАЯ ЛОГИКА: для коротких слов используем границы слов
                 if (word.length <= 4 && /^[a-zа-я0-9]+$/i.test(word)) {
                     return `\\b${escaped}\\b`;
                 }
-                // Для слов с пробелами и символами используем более мягкий поиск
                 return escaped;
             }).filter(pattern => pattern !== '');
             
             try { 
                 compiledVoiceRegex[key] = new RegExp(patterns.join('|'), 'i');
-                console.log(`[FastTorrentStart] ✅ Regex скомпилирован для ${key}:`, compiledVoiceRegex[key]);
             } catch (e) { 
                 console.error(`[FastTorrentStart] ❌ Ошибка компиляции Regex для ${key}:`, e);
                 compiledVoiceRegex[key] = null; 
@@ -132,7 +372,6 @@
         }
     }
 
-    // ========== ОЧИСТКА ТАЙМАУТОВ ==========
     function clearAllTimeouts() {
         fileCheckTimeouts.forEach(timeoutId => {
             if (timeoutId) clearTimeout(timeoutId);
@@ -146,7 +385,6 @@
         Lampa.Storage.listener.follow('change', function(e) { 
             if (e.name.startsWith('fts_')) {
                 settingsCache = null;
-                // Перекомпилируем Regex при изменении настроек
                 compileVoiceRegex();
             }
         });
@@ -285,7 +523,8 @@
                 .fts-loader { 
                     animation: fts-spin 1s linear infinite; 
                 }
-            </style>`);
+            </style>
+        `);
     }
 
     function addFastTorrentButton(movie) {
@@ -333,6 +572,13 @@
         button.on('hover:enter click', function(e) {
             if (buttonClickLock) return;
             console.log('[FastTorrentStart] 🖱️ Клик по кнопке Fast Torrent');
+            
+            // Анимация нажатия кнопки
+            button.css('transform', 'scale(0.95)');
+            setTimeout(() => {
+                if (button.length) button.css('transform', 'scale(1)');
+            }, 150);
+            
             handleButtonClick(movie);
         });
         
@@ -363,7 +609,6 @@
         if (voiceType === 'any' || !torrent || !torrent.Title) return true;
         
         const regex = compiledVoiceRegex[voiceType];
-        // ЗАЩИТА: проверка на null и корректность regex
         return regex && typeof regex.test === 'function' ? regex.test(torrent.Title) : true;
     }
 
@@ -374,10 +619,8 @@
         let startIndex = qualityLevels.indexOf(settings.quality);
         if (startIndex === -1) startIndex = 2;
         
-        // Клонируем и фильтруем торренты
         let sortedTorrents = [...torrents].filter(t => t && typeof t === 'object' && t.Title);
         
-        // Сортировка
         if (settings.sort_by === 'seeders') {
             sortedTorrents.sort((a, b) => (b.Seeders || 0) - (a.Seeders || 0));
         } else if (settings.sort_by === 'size') {
@@ -386,7 +629,6 @@
             sortedTorrents.sort((a, b) => new Date(b.PublishDate || 0) - new Date(a.PublishDate || 0));
         }
         
-        // Приоритеты озвучки
         let voicePriorities = settings.cascade_voice ? 
             (voiceCascade[settings.voice_priority] || [settings.voice_priority]) : 
             [settings.voice_priority];
@@ -396,7 +638,6 @@
             if (!voicePriorities.length) voicePriorities = ['multi']; 
         }
         
-        // Поиск по приоритетам
         for (let voiceType of voicePriorities) {
             for (let i = startIndex; i < qualityLevels.length; i++) {
                 const quality = qualityLevels[i];
@@ -411,7 +652,6 @@
             }
         }
         
-        // Fallback - первый подходящий по сидам
         return sortedTorrents[0] && 
                (settings.min_seeders === 0 || (sortedTorrents[0].Seeders || 0) >= settings.min_seeders) ? 
                sortedTorrents[0] : null;
@@ -495,6 +735,9 @@
     function handleButtonClick(movie) {
         console.log('[FastTorrentStart] 🚀 Запуск быстрого поиска');
         
+        // Показываем оверлей сразу при клике
+        showOverlay('search');
+        
         if (movie.number_of_seasons) {
             setButtonLoading('Сезоны...');
             setTimeout(() => showSeasonSelectorWithoutTorrent(movie), 50);
@@ -519,10 +762,12 @@
                 if (bestTorrent) {
                     processBestTorrentForMovie(movie, bestTorrent);
                 } else {
+                    hideOverlay();
                     Lampa.Noty.show('Не найдено подходящих раздач');
                     resetButton();
                 }
             } else {
+                hideOverlay();
                 Lampa.Noty.show('Торренты не найдены');
                 resetButton();
             }
@@ -530,10 +775,12 @@
     }
 
     function showSeasonSelectorWithoutTorrent(movie) {
+        hideOverlay(); // Скрываем оверлей перед показом селектора
+        
         let totalSeasons = movie.number_of_seasons || 1;
         
         if (totalSeasons === 1) {
-            setButtonLoading('Поиск...');
+            showOverlay('season', 'Поиск сезона 1...');
             findTorrentForSeason(movie, 1);
             return;
         }
@@ -552,7 +799,7 @@
             items: seasonItems,
             onSelect: (item) => {
                 Lampa.Controller.toggle('content');
-                setButtonLoading('S' + item.season + '...');
+                showOverlay('season', `Поиск сезона ${item.season}...`);
                 findTorrentForSeason(movie, item.season);
             },
             onBack: () => {
@@ -564,11 +811,9 @@
     }
 
     function findTorrentForSeason(movie, season) {
-        setButtonLoading('S' + season + ' Поиск...');
-        const isAnimeContent = isAnime(movie);
-        
         searchTorrentsWithCascade(movie, (torrents) => {
             if (!torrents?.length) {
+                hideOverlay();
                 Lampa.Noty.show('Торренты не найдены');
                 resetButton();
                 return;
@@ -577,7 +822,7 @@
             const settings = getSettings();
             let seasonTorrents;
             
-            if (isAnimeContent && settings.anime_mode) {
+            if (isAnime(movie) && settings.anime_mode) {
                 const animePatterns = [
                     new RegExp(`\\[s0*${season}\\]`, 'i'),
                     new RegExp(`\\(s0*${season}\\)`, 'i'),
@@ -624,16 +869,19 @@
             }
             
             if (seasonTorrents.length === 0) {
+                hideOverlay();
                 Lampa.Noty.show(`Сезон ${season} не найден`);
                 resetButton();
                 return;
             }
             
-            const bestTorrent = findBestTorrent(seasonTorrents, settings, isAnimeContent);
+            const bestTorrent = findBestTorrent(seasonTorrents, settings, isAnime(movie));
             if (bestTorrent) {
                 Lampa.Torrent.start(bestTorrent, movie);
+                hideOverlay();
                 resetButton();
             } else {
+                hideOverlay();
                 Lampa.Noty.show(`Подходящий торрент не найден`);
                 resetButton();
             }
@@ -642,6 +890,7 @@
 
     function processBestTorrentForMovie(movie, bestTorrent) {
         if (!Lampa.Torserver.url()) {
+            hideOverlay();
             Lampa.Noty.show('TorrServer не настроен');
             resetButton();
             return;
@@ -649,7 +898,8 @@
         
         const processId = Date.now();
         currentProcessId = processId;
-        setButtonLoading('Добавление...');
+        
+        updateOverlay('adding'); // Обновляем оверлей для стадии добавления
         
         let magnetLink = bestTorrent.Link || bestTorrent.MagnetUri;
         magnetLink = addTrackersToMagnet(magnetLink, defaultTrackers);
@@ -660,10 +910,12 @@
             poster: movie.poster_path ? Lampa.Api.img(movie.poster_path) : '' 
         }, (hash_data) => {
             if (currentProcessId !== processId) return;
-            setButtonLoading('Файлы...');
+            
+            updateOverlay('files'); // Обновляем для стадии проверки файлов
             checkFilesViaLampa(hash_data.hash, movie, processId, 1);
         }, () => {
             if (currentProcessId !== processId) return;
+            hideOverlay();
             Lampa.Noty.show('Ошибка добавления торрента');
             resetButton();
         });
@@ -673,6 +925,7 @@
         if (currentProcessId !== processId) return;
         if (typeof Lampa.Activity !== 'undefined' && !Lampa.Activity.active()) return;
         if (typeof Lampa.Torserver.files !== 'function') {
+            hideOverlay();
             Lampa.Noty.show('Ошибка API TorrServer');
             resetButton();
             return;
@@ -689,22 +942,29 @@
             if (files && files.length > 0) {
                 launchPlayer(movie, { hash: hash }, files);
             } else if (attempt < MAX_FILE_CHECK_ATTEMPTS) {
+                // Обновляем текст с номером попытки
+                updateOverlay('files', `Проверка файлов... (попытка ${attempt}/${MAX_FILE_CHECK_ATTEMPTS})`);
+                
                 const timeoutId = setTimeout(() => {
                     checkFilesViaLampa(hash, movie, processId, attempt + 1);
                 }, FILE_CHECK_DELAY);
                 fileCheckTimeouts.push(timeoutId);
             } else {
+                hideOverlay();
                 Lampa.Noty.show('Файлы не найдены в торренте');
                 resetButton();
             }
         }, () => {
             if (currentProcessId !== processId) return;
             if (attempt < MAX_FILE_CHECK_ATTEMPTS) {
+                updateOverlay('files', `Повторная проверка... (попытка ${attempt}/${MAX_FILE_CHECK_ATTEMPTS})`);
+                
                 const timeoutId = setTimeout(() => {
                     checkFilesViaLampa(hash, movie, processId, attempt + 1);
                 }, FILE_CHECK_DELAY);
                 fileCheckTimeouts.push(timeoutId);
             } else {
+                hideOverlay();
                 Lampa.Noty.show('Ошибка получения файлов');
                 resetButton();
             }
@@ -717,16 +977,15 @@
             const videoFiles = files.filter(f => f && f.path && videoExts.includes(f.path.split('.').pop().toLowerCase()));
             
             if (!videoFiles.length) {
+                hideOverlay();
                 Lampa.Noty.show('Видео файлы не найдены');
                 resetButton();
                 return;
             }
             
-            // Сортируем по размеру (предполагая, что больший файл = лучше качество)
             videoFiles.sort((a, b) => (b.length || 0) - (a.length || 0));
             const mainFile = videoFiles[0];
             
-            // Подготавливаем субтитры
             const subExts = ['srt', 'vtt', 'ass'];
             const subtitles = files
                 .filter(f => f && f.path && subExts.includes(f.path.split('.').pop().toLowerCase()))
@@ -748,9 +1007,13 @@
                 subtitles: subtitles
             };
             
-            // Сохраняем в историю
             if (movie.id) Lampa.Favorite.add('history', movie, 100);
             saveStreamParams(movie, hash_data, mainFile);
+            
+            // Скрываем оверлей с небольшой задержкой для плавности
+            setTimeout(() => {
+                hideOverlay();
+            }, 300);
             
             resetButton();
             
@@ -760,6 +1023,7 @@
             console.log('[FastTorrentStart] ✅ Плеер успешно запущен');
         } catch (error) {
             console.error('[FastTorrentStart] ❌ Ошибка запуска плеера:', error);
+            hideOverlay();
             Lampa.Noty.show('Ошибка запуска плеера');
             resetButton();
         }
@@ -781,7 +1045,7 @@
     function resetButton() {
         buttonClickLock = false;
         currentProcessId = null;
-        clearAllTimeouts(); // Очищаем все таймауты
+        clearAllTimeouts();
         
         if (currentButton) {
             currentButton.removeClass('button--loading');
@@ -798,6 +1062,7 @@
         currentProcessId = null;
         currentSearchId = null;
         clearAllTimeouts();
+        hideOverlay();
         
         if (currentButton) {
             currentButton.remove();
@@ -816,18 +1081,17 @@
         
         try {
             addButtonStyles();
+            createOverlayStyles(); // Добавляем стили для оверлея
             compileVoiceRegex();
             initContinueWatch();
             initSettings();
             
-            // Следим за открытием страницы с контентом
             Lampa.Listener.follow('full', function(e) { 
                 if (e.type === 'complite' && e.data?.movie) {
                     addFastTorrentButton(e.data.movie);
                 }
             });
             
-            // Если уже открыта страница с контентом
             if (Lampa.Activity.active() && Lampa.Activity.active().component === 'full') {
                 const activity = Lampa.Activity.active();
                 if (activity.activity && activity.activity.movie) {
@@ -835,17 +1099,15 @@
                 }
             }
 
-            // Очистка при закрытии
             Lampa.Activity.listener.follow('backward', cleanup);
             Lampa.Listener.follow('clear', cleanup);
             
-            console.log('[FastTorrentStart] 🎉 Плагин успешно загружен и готов к работе');
+            console.log('[FastTorrentStart] 🎉 Плагин успешно загружен с системой оверлеев');
         } catch (error) {
             console.error('[FastTorrentStart] ❌ Ошибка инициализации:', error);
         }
     }
 
-    // Запуск плагина
     if (window.Lampa) {
         startPlugin();
     } else {
