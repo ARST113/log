@@ -84,6 +84,35 @@
     let overlayPrecreated = false;
     let activeTorrentRequests = new Set();
 
+    // ========== ПРОВЕРКА TORRSERVER ==========
+    function checkTorrServerAvailability() {
+        return new Promise((resolve) => {
+            if (!Lampa.Torserver || !Lampa.Torserver.url()) {
+                console.log('[FTS-DEBUG] ❌ TorrServer не настроен в Lampa');
+                resolve(false);
+                return;
+            }
+
+            const torrServerUrl = Lampa.Torserver.url();
+            console.log('[FTS-DEBUG] 🔍 Проверяем TorrServer:', torrServerUrl);
+
+            // Пробуем сделать простой запрос к TorrServer
+            $.ajax({
+                url: torrServerUrl,
+                type: 'GET',
+                timeout: 5000,
+                success: function(data) {
+                    console.log('[FTS-DEBUG] ✅ TorrServer доступен');
+                    resolve(true);
+                },
+                error: function(xhr, status, error) {
+                    console.log('[FTS-DEBUG] ❌ TorrServer недоступен:', error);
+                    resolve(false);
+                }
+            });
+        });
+    }
+
     // ========== УЛУЧШЕННАЯ СИСТЕМА ОТЛАДКИ ==========
     function debugLog(message, data = null) {
         console.log(`[FastTorrentStart] ${message}`, data || '');
@@ -372,6 +401,7 @@
         waitForTorrServer((ready) => {
             if (!ready) {
                 removeActiveRequest(requestId);
+                Lampa.Noty.show('❌ TorrServer не доступен. Проверьте настройки.');
                 error(new Error('TorrServer не доступен'));
                 return;
             }
@@ -380,11 +410,16 @@
                 return;
             }
 
+            console.log('[FTS-DEBUG] 📤 Отправка торрента в TorrServer...');
+            
             Lampa.Torserver.hash(params, (hash_data) => {
                 removeActiveRequest(requestId);
+                console.log('[FTS-DEBUG] ✅ Торрент успешно добавлен в TorrServer');
                 success(hash_data);
             }, (err) => {
                 removeActiveRequest(requestId);
+                console.error('[FTS-DEBUG] ❌ Ошибка добавления торрента:', err);
+                Lampa.Noty.show('Ошибка добавления торрента в TorrServer');
                 error(err);
             });
         });
@@ -710,7 +745,8 @@
             </div>
         `);
         
-        button.on('click', function(e) {
+        // ИСПОЛЬЗУЕМ hover:enter ДЛЯ ПУЛЬТА И click ДЛЯ МЫШИ
+        button.on('hover:enter click', function(e) {
             e.preventDefault();
             e.stopPropagation();
             console.log('[FTS-DEBUG] 🖱️ Клик по кнопке');
@@ -910,8 +946,24 @@
         });
     }
 
-    function handleButtonClick(movie, isSeriesContent) {
+    async function handleButtonClick(movie, isSeriesContent) {
         console.log('[FTS-DEBUG] 🚀 Запуск обработки:', movie.title, isSeriesContent ? 'СЕРИАЛ' : 'ФИЛЬМ');
+        
+        // Проверяем доступность TorrServer перед началом
+        const isTorrServerAvailable = await checkTorrServerAvailability();
+        
+        if (!isTorrServerAvailable) {
+            hideOverlay();
+            Lampa.Noty.show(`
+                ❌ TorrServer недоступен!
+                Проверьте:
+                1. Запущен ли TorrServer
+                2. Адрес в настройках Lampa
+                3. Сеть и порты
+            `);
+            resetButton();
+            return;
+        }
         
         updateOverlay('search');
         
@@ -997,6 +1049,8 @@
     }
 
     function findTorrentForSeason(movie, season) {
+        console.log('[FTS-DEBUG] 🔍 Поиск торрентов для сезона:', season);
+        
         searchTorrentsWithCascade(movie, (torrents) => {
             if (!torrents?.length) {
                 hideOverlay();
@@ -1006,77 +1060,126 @@
             }
             
             const settings = getSettings();
-            let seasonTorrents;
+            const isAnimeContent = isAnime(movie);
             
-            if (isAnime(movie) && settings.anime_mode) {
-                const animePatterns = [
-                    new RegExp(`\\[s0*${season}\\]`, 'i'),
-                    new RegExp(`\\(s0*${season}\\)`, 'i'),
-                    new RegExp(`season\\s*0*${season}[\\s\\]\\)]`, 'i'),
-                    new RegExp(`s0*${season}e\\d+`, 'i'),
-                    new RegExp(`\\s${season}\\s+сезон`, 'i'),
-                    new RegExp(`сезон\\s+${season}`, 'i')
-                ];
-                
-                const isSingleSeason = (season === 1 && (movie.number_of_seasons || 1) === 1);
-                seasonTorrents = torrents.filter(torrent => {
-                    const title = (torrent.Title || '');
-                    if (isSingleSeason) return true;
-                    return animePatterns.some(p => p.test(title));
-                });
-            } else {
-                const seasonExtractPatterns = [
-                    /\((\d+)\s+сезон/i,
-                    /\((\d+)-й\s+сезон/i,
-                    /^[^\d]*сезон:\s*(\d+)/i,
-                    /season\s+(\d+)/i
-                ];
-                
-                const includePatterns = [
-                    new RegExp(`s0*${season}e\\d+`, 'i'),
-                    new RegExp(`\\[s0*${season}\\]`, 'i')
-                ];
-                
-                seasonTorrents = torrents.filter(torrent => {
-                    const title = (torrent.Title || '');
-                    let foundSeason = null;
-                    
-                    for (let pattern of seasonExtractPatterns) {
-                        const match = title.match(pattern);
-                        if (match) {
-                            foundSeason = parseInt(match[1]);
-                            break;
-                        }
-                    }
-                    
-                    if (foundSeason !== null && foundSeason !== season) {
-                        return false;
-                    }
-                    
-                    if (foundSeason === season) {
-                        return true;
-                    }
-                    
-                    return includePatterns.some(p => p.test(title));
-                });
-            }
+            console.log(`[FTS-DEBUG] Фильтрация ${torrents.length} торрентов для сезона ${season}, аниме: ${isAnimeContent}`);
+            
+            // УЛУЧШЕННАЯ ФИЛЬТРАЦИЯ ДЛЯ АНИМЕ С КАСКАДОМ ОЗВУЧКИ
+            let seasonTorrents = filterTorrentsBySeason(torrents, season, isAnimeContent);
             
             if (seasonTorrents.length === 0) {
+                console.log('[FTS-DEBUG] ❌ Не найдено торрентов для сезона, пробуем каскад озвучки');
+                
+                // Пробуем найти торренты с другими озвучками
+                const alternativeVoicePriorities = getAlternativeVoicePriorities(settings.voice_priority);
+                
+                for (let voiceType of alternativeVoicePriorities) {
+                    console.log(`[FTS-DEBUG] 🔄 Пробуем озвучку: ${voiceType}`);
+                    
+                    // Временно меняем приоритет озвучки
+                    const tempSettings = {...settings, voice_priority: voiceType};
+                    const bestTorrent = findBestTorrent(torrents, tempSettings, isAnimeContent);
+                    
+                    if (bestTorrent) {
+                        console.log(`[FTS-DEBUG] ✅ Найден торрент с альтернативной озвучкой: ${voiceType}`);
+                        launchTorrentsComponent(movie, bestTorrent, season);
+                        return;
+                    }
+                }
+                
                 hideOverlay();
                 Lampa.Noty.show(`Сезон ${season} не найден`);
                 resetButton();
                 return;
             }
             
-            const bestTorrent = findBestTorrent(seasonTorrents, settings, isAnime(movie));
+            const bestTorrent = findBestTorrent(seasonTorrents, settings, isAnimeContent);
             if (bestTorrent) {
+                console.log('[FTS-DEBUG] ✅ Найден подходящий торрент для сезона');
                 launchTorrentsComponent(movie, bestTorrent, season);
             } else {
+                console.log('[FTS-DEBUG] ❌ Не найден подходящий торрент, пробуем каскад озвучки');
+                
+                // Пробуем найти с другими озвучками
+                const alternativeVoicePriorities = getAlternativeVoicePriorities(settings.voice_priority);
+                
+                for (let voiceType of alternativeVoicePriorities) {
+                    console.log(`[FTS-DEBUG] 🔄 Пробуем озвучку: ${voiceType}`);
+                    
+                    const tempSettings = {...settings, voice_priority: voiceType};
+                    const bestAlternativeTorrent = findBestTorrent(seasonTorrents, tempSettings, isAnimeContent);
+                    
+                    if (bestAlternativeTorrent) {
+                        console.log(`[FTS-DEBUG] ✅ Найден торрент с альтернативной озвучкой: ${voiceType}`);
+                        launchTorrentsComponent(movie, bestAlternativeTorrent, season);
+                        return;
+                    }
+                }
+                
                 hideOverlay();
                 Lampa.Noty.show(`Подходящий торрент не найден`);
                 resetButton();
             }
         });
+    }
+
+    function filterTorrentsBySeason(torrents, season, isAnimeContent) {
+        return torrents.filter(torrent => {
+            const title = (torrent.Title || '').toLowerCase();
+            
+            if (isAnimeContent) {
+                // УЛУЧШЕННЫЕ ПАТТЕРНЫ ДЛЯ АНИМЕ
+                const animePatterns = [
+                    new RegExp(`\\[s${season.toString().padStart(2, '0')}\\]`, 'i'),
+                    new RegExp(`s${season.toString().padStart(2, '0')}`, 'i'),
+                    new RegExp(`season\\s*${season}`, 'i'),
+                    new RegExp(`\\s${season}\\s+сезон`, 'i'),
+                    new RegExp(`сезон\\s+${season}`, 'i'),
+                    new RegExp(`\\[${season} сезон\\]`, 'i'),
+                    new RegExp(`\\(${season} сезон\\)`, 'i')
+                ];
+                
+                // Для первого сезона аниме часто не указывают номер
+                if (season === 1) {
+                    animePatterns.push(
+                        /\[s01\]/i,
+                        /season\s*1/i,
+                        /(^|[^\d])1\s+сезон/i
+                    );
+                    
+                    // Исключаем торренты с явным указанием других сезонов
+                    const otherSeasonsPattern = /\[s(0[2-9]|[1-9][0-9])\]/i;
+                    if (otherSeasonsPattern.test(title)) {
+                        return false;
+                    }
+                }
+                
+                return animePatterns.some(pattern => pattern.test(title));
+            } else {
+                // ПАТТЕРНЫ ДЛЯ ОБЫЧНЫХ СЕРИАЛОВ
+                const seriesPatterns = [
+                    new RegExp(`s${season.toString().padStart(2, '0')}`, 'i'),
+                    new RegExp(`season\\s*${season}`, 'i'),
+                    new RegExp(`\\s${season}\\s+сезон`, 'i'),
+                    new RegExp(`сезон\\s+${season}`, 'i'),
+                    new RegExp(`\\[сезон ${season}\\]`, 'i')
+                ];
+                
+                return seriesPatterns.some(pattern => pattern.test(title));
+            }
+        });
+    }
+
+    function getAlternativeVoicePriorities(currentVoice) {
+        const priorities = {
+            'dubbing': ['multi', 'single', 'original'],
+            'multi': ['dubbing', 'single', 'original'], 
+            'single': ['multi', 'dubbing', 'original'],
+            'original': ['dubbing', 'multi', 'single'],
+            'any': ['dubbing', 'multi', 'single']
+        };
+        
+        return priorities[currentVoice] || ['multi', 'dubbing', 'single'];
     }
 
     function launchTorrentsComponent(movie, bestTorrent, season) {
