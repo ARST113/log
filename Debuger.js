@@ -11,6 +11,9 @@
     var SAVE_TIMEOUT = null;
     var CURRENT_PLAYLIST = null;
     var CURRENT_HASH = null;
+    var LAST_SAVED_POSITION = null;
+    var SAVE_INTERVAL = null;
+    var PLAYER_LISTENERS_ADDED = false;
 
     // ========================================================================
     // 1. СИСТЕМА КЭШИРОВАНИЯ И СИНХРОНИЗАЦИИ
@@ -133,28 +136,60 @@
         return url + '?' + query.join('&');
     }
 
-    // НОВАЯ ФУНКЦИЯ: сохранение позиции при переключении
-    function saveCurrentPosition() {
-        if (CURRENT_HASH && Lampa.Player.active()) {
-            try {
-                var time = Lampa.Player.time();
-                var duration = Lampa.Player.duration();
+    // ИСПРАВЛЕННАЯ ФУНКЦИЯ: сохранение позиции с использованием Lampa.PlayerVideo.video()
+    function saveCurrentPosition(force) {
+        if (!CURRENT_HASH) return;
+        
+        try {
+            var video = Lampa.PlayerVideo.video();
+            if (!video) return;
+            
+            var currentTime = video.currentTime || 0;
+            var duration = video.duration || 0;
+            
+            if (!duration || duration < 10) return;
+            
+            var percent = Math.round((currentTime / duration) * 100);
+            
+            // Debouncing logic
+            if (!force && LAST_SAVED_POSITION) {
+                var timeDiff = Math.abs(currentTime - LAST_SAVED_POSITION.time);
+                var percentDiff = Math.abs(percent - LAST_SAVED_POSITION.percent);
                 
-                if (time > 0 && duration > 0) {
-                    var percent = (time / duration) * 100;
-                    console.log("[ContinueWatch] Saving position for", CURRENT_HASH, "time:", time, "duration:", duration, "percent:", percent);
-                    
-                    Lampa.Timeline.update({
-                        hash: CURRENT_HASH,
-                        time: time,
-                        duration: duration,
-                        percent: percent
-                    });
-                }
-            } catch (e) {
-                console.log("[ContinueWatch] Error saving position:", e);
+                if (timeDiff < 10 && percentDiff < 2) return;
             }
+            
+            console.log("[ContinueWatch] Saving position for", CURRENT_HASH, "time:", currentTime, "percent:", percent);
+            
+            Lampa.Timeline.update(CURRENT_HASH, {
+                duration: duration,
+                time: currentTime,
+                percent: percent
+            });
+            
+            LAST_SAVED_POSITION = { time: currentTime, percent: percent };
+        } catch (e) {
+            console.log("[ContinueWatch] Error saving position:", e);
         }
+    }
+
+    // Функция для обновления хэша при смене эпизода
+    function updateCurrentHash(movie, season, episode) {
+        if (!movie) return;
+        
+        var title = movie.number_of_seasons ? 
+            movie.original_name || movie.original_title || movie.name || movie.title : 
+            movie.original_title || movie.original_name || movie.title || movie.name;
+        
+        if (season && episode) {
+            var separator = season > 10 ? ':' : '';
+            CURRENT_HASH = Lampa.Utils.hash([season, separator, episode, title].join(''));
+        } else {
+            CURRENT_HASH = Lampa.Utils.hash(title);
+        }
+        
+        console.log("[ContinueWatch] Updated CURRENT_HASH to:", CURRENT_HASH);
+        LAST_SAVED_POSITION = null; // Сбрасываем сохраненную позицию
     }
 
     // Улучшенная функция создания плейлиста
@@ -292,6 +327,15 @@
         }
     }
 
+    // Очистка интервалов и обработчиков
+    function cleanupPlayerListeners() {
+        if (SAVE_INTERVAL) {
+            clearInterval(SAVE_INTERVAL);
+            SAVE_INTERVAL = null;
+        }
+        PLAYER_LISTENERS_ADDED = false;
+    }
+
     // МОДИФИЦИРОВАННАЯ ФУНКЦИЯ: запуск плеера с улучшенным управлением плейлистом
     function launchPlayer(movie, params) {  
         console.log("[ContinueWatch] Launching player with params:", params);
@@ -299,22 +343,13 @@
         var url = buildStreamUrl(params);  
         if (!url) return;  
           
-        var title = movie.number_of_seasons ?   
-            movie.original_name || movie.original_title || movie.name || movie.title :   
-            movie.original_title || movie.original_name || movie.title || movie.name;  
+        // Обновляем текущий хэш
+        updateCurrentHash(movie, params.season, params.episode);
           
-        var hash = Lampa.Utils.hash(title);  
-        if (params.season && params.episode) {  
-            var separator = params.season > 10 ? ':' : '';  
-            hash = Lampa.Utils.hash([params.season, separator, params.episode, title].join(''));  
-        }  
-          
-        CURRENT_HASH = hash; // Сохраняем текущий хэш для сохранения позиции
-          
-        var view = Lampa.Timeline.view(hash);  
+        var view = Lampa.Timeline.view(CURRENT_HASH);  
         if (view) {  
             view.handler = function (percent, time, duration) {  
-                Lampa.Timeline.update({ hash: hash, percent: percent, time: time, duration: duration });  
+                Lampa.Timeline.update(CURRENT_HASH, { percent: percent, time: time, duration: duration });  
             };  
         }  
           
@@ -330,6 +365,9 @@
           
         if (view && view.percent > 0) Lampa.Noty.show('Восстанавливаем позицию...');  
         
+        // Очищаем старые обработчики
+        cleanupPlayerListeners();
+        
         // Запускаем плеер
         Lampa.Player.play(playerData);
         
@@ -343,7 +381,7 @@
                     CURRENT_PLAYLIST = playlist;
                     Lampa.Player.playlist(playlist);
                     
-                    // Добавляем обработчики для сохранения позиции при переключении
+                    // Дополнительная проверка через секунду
                     setTimeout(function() {
                         if (Lampa.PlayerPlaylist && Lampa.PlayerPlaylist.get) {
                             var currentPlaylist = Lampa.PlayerPlaylist.get();
@@ -357,19 +395,60 @@
             });
         }
         
-        // Добавляем обработчик для сохранения позиции при переключении
-        Lampa.Player.listener.follow('change', function(){
-            setTimeout(saveCurrentPosition, 100);
-        });
-        
-        // Сохраняем позицию при остановке
-        Lampa.Player.listener.follow('stop', function(){
-            saveCurrentPosition();
-        });
+        // Настраиваем обработчики для сохранения позиции
+        setupPlayerListeners(movie);
           
         Lampa.Player.callback(function() {  
             Lampa.Controller.toggle('content');  
         });
+    }
+
+    // ИСПРАВЛЕННАЯ ФУНКЦИЯ: настройка обработчиков плеера
+    function setupPlayerListeners(movie) {
+        if (PLAYER_LISTENERS_ADDED) return;
+        
+        // Обработчик изменения эпизода
+        function handlePlayerChange() {
+            console.log("[ContinueWatch] Player change event");
+            // Сохраняем позицию перед сменой эпизода
+            saveCurrentPosition(true);
+            
+            // Обновляем хэш для нового эпизода
+            setTimeout(function() {
+                // Пытаемся получить текущий элемент из плейлиста
+                if (Lampa.PlayerPlaylist && Lampa.PlayerPlaylist.current) {
+                    var current = Lampa.PlayerPlaylist.current();
+                    if (current) {
+                        updateCurrentHash(movie, current.season, current.episode);
+                        console.log("[ContinueWatch] Episode changed to S" + current.season + "E" + current.episode);
+                    }
+                }
+            }, 100);
+        }
+        
+        // Обработчик остановки плеера
+        function handlePlayerStop() {
+            console.log("[ContinueWatch] Player stop event");
+            // Сохраняем позицию при остановке
+            saveCurrentPosition(true);
+            // Очищаем интервалы
+            cleanupPlayerListeners();
+        }
+        
+        // Добавляем обработчики
+        Lampa.Player.listener.follow('change', handlePlayerChange);
+        Lampa.Player.listener.follow('stop', handlePlayerStop);
+        
+        // Периодическое сохранение позиции
+        SAVE_INTERVAL = setInterval(function() {
+            var video = Lampa.PlayerVideo.video();
+            // Сохраняем, если видео есть и оно не на паузе
+            if (video && !video.paused) {
+                saveCurrentPosition(false);
+            }
+        }, 5000); // Сохраняем каждые 5 секунд
+        
+        PLAYER_LISTENERS_ADDED = true;
     }
 
     function patchPlayer() {
@@ -388,7 +467,7 @@
                             hash = Lampa.Utils.hash(baseTitle);
                         }
                         if (hash) {
-                            CURRENT_HASH = hash; // Обновляем текущий хэш
+                            CURRENT_HASH = hash;
                             
                             var matchFile = params.url && params.url.match(/\/stream\/([^?]+)/);
                             var matchLink = params.url && params.url.match(/[?&]link=([^&]+)/);
@@ -504,7 +583,7 @@
                     }
 
                     Lampa.Controller.toggle('content'); 
-                    console.log("[ContinueWatch] v27 (Fixed Position Saving) - Button added");
+                    console.log("[ContinueWatch] v31 (Fixed PlayerVideo Methods) - Button added");
 
                 }, 100); 
             }
