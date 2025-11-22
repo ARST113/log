@@ -94,7 +94,6 @@
         }, 5000);
     }
 
-    // ПЕРЕРАБОТАННАЯ ФУНКЦИЯ: всегда использует последний эпизод из нашего хранилища
     function getStreamParams(movie) {
         if (!movie) return null;
         
@@ -156,11 +155,10 @@
         var query = [];
         if (params.torrent_link) query.push('link=' + params.torrent_link);
         query.push('index=' + (params.file_index || 0));
-        query.push(Lampa.Storage.field('torrserver_preload') ? 'preload' : 'play');
+        query.push('play');
         return url + '?' + query.join('&');
     }
 
-    // Функция для обновления хэша при смене эпизода
     function updateCurrentHash(movie, season, episode) {
         if (!movie) return;
         
@@ -178,7 +176,6 @@
         console.log("[ContinueWatch] Updated CURRENT_HASH to:", CURRENT_HASH, "for S" + season + "E" + episode);
     }
 
-    // НОВАЯ ФУНКЦИЯ: получение информации о текущем эпизоде из URL
     function getCurrentEpisodeFromUrl(url) {
         if (!url) return null;
         
@@ -186,7 +183,6 @@
             var match = url.match(/\/stream\/([^?]+)/);
             if (match) {
                 var filename = decodeURIComponent(match[1]);
-                // Парсим название файла для извлечения сезона и эпизода
                 var seasonMatch = filename.match(/S(\d+)/i);
                 var episodeMatch = filename.match(/E(\d+)/i);
                 
@@ -204,11 +200,9 @@
         return null;
     }
 
-    // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Установка handler для timeline
     function setupTimelineHandler() {
         if (!CURRENT_HASH) return;
         
-        // Получаем актуальный view для текущего хэша
         CURRENT_TIMELINE_VIEW = Lampa.Timeline.view(CURRENT_HASH);
         
         if (CURRENT_TIMELINE_VIEW) {
@@ -226,7 +220,7 @@
         }
     }
 
-    // Улучшенная функция создания плейлиста
+    // ВОССТАНОВЛЕННАЯ ФУНКЦИЯ: полная загрузка эпизодов из TorrServer
     function buildPlaylist(movie, currentParams, currentUrl, callback) {  
         console.log("[ContinueWatch] Building playlist for", movie.original_name, "season", currentParams.season);
         
@@ -257,7 +251,7 @@
                     url: buildStreamUrl(p)
                 };  
                   
-                // Используем точный URL для текущего эпизода
+                // Для текущего эпизода используем точный URL
                 if (p.episode === currentParams.episode) {
                     item.url = currentUrl;
                     console.log("[ContinueWatch] Using current URL for episode", p.episode);
@@ -267,85 +261,106 @@
             }  
         }
         
-        // Если недостаточно эпизодов, загружаем из TorrServer
-        if (playlist.length <= 1 && currentParams.torrent_link) {
-            console.log("[ContinueWatch] Loading additional episodes from TorrServer");
-            
-            Lampa.Torserver.files(currentParams.torrent_link, function(json) {
-                console.log("[ContinueWatch] TorrServer files response received");
+        // ЗАГРУЖАЕМ ВСЕ ЭПИЗОДЫ ИЗ TORRSERVER ДЛЯ ПОЛНОГО ПЛЕЙЛИСТА
+        if (currentParams.torrent_link) {
+            console.log("[ContinueWatch] Loading ALL episodes from TorrServer for complete playlist");
+
+            Lampa.Torserver.hash({
+                link: currentParams.torrent_link,
+                title: movie.title || movie.name,
+                poster: movie.poster_path,
+                data: {
+                    lampa: true,
+                    movie: movie
+                }
+            }, function(torrent) {
+                console.log("[ContinueWatch] Got torrent hash:", torrent.hash);
                 
-                if (json && json.file_stats && json.file_stats.length > 0) {
-                    console.log("[ContinueWatch] Processing", json.file_stats.length, "files");
+                // Получаем список файлов
+                Lampa.Torserver.files(torrent.hash, function(json) {
+                    console.log("[ContinueWatch] TorrServer files response received");
                     
-                    var addedEpisodes = 0;
-                    
-                    json.file_stats.forEach(function(file) {
-                        try {
-                            var fileInfo = {
-                                movie: movie,
-                                files: json.file_stats,
-                                filename: file.path,
-                                path: file.path,
-                                is_file: true
-                            };
-                            
-                            var info = Lampa.Torserver.parse(fileInfo);
-                            
-                            if (info && info.season === currentParams.season && info.episode) {
-                                var alreadyExists = playlist.some(function(p) {
-                                    return p.episode === info.episode;
-                                });
+                    if (json && json.file_stats && json.file_stats.length > 0) {
+                        console.log("[ContinueWatch] Processing", json.file_stats.length, "files for season", currentParams.season);
+                        
+                        var addedEpisodes = 0;
+                        
+                        json.file_stats.forEach(function(file) {
+                            try {
+                                var fileInfo = {
+                                    movie: movie,
+                                    files: json.file_stats,
+                                    filename: file.path,
+                                    path: file.path,
+                                    is_file: true
+                                };
                                 
-                                if (!alreadyExists) {
-                                    var separator = info.season > 10 ? ':' : '';  
-                                    var episodeHash = Lampa.Utils.hash([info.season, separator, info.episode, title].join(''));  
-                                    var timeline = Lampa.Timeline.view(episodeHash);
+                                var info = Lampa.Torserver.parse(fileInfo);
+                                
+                                if (info && info.season === currentParams.season && info.episode) {
+                                    // Проверяем, нет ли уже этого эпизода в плейлисте
+                                    var alreadyExists = playlist.some(function(p) {
+                                        return p.episode === info.episode;
+                                    });
                                     
-                                    var item = {
-                                        title: 'S' + info.season + ' E' + info.episode,
-                                        season: info.season,
-                                        episode: info.episode,
-                                        timeline: timeline,
-                                        torrent_hash: currentParams.torrent_link,
-                                        card: movie,
-                                        url: buildStreamUrl({
-                                            file_name: file.path,
-                                            torrent_link: currentParams.torrent_link,
-                                            file_index: file.id || 0,
-                                            title: title,
+                                    if (!alreadyExists) {
+                                        var separator = info.season > 10 ? ':' : '';  
+                                        var episodeHash = Lampa.Utils.hash([info.season, separator, info.episode, title].join(''));  
+                                        var timeline = Lampa.Timeline.view(episodeHash);
+                                        
+                                        var item = {
+                                            title: 'S' + info.season + ' E' + info.episode,
                                             season: info.season,
-                                            episode: info.episode
-                                        })
-                                    };
-                                    
-                                    // Для текущего эпизода используем точный URL
-                                    if (info.episode === currentParams.episode) {
-                                        item.url = currentUrl;
+                                            episode: info.episode,
+                                            timeline: timeline,
+                                            torrent_hash: currentParams.torrent_link,
+                                            card: movie,
+                                            url: buildStreamUrl({
+                                                file_name: file.path,
+                                                torrent_link: currentParams.torrent_link,
+                                                file_index: file.id || 0,
+                                                title: title,
+                                                season: info.season,
+                                                episode: info.episode
+                                            })
+                                        };
+                                        
+                                        // Для текущего эпизода используем точный URL
+                                        if (info.episode === currentParams.episode) {
+                                            item.url = currentUrl;
+                                        }
+                                        
+                                        playlist.push(item);
+                                        addedEpisodes++;
+                                        console.log("[ContinueWatch] Added episode from TorrServer:", info.episode);
                                     }
-                                    
-                                    playlist.push(item);
-                                    addedEpisodes++;
-                                    console.log("[ContinueWatch] Added episode from TorrServer:", info.episode);
                                 }
+                            } catch (e) {
+                                console.log("[ContinueWatch] Error parsing file:", file.path, e);
                             }
-                        } catch (e) {
-                            console.log("[ContinueWatch] Error parsing file:", file.path, e);
-                        }
+                        });
+                        
+                        console.log("[ContinueWatch] Added", addedEpisodes, "episodes from TorrServer");
+                    }
+                    
+                    // Сортируем по номеру эпизода
+                    playlist.sort(function(a, b) {  
+                        return a.episode - b.episode;  
                     });
                     
-                    console.log("[ContinueWatch] Added", addedEpisodes, "episodes from TorrServer");
-                }
-                
-                // Сортируем и возвращаем плейлист
-                playlist.sort(function(a, b) {  
-                    return a.episode - b.episode;  
+                    console.log("[ContinueWatch] Final playlist:", playlist.length, "episodes");
+                    callback(playlist);
+                    
+                }, function(error) {
+                    console.log("[ContinueWatch] Error loading files from TorrServer:", error);
+                    // В случае ошибки возвращаем то, что есть
+                    playlist.sort(function(a, b) {  
+                        return a.episode - b.episode;  
+                    });
+                    callback(playlist);
                 });
-                
-                console.log("[ContinueWatch] Final playlist:", playlist.length, "episodes");
-                callback(playlist);
-                
             }, function(error) {
-                console.log("[ContinueWatch] Error loading files from TorrServer:", error);
+                console.log("[ContinueWatch] Error getting hash from TorrServer:", error);
                 // В случае ошибки возвращаем то, что есть
                 playlist.sort(function(a, b) {  
                     return a.episode - b.episode;  
@@ -353,6 +368,7 @@
                 callback(playlist);
             });
         } else {
+            // Если нет torrent_link, возвращаем только сохраненные эпизоды
             playlist.sort(function(a, b) {  
                 return a.episode - b.episode;  
             });
@@ -361,7 +377,6 @@
         }
     }
 
-    // МОДИФИЦИРОВАННАЯ ФУНКЦИЯ: запуск плеера с восстановленным handler
     function launchPlayer(movie, params) {  
         console.log("[ContinueWatch] Launching player with params:", params);
         
@@ -371,9 +386,6 @@
         CURRENT_MOVIE = movie;
         updateCurrentHash(movie, params.season, params.episode);
         
-        var view = Lampa.Timeline.view(CURRENT_HASH);  
-        
-        // Устанавливаем handler ДО запуска плеера
         setupTimelineHandler();
         
         var playerData = {  
@@ -381,11 +393,12 @@
             title: params.episode_title || params.title || movie.title,
             card: movie,  
             torrent_hash: params.torrent_link,  
-            timeline: CURRENT_TIMELINE_VIEW,  // Используем глобальную переменную
+            timeline: CURRENT_TIMELINE_VIEW,
             season: params.season,
             episode: params.episode
         };  
         
+        var view = Lampa.Timeline.view(CURRENT_HASH);
         if (view && view.percent > 0) {
             Lampa.Noty.show('Восстанавливаем позицию...');
         }
@@ -401,14 +414,6 @@
                     console.log("[ContinueWatch] Setting playlist with", playlist.length, "items");
                     CURRENT_PLAYLIST = playlist;
                     Lampa.Player.playlist(playlist);
-                    
-                    // Дополнительная проверка через секунду
-                    setTimeout(function() {
-                        if (Lampa.PlayerPlaylist && Lampa.PlayerPlaylist.get) {
-                            var currentPlaylist = Lampa.PlayerPlaylist.get();
-                            console.log("[ContinueWatch] Playlist verification - actual length:", currentPlaylist ? currentPlaylist.length : 0);
-                        }
-                    }, 1000);
                 } else {
                     console.log("[ContinueWatch] Not enough episodes for playlist:", playlist ? playlist.length : 0);
                     CURRENT_PLAYLIST = null;
@@ -421,11 +426,9 @@
         });
     }
 
-    // ПЕРЕРАБОТАННАЯ ФУНКЦИЯ: перехват Player.play для сохранения данных эпизода
     function patchPlayer() {
         var originalPlay = Lampa.Player.play;
         Lampa.Player.play = function (params) {
-            // Сохраняем данные эпизода в нашем хранилище
             if (params && (params.torrent_hash || (params.url && params.url.includes('/stream/')))) {
                 var movie = params.card || params.movie || (Lampa.Activity.active() && Lampa.Activity.active().movie);
                 if (movie) {
@@ -435,7 +438,6 @@
                         var season = params.season;
                         var episode = params.episode;
                         
-                        // Если сезон и эпизод не указаны, пытаемся извлечь из URL
                         if (!season || !episode) {
                             var episodeInfo = getCurrentEpisodeFromUrl(params.url);
                             if (episodeInfo) {
@@ -483,22 +485,57 @@
         };
     }
 
-    // УЛУЧШЕННАЯ ФУНКЦИЯ: настройка обработчиков событий плеера
     function setupPlayerListeners() {
-        // Подписка на событие запуска нового эпизода
+        if (Lampa.PlayerPlaylist && Lampa.PlayerPlaylist.listener) {
+            Lampa.PlayerPlaylist.listener.follow('select', function(e) {
+                console.log("[ContinueWatch] PlayerPlaylist select event", e);
+                
+                if (e.item && e.item.season && e.item.episode && e.item.card) {
+                    updateCurrentHash(e.item.card, e.item.season, e.item.episode);
+                    
+                    setTimeout(function() {
+                        setupTimelineHandler();
+                    }, 100);
+                    
+                    if (e.item.url && e.item.torrent_hash) {
+                        var matchFile = e.item.url.match(/\/stream\/([^?]+)/);
+                        var matchIndex = e.item.url.match(/[?&]index=(\d+)/);
+                        
+                        if (matchFile) {
+                            var baseTitle = e.item.card.original_name || e.item.card.original_title;
+                            var separator = e.item.season > 10 ? ':' : '';
+                            var hash = Lampa.Utils.hash([e.item.season, separator, e.item.episode, baseTitle].join(''));
+                            
+                            var store = getParams();
+                            store[hash] = {
+                                file_name: decodeURIComponent(matchFile[1]),
+                                torrent_link: e.item.torrent_hash,
+                                file_index: matchIndex ? parseInt(matchIndex[1]) : 0,
+                                title: baseTitle,
+                                season: e.item.season,
+                                episode: e.item.episode,
+                                episode_title: e.item.title,
+                                timestamp: Date.now()
+                            };
+                            setParams(store);
+                            
+                            console.log("[ContinueWatch] Saved playlist episode data for S" + e.item.season + "E" + e.item.episode);
+                        }
+                    }
+                }
+            });
+        }
+
         Lampa.Player.listener.follow('start', function(data) {
             console.log("[ContinueWatch] Player start event", data);
             
             if (data.season && data.episode && data.card) {
-                // Обновляем хэш для нового эпизода
                 updateCurrentHash(data.card, data.season, data.episode);
                 
-                // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Устанавливаем handler для нового эпизода
                 setTimeout(function() {
                     setupTimelineHandler();
                 }, 100);
                 
-                // Сохраняем данные нового эпизода
                 if (data.url && data.torrent_hash) {
                     var matchFile = data.url.match(/\/stream\/([^?]+)/);
                     var matchIndex = data.url.match(/[?&]index=(\d+)/);
@@ -521,23 +558,9 @@
                         };
                         setParams(store);
                         
-                        console.log("[ContinueWatch] Saved new episode data for S" + data.season + "E" + data.episode);
+                        console.log("[ContinueWatch] Saved start event episode data for S" + data.season + "E" + data.episode);
                     }
                 }
-            }
-        });
-
-        // Дополнительный слушатель для смены эпизодов через плейлист
-        Lampa.Player.listener.follow('playlist', function(data) {
-            console.log("[ContinueWatch] Playlist change event", data);
-            if (data && data.season && data.episode) {
-                // Обновляем хэш при смене эпизода через плейлист
-                updateCurrentHash(data.card, data.season, data.episode);
-                
-                // Устанавливаем handler для нового эпизода
-                setTimeout(function() {
-                    setupTimelineHandler();
-                }, 100);
             }
         });
     }
@@ -575,7 +598,6 @@
                             (e.data.movie.original_name || e.data.movie.original_title) : 
                             (e.data.movie.original_title || e.data.movie.original_name);
                         
-                        // Используем хэш из найденных параметров
                         var hash;
                         if (params.season && params.episode) {
                             var separator = params.season > 10 ? ':' : '';
@@ -633,7 +655,7 @@
                     }
 
                     Lampa.Controller.toggle('content'); 
-                    console.log("[ContinueWatch] v36 (Fixed Timeline Handler) - Button added");
+                    console.log("[ContinueWatch] v40 (Complete Playlist + Fixed Switching) - Button added");
 
                 }, 100); 
             }
