@@ -187,6 +187,7 @@
         return null;
     }
 
+    // Обертка handler-а для конкретного timeline
     function wrapTimelineHandler(timeline, params) {
         if (!timeline) return timeline;
         if (timeline._wrapped) return timeline;
@@ -215,6 +216,28 @@
 
         timeline._wrapped = true;
         return timeline;
+    }
+
+    // Глобальный слушатель обновлений Timeline (для надежности)
+    function setupTimelineSaving() {
+        Lampa.Timeline.listener.follow('update', function(e) {
+            var hash = e.data.hash;
+            var road = e.data.road; // В road лежит объект с percent, time, duration
+            
+            if (hash && road) {
+                var params = getParams();
+                // Если для этого хеша у нас уже есть запись (значит мы начали смотреть этот эпизод)
+                if (params[hash]) {
+                    updateContinueWatchParams(hash, {
+                        percent: road.percent,
+                        time: road.time,
+                        duration: road.duration,
+                        timestamp: Date.now()
+                    });
+                    // console.log("[ContinueWatch] Timeline global update for:", hash, road.time);
+                }
+            }
+        });
     }
 
     function setupTimelineHandler(hash, season, episode) {
@@ -625,6 +648,7 @@
         patchPlayer();
         cleanupOldParams();
         setupContinueButton();
+        setupTimelineSaving();
     }
 
     if (window.appready) add();
