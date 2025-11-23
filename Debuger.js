@@ -1,8 +1,10 @@
 (function () {
     'use strict';
 
+    // ========================================================================
+    // ПЕРЕМЕННЫЕ
+    // ========================================================================
     var MEMORY_CACHE = null;
-    var WATCHED_LAST_CACHE = null;
     var TORRSERVER_CACHE = null;
     var SAVE_TIMEOUT = null;
     var CURRENT_PLAYLIST = null;
@@ -15,11 +17,14 @@
     var PLAYER_DESTROY_HANDLER = null;
     var LISTENERS_INITIALIZED = false;
 
+    // ========================================================================
+    // 1. ХРАНИЛИЩЕ (СИНХРОНИЗИРУЕМОЕ)
+    // ========================================================================
+    
     Lampa.Storage.sync('continue_watch_params', 'object_object');
 
-    Lampa.Storage.listener.follow('change', function (e) {
+    Lampa.Storage.listener.follow('change', function(e) {
         if (e.name === 'continue_watch_params') MEMORY_CACHE = null;
-        if (e.name === 'online_watched_last') WATCHED_LAST_CACHE = null;
         if (e.name === 'torrserver_url' || e.name === 'torrserver_url_two' || e.name === 'torrserver_use_link') TORRSERVER_CACHE = null;
     });
 
@@ -31,26 +36,24 @@
     function setParams(data) {
         MEMORY_CACHE = data;
         clearTimeout(SAVE_TIMEOUT);
-        SAVE_TIMEOUT = setTimeout(function () {
+        SAVE_TIMEOUT = setTimeout(function() {
             Lampa.Storage.set('continue_watch_params', data);
         }, 500);
     }
 
+    // Главная функция обновления. Пишет в continue_watch_params
     function updateContinueWatchParams(hash, data) {
         var params = getParams();
         if (!params[hash]) params[hash] = {};
+        
         for (var key in data) {
             params[hash][key] = data[key];
         }
+        
+        // КРИТИЧНО: Обновляем метку времени при любой активности
+        params[hash].timestamp = Date.now();
+        
         setParams(params);
-    }
-
-    function getWatchedLast() {
-        if (!WATCHED_LAST_CACHE) {
-            var last = Lampa.Storage.get('online_watched_last', '{}');
-            WATCHED_LAST_CACHE = typeof last === 'string' ? JSON.parse(last) : last;
-        }
-        return WATCHED_LAST_CACHE;
     }
 
     function getTorrServerUrl() {
@@ -59,7 +62,7 @@
             var url_two = Lampa.Storage.get('torrserver_url_two');
             var use_two = Lampa.Storage.field('torrserver_use_link') == 'two';
             var final_url = use_two ? (url_two || url) : (url || url_two);
-
+            
             if (final_url) {
                 if (!final_url.match(/^https?:\/\//)) final_url = 'http://' + final_url;
                 final_url = final_url.replace(/\/$/, '');
@@ -69,77 +72,74 @@
         return TORRSERVER_CACHE;
     }
 
+    // ========================================================================
+    // 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+    // ========================================================================
+
     function formatTime(seconds) {
         if (!seconds) return '';
         var h = Math.floor(seconds / 3600);
         var m = Math.floor((seconds % 3600) / 60);
         var s = Math.floor(seconds % 60);
-        return h > 0 ?
-            h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s :
+        return h > 0 ? 
+            h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s : 
             m + ':' + (s < 10 ? '0' : '') + s;
     }
 
     function cleanupOldParams() {
-        setTimeout(function () {
+        setTimeout(function() {
             try {
                 var params = getParams();
                 var now = Date.now();
                 var changed = false;
                 for (var hash in params) {
+                    // Удаляем записи старше 30 дней
                     if (params[hash].timestamp && now - params[hash].timestamp > 30 * 24 * 60 * 60 * 1000) {
                         delete params[hash];
                         changed = true;
                     }
                 }
                 if (changed) setParams(params);
-            } catch (e) { }
+            } catch (e) {}
         }, 5000);
     }
 
+    // Поиск истории просмотра для конкретной карточки
     function getStreamParams(movie) {
         if (!movie) return null;
-
-        var title = movie.number_of_seasons ?
-            movie.original_name || movie.original_title || movie.name || movie.title :
-            movie.original_title || movie.original_name || movie.title || movie.name;
-
+        
+        var title = movie.original_name || movie.original_title || movie.name || movie.title;
         if (!title) return null;
-
+        
         var params = getParams();
-        var latestEpisode = null;
-        var latestTimestamp = 0;
-
-        for (var hash in params) {
-            var p = params[hash];
-            if (p.title === title) {
-                if (p.timestamp && p.timestamp > latestTimestamp) {
-                    latestTimestamp = p.timestamp;
-                    latestEpisode = p;
+        
+        // --- ЛОГИКА ДЛЯ СЕРИАЛОВ ---
+        if (movie.number_of_seasons) {
+            var latestEpisode = null;
+            var latestTimestamp = 0;
+            
+            for (var hash in params) {
+                var p = params[hash];
+                if (p.title === title && p.season && p.episode) {
+                    // Ищем серию, которую смотрели последней (по timestamp)
+                    if (p.timestamp && p.timestamp > latestTimestamp) {
+                        latestTimestamp = p.timestamp;
+                        latestEpisode = p;
+                    }
                 }
             }
+            return latestEpisode;
+        } 
+        // --- ЛОГИКА ДЛЯ ФИЛЬМОВ ---
+        else {
+            var hash = Lampa.Utils.hash(title);
+            return params[hash] || null;
         }
-
-        if (latestEpisode) return latestEpisode;
-
-        var hash = Lampa.Utils.hash(title);
-        if (movie.number_of_seasons) {
-            try {
-                var last = getWatchedLast();
-                var titleHash = Lampa.Utils.hash(movie.original_name || movie.original_title || title);
-                var filed = last[titleHash];
-                if (filed && filed.season !== undefined && filed.episode !== undefined) {
-                    var separator = filed.season > 10 ? ':' : '';
-                    hash = Lampa.Utils.hash([filed.season, separator, filed.episode, title].join(''));
-                }
-            } catch (e) { }
-        }
-
-        return params[hash] || params[Lampa.Utils.hash(title)] || null;
     }
 
     function buildStreamUrl(params) {
         if (!params || !params.file_name || !params.torrent_link) return null;
-
+        
         var server_url = getTorrServerUrl();
         if (!server_url) {
             Lampa.Noty.show('TorrServer не настроен');
@@ -156,11 +156,9 @@
 
     function updateCurrentHash(movie, season, episode) {
         if (!movie) return;
-        var title = movie.number_of_seasons ?
-            movie.original_name || movie.original_title || movie.name || movie.title :
-            movie.original_title || movie.original_name || movie.title || movie.name;
-
-        if (season && episode) {
+        var title = movie.original_name || movie.original_title || movie.name || movie.title;
+        
+        if (movie.number_of_seasons && season && episode) {
             var separator = season > 10 ? ':' : '';
             CURRENT_HASH = Lampa.Utils.hash([season, separator, episode, title].join(''));
         } else {
@@ -183,11 +181,47 @@
                     };
                 }
             }
-        } catch (e) { }
+        } catch (e) {}
         return null;
     }
 
-    // Обертка handler-а для конкретного timeline
+    // ========================================================================
+    // 3. ГЛОБАЛЬНОЕ ОТСЛЕЖИВАНИЕ (СЕРДЦЕ СИНХРОНИЗАЦИИ)
+    // ========================================================================
+    
+    function setupTimelineSaving() {
+        // Ловим любые изменения таймлайна в Lampa
+        Lampa.Timeline.listener.follow('update', function(e) {
+            var hash = e.data.hash;
+            var road = e.data.road;
+            
+            if (hash && road) {
+                var params = getParams();
+                
+                // Исправление: Если запись уже существует, явно сохраняем ВСЕ данные,
+                // чтобы не потерять контекст (сезон, эпизод) при обновлении только времени.
+                if (params[hash]) {
+                    updateContinueWatchParams(hash, {
+                        file_name: params[hash].file_name,
+                        torrent_link: params[hash].torrent_link,
+                        file_index: params[hash].file_index,
+                        title: params[hash].title,
+                        season: params[hash].season,
+                        episode: params[hash].episode,
+                        episode_title: params[hash].episode_title,
+                        
+                        // Новые данные от плеера
+                        percent: road.percent,
+                        time: road.time,
+                        duration: road.duration
+                        // timestamp обновится внутри функции updateContinueWatchParams
+                    });
+                }
+            }
+        });
+    }
+
+    // Обертка для передачи во внешние плееры
     function wrapTimelineHandler(timeline, params) {
         if (!timeline) return timeline;
         if (timeline._wrapped) return timeline;
@@ -195,91 +229,45 @@
         var originalHandler = timeline.handler;
 
         timeline.handler = function (percent, time, duration) {
+            // 1. Вызываем родной handler Lampa (для синхронизации с Cub/Lampa Cloud)
             if (originalHandler) originalHandler(percent, time, duration);
 
-            if (params.season && params.episode) {
-                updateContinueWatchParams(timeline.hash, {
-                    file_name: params.file_name,
-                    torrent_link: params.torrent_link,
-                    file_index: params.file_index,
-                    title: params.title,
-                    season: params.season,
-                    episode: params.episode,
-                    episode_title: params.episode_title,
-                    percent: percent,
-                    time: time,
-                    duration: duration,
-                    timestamp: Date.now()
-                });
-            }
+            // 2. Сохраняем в наш continue_watch_params
+            updateContinueWatchParams(timeline.hash, {
+                file_name: params.file_name,
+                torrent_link: params.torrent_link,
+                file_index: params.file_index,
+                title: params.title,
+                season: params.season,
+                episode: params.episode,
+                episode_title: params.episode_title,
+                percent: percent,
+                time: time,
+                duration: duration
+            });
         };
 
         timeline._wrapped = true;
         return timeline;
     }
 
-    // Глобальный слушатель обновлений Timeline (для надежности)
-    function setupTimelineSaving() {
-        Lampa.Timeline.listener.follow('update', function(e) {
-            var hash = e.data.hash;
-            var road = e.data.road; // В road лежит объект с percent, time, duration
-            
-            if (hash && road) {
-                var params = getParams();
-                // Если для этого хеша у нас уже есть запись (значит мы начали смотреть этот эпизод)
-                if (params[hash]) {
-                    updateContinueWatchParams(hash, {
-                        percent: road.percent,
-                        time: road.time,
-                        duration: road.duration,
-                        timestamp: Date.now()
-                    });
-                    // console.log("[ContinueWatch] Timeline global update for:", hash, road.time);
-                }
-            }
-        });
-    }
-
-    function setupTimelineHandler(hash, season, episode) {
-        if (!hash) hash = CURRENT_HASH;
-        if (!hash) return;
-
-        var view = Lampa.Timeline.view(hash);
-        if (view) {
-            view.handler = function (percent, time, duration) {
-                Lampa.Timeline.update(hash, {
-                    percent: percent,
-                    time: time,
-                    duration: duration
-                });
-
-                if (season && episode) {
-                    updateContinueWatchParams(hash, {
-                        season: season,
-                        episode: episode,
-                        percent: percent,
-                        time: time,
-                        duration: duration,
-                        timestamp: Date.now()
-                    });
-                }
-            };
-            CURRENT_TIMELINE_VIEW = view;
-        }
-    }
-
-    function buildPlaylist(movie, currentParams, currentUrl, callback) {
-        var playlist = [];
-        var allParams = getParams();
-        var title = movie.original_name || movie.original_title;
-
-        for (var hash in allParams) {
-            var p = allParams[hash];
-            if (p.season === currentParams.season && p.title === title) {
-                var separator = p.season > 10 ? ':' : '';
-                var episodeHash = Lampa.Utils.hash([p.season, separator, p.episode, title].join(''));
-                var timeline = Lampa.Timeline.view(episodeHash);
-
+    // ========================================================================
+    // 4. СБОРКА ПЛЕЙЛИСТА
+    // ========================================================================
+    function buildPlaylist(movie, currentParams, currentUrl, callback) {  
+        var playlist = [];  
+        var allParams = getParams();  
+        var title = movie.original_name || movie.original_title;  
+        
+        // 1. Из истории (кэша)
+        for (var hash in allParams) {  
+            var p = allParams[hash];  
+            // Добавляем только если это тот же сериал
+            if (p.title === title && p.season && p.episode) {  
+                var separator = p.season > 10 ? ':' : '';  
+                var episodeHash = Lampa.Utils.hash([p.season, separator, p.episode, title].join(''));  
+                var timeline = Lampa.Timeline.view(episodeHash);  
+                
                 if (timeline) {
                     wrapTimelineHandler(timeline, {
                         season: p.season,
@@ -290,74 +278,96 @@
                         file_index: p.file_index
                     });
                 }
-
-                var item = {
+                  
+                var item = {  
                     title: p.episode_title || ('S' + p.season + ' E' + p.episode),
-                    season: p.season,
-                    episode: p.episode,
+                    season: p.season,  
+                    episode: p.episode,  
                     timeline: timeline,
                     torrent_hash: p.torrent_hash || p.torrent_link,
                     card: movie,
                     url: buildStreamUrl(p),
                     position: timeline ? (timeline.time || -1) : -1
-                };
-                if (p.episode === currentParams.episode) item.url = currentUrl;
-                playlist.push(item);
-            }
+                };  
+                if (p.episode === currentParams.episode && p.season === currentParams.season) item.url = currentUrl;
+                playlist.push(item);  
+            }  
         }
-
+        
+        // 2. Из TorrServer (если есть ссылка)
         if (currentParams.torrent_link) {
             Lampa.Torserver.hash({
                 link: currentParams.torrent_link,
                 title: movie.title || movie.name,
                 poster: movie.poster_path,
                 data: { lampa: true, movie: movie }
-            }, function (torrent) {
-                Lampa.Torserver.files(torrent.hash, function (json) {
+            }, function(torrent) {
+                Lampa.Torserver.files(torrent.hash, function(json) {
                     if (json && json.file_stats && json.file_stats.length > 0) {
-                        json.file_stats.forEach(function (file, index) {
+                        json.file_stats.forEach(function(file, index) {
                             try {
-                                var fileName = file.path.split('/').pop();
                                 var episodeValue = null;
                                 var seasonValue = null;
 
-                                var matchStart = fileName.match(/^(\d{1,3})\./);
-                                if (matchStart) {
-                                    episodeValue = parseInt(matchStart[1]);
-                                    seasonValue = currentParams.season;
-                                }
+                                // Логика парсинга только для сериалов
+                                if (movie.number_of_seasons) {
+                                    var fileName = file.path.split('/').pop();
+                                    var matchStart = fileName.match(/^(\d{1,3})\./);
+                                    if (matchStart) {
+                                        episodeValue = parseInt(matchStart[1]);
+                                        seasonValue = currentParams.season;
+                                    }
 
-                                if (!episodeValue) {
-                                    var fileInfo = { movie: movie, files: [file], filename: fileName, path: file.path, is_file: true };
-                                    var info = Lampa.Torserver.parse(fileInfo);
-                                    if (info.season === currentParams.season) {
-                                        episodeValue = info.episode;
-                                        seasonValue = info.season;
+                                    if (!episodeValue) {
+                                        var fileInfo = { movie: movie, files: [file], filename: fileName, path: file.path, is_file: true };
+                                        var info = Lampa.Torserver.parse(fileInfo);
+                                        if (info.season === currentParams.season) {
+                                            episodeValue = info.episode;
+                                            seasonValue = info.season;
+                                        }
                                     }
                                 }
 
-                                if (episodeValue && seasonValue === currentParams.season) {
-                                    var alreadyExists = playlist.some(function (p) { return p.episode === episodeValue; });
-                                    if (!alreadyExists) {
-                                        var separator = seasonValue > 10 ? ':' : '';
-                                        var episodeHash = Lampa.Utils.hash([seasonValue, separator, episodeValue, title].join(''));
-                                        var timeline = Lampa.Timeline.view(episodeHash);
+                                // Если удалось определить эпизод (или это фильм)
+                                if ((episodeValue && seasonValue === currentParams.season) || !movie.number_of_seasons) {
+                                    
+                                    // Для фильмов пропускаем проверку на дубликаты по эпизодам
+                                    var alreadyExists = false;
+                                    if (movie.number_of_seasons) {
+                                        alreadyExists = playlist.some(function(p) { return p.episode === episodeValue; });
+                                    }
 
+                                    if (!alreadyExists) {
+                                        var episodeHash;
+                                        if (movie.number_of_seasons) {
+                                            var separator = seasonValue > 10 ? ':' : '';
+                                            episodeHash = Lampa.Utils.hash([seasonValue, separator, episodeValue, title].join(''));
+                                        } else {
+                                            episodeHash = Lampa.Utils.hash(title);
+                                        }
+
+                                        var timeline = Lampa.Timeline.view(episodeHash);
+                                        
                                         if (!timeline) {
                                             timeline = { hash: episodeHash, percent: 0, time: 0, duration: 0 };
                                         }
-
-                                        wrapTimelineHandler(timeline, {
-                                            season: seasonValue,
-                                            episode: episodeValue,
-                                            title: title,
-                                            file_name: file.path,
-                                            torrent_link: currentParams.torrent_link,
-                                            file_index: file.id || 0
-                                        });
+                                        
+                                        // Превентивная регистрация хеша для setupTimelineSaving
+                                        var tempParams = getParams();
+                                        if (!tempParams[episodeHash]) {
+                                            updateContinueWatchParams(episodeHash, {
+                                                file_name: file.path,
+                                                torrent_link: currentParams.torrent_link,
+                                                file_index: file.id || 0,
+                                                title: title,
+                                                season: seasonValue,
+                                                episode: episodeValue,
+                                                percent: 0, time: 0, duration: 0
+                                            });
+                                        }
 
                                         var item = {
-                                            title: 'S' + seasonValue + ' E' + episodeValue,
+                                            title: movie.number_of_seasons ? ('S' + seasonValue + ' E' + episodeValue) : (movie.title || title),
                                             season: seasonValue,
                                             episode: episodeValue,
                                             timeline: timeline,
@@ -373,84 +383,43 @@
                                             }),
                                             position: timeline ? (timeline.time || -1) : -1
                                         };
-                                        if (episodeValue === currentParams.episode) item.url = currentUrl;
+                                        
+                                        // Если это текущий файл
+                                        if (movie.number_of_seasons) {
+                                            if (episodeValue === currentParams.episode) item.url = currentUrl;
+                                        } else if (file.id === currentParams.file_index) {
+                                            item.url = currentUrl;
+                                        }
+                                        
                                         playlist.push(item);
                                     }
                                 }
-                            } catch (e) { }
+                            } catch (e) {}
                         });
                     }
-                    playlist.sort(function (a, b) { return a.episode - b.episode; });
+                    if (movie.number_of_seasons) {
+                        playlist.sort(function(a, b) { return a.episode - b.episode; });
+                    }
                     callback(playlist);
-                }, function () { playlist.sort(function (a, b) { return a.episode - b.episode; }); callback(playlist); });
-            }, function () { playlist.sort(function (a, b) { return a.episode - b.episode; }); callback(playlist); });
+                }, function() { callback(playlist); });
+            }, function() { callback(playlist); });
         } else {
-            playlist.sort(function (a, b) { return a.episode - b.episode; });
             callback(playlist);
         }
     }
 
-    function setupPlayerListeners() {
-        if (LISTENERS_INITIALIZED) cleanupPlayerListeners();
-
-        PLAYER_START_HANDLER = function (data) {
-            if (data.season && data.episode && data.card) {
-                updateCurrentHash(data.card, data.season, data.episode);
-
-                var timeline = Lampa.Timeline.view(CURRENT_HASH);
-                if (timeline) {
-                    var title = data.card.original_name || data.card.original_title;
-                    wrapTimelineHandler(timeline, {
-                        season: data.season,
-                        episode: data.episode,
-                        title: title
-                    });
-                    CURRENT_TIMELINE_VIEW = timeline;
-                }
-            }
-        };
-
-        PLAYLIST_SELECT_HANDLER = function (e) {
-            if (e.item && e.item.season && e.item.episode && e.item.card) {
-                updateCurrentHash(e.item.card, e.item.season, e.item.episode);
-
-                var timeline = Lampa.Timeline.view(CURRENT_HASH);
-                if (timeline) {
-                    var title = e.item.card.original_name || e.item.card.original_title;
-                    wrapTimelineHandler(timeline, {
-                        season: e.item.season,
-                        episode: e.item.episode,
-                        title: title
-                    });
-                }
-            }
-        };
-
-        PLAYER_DESTROY_HANDLER = function () { cleanupPlayerListeners(); };
-
-        Lampa.Player.listener.follow('start', PLAYER_START_HANDLER);
-        Lampa.Player.listener.follow('destroy', PLAYER_DESTROY_HANDLER);
-        if (Lampa.PlayerPlaylist && Lampa.PlayerPlaylist.listener) {
-            Lampa.PlayerPlaylist.listener.follow('select', PLAYLIST_SELECT_HANDLER);
-        }
-        LISTENERS_INITIALIZED = true;
-    }
-
-    function cleanupPlayerListeners() {
-        if (PLAYER_START_HANDLER) { Lampa.Player.listener.remove('start', PLAYER_START_HANDLER); PLAYER_START_HANDLER = null; }
-        if (PLAYLIST_SELECT_HANDLER && Lampa.PlayerPlaylist) { Lampa.PlayerPlaylist.listener.remove('select', PLAYLIST_SELECT_HANDLER); PLAYLIST_SELECT_HANDLER = null; }
-        if (PLAYER_DESTROY_HANDLER) { Lampa.Player.listener.remove('destroy', PLAYER_DESTROY_HANDLER); PLAYER_DESTROY_HANDLER = null; }
-        LISTENERS_INITIALIZED = false;
-    }
-
-    function launchPlayer(movie, params) {
-        var url = buildStreamUrl(params);
-        if (!url) return;
-
+    // ========================================================================
+    // 5. ЗАПУСК ПЛЕЕРА
+    // ========================================================================
+    function launchPlayer(movie, params) {  
+        var url = buildStreamUrl(params);  
+        if (!url) return;  
+        
         CURRENT_MOVIE = movie;
         updateCurrentHash(movie, params.season, params.episode);
-
+        
         var timeline = Lampa.Timeline.view(CURRENT_HASH);
+        
         if (!timeline) {
             timeline = {
                 hash: CURRENT_HASH,
@@ -463,61 +432,98 @@
             timeline.percent = params.percent;
             timeline.duration = params.duration;
         }
-
-        wrapTimelineHandler(timeline, params);
+        
         CURRENT_TIMELINE_VIEW = timeline;
+
+        // Обновляем timestamp, чтобы этот элемент стал "последним просмотренным"
+        updateContinueWatchParams(CURRENT_HASH, {
+            percent: timeline.percent,
+            time: timeline.time,
+            duration: timeline.duration
+        });
 
         var player_type = Lampa.Storage.field('player_torrent');
         var isExternalPlayer = (player_type !== 'inner' && player_type !== 'lampa');
 
         if (isExternalPlayer) {
-            Lampa.Noty.show('Подготовка плейлиста для внешнего плеера...');
-
-            buildPlaylist(movie, params, url, function (playlist) {
-                var playerData = {
-                    url: url,
+            Lampa.Noty.show('Подготовка плейлиста...');
+            
+            buildPlaylist(movie, params, url, function(playlist) {
+                var playerData = {  
+                    url: url,  
                     title: params.episode_title || params.title || movie.title,
-                    card: movie,
-                    torrent_hash: params.torrent_link,
+                    card: movie,  
+                    torrent_hash: params.torrent_link,  
                     timeline: timeline,
                     season: params.season,
                     episode: params.episode,
                     playlist: playlist,
                     position: timeline.time || -1
                 };
-
+                
                 Lampa.Player.play(playerData);
-                Lampa.Player.callback(function () { Lampa.Controller.toggle('content'); });
+                Lampa.Player.callback(function() { Lampa.Controller.toggle('content'); });
             });
         } else {
             setupPlayerListeners();
-
-            var playerData = {
-                url: url,
+            
+            var playerData = {  
+                url: url,  
                 title: params.episode_title || params.title || movie.title,
-                card: movie,
-                torrent_hash: params.torrent_link,
+                card: movie,  
+                torrent_hash: params.torrent_link,  
                 timeline: timeline,
                 season: params.season,
                 episode: params.episode
-            };
-
+            };  
+            
             if (timeline.time > 0) {
-                Lampa.Noty.show('Восстанавливаем позицию: ' + formatTime(timeline.time));
+                 Lampa.Noty.show('Восстанавливаем позицию: ' + formatTime(timeline.time));
             }
-
+            
             Lampa.Player.play(playerData);
-
-            if (params.season && params.episode) {
-                buildPlaylist(movie, params, url, function (playlist) {
+            
+            // Для сериалов подгружаем плейлист в фоне для внутреннего плеера
+            if (movie.number_of_seasons && params.season && params.episode) {  
+                buildPlaylist(movie, params, url, function(playlist) {
                     if (playlist && playlist.length > 1) {
                         CURRENT_PLAYLIST = playlist;
                         Lampa.Player.playlist(playlist);
                     }
                 });
             }
-            Lampa.Player.callback(function () { Lampa.Controller.toggle('content'); });
+            Lampa.Player.callback(function() { Lampa.Controller.toggle('content'); });
         }
+    }
+
+    function setupPlayerListeners() {
+        if (LISTENERS_INITIALIZED) cleanupPlayerListeners();
+        
+        PLAYER_START_HANDLER = function(data) {
+            if (data.card) {
+                updateCurrentHash(data.card, data.season, data.episode);
+                
+                // Для фильмов season/episode будут undefined, но хеш сгенерируется по названию
+                updateContinueWatchParams(CURRENT_HASH, {
+                    file_name: decodeURIComponent(data.url.match(/\/stream\/([^?]+)/)[1]),
+                    title: data.card.original_name || data.card.original_title || data.card.title,
+                    season: data.season,
+                    episode: data.episode
+                });
+            }
+        };
+        
+        PLAYER_DESTROY_HANDLER = function() { cleanupPlayerListeners(); };
+        
+        Lampa.Player.listener.follow('start', PLAYER_START_HANDLER);
+        Lampa.Player.listener.follow('destroy', PLAYER_DESTROY_HANDLER);
+        LISTENERS_INITIALIZED = true;
+    }
+
+    function cleanupPlayerListeners() {
+        if (PLAYER_START_HANDLER) { Lampa.Player.listener.remove('start', PLAYER_START_HANDLER); PLAYER_START_HANDLER = null; }
+        if (PLAYER_DESTROY_HANDLER) { Lampa.Player.listener.remove('destroy', PLAYER_DESTROY_HANDLER); PLAYER_DESTROY_HANDLER = null; }
+        LISTENERS_INITIALIZED = false;
     }
 
     function patchPlayer() {
@@ -526,28 +532,32 @@
             if (params && (params.torrent_hash || (params.url && params.url.includes('/stream/')))) {
                 var movie = params.card || params.movie || (Lampa.Activity.active() && Lampa.Activity.active().movie);
                 if (movie) {
-                    var baseTitle = movie.number_of_seasons ? movie.original_name || movie.original_title : movie.original_title || movie.original_name;
+                    var baseTitle = movie.original_name || movie.original_title || movie.title;
                     if (baseTitle) {
                         var hash;
                         var season = params.season;
                         var episode = params.episode;
-
-                        if (!season || !episode) {
-                            var episodeInfo = getCurrentEpisodeFromUrl(params.url);
-                            if (episodeInfo) { season = episodeInfo.season; episode = episodeInfo.episode; }
+                        
+                        if (movie.number_of_seasons) {
+                            if (!season || !episode) {
+                                var episodeInfo = getCurrentEpisodeFromUrl(params.url);
+                                if (episodeInfo) { season = episodeInfo.season; episode = episodeInfo.episode; }
+                            }
+                            if (season && episode) {
+                                var separator = season > 10 ? ':' : '';
+                                hash = Lampa.Utils.hash([season, separator, episode, baseTitle].join(''));
+                            } else { hash = Lampa.Utils.hash(baseTitle); }
+                        } else {
+                            // Для фильмов хеш только по названию
+                            hash = Lampa.Utils.hash(baseTitle);
                         }
-
-                        if (season && episode) {
-                            var separator = season > 10 ? ':' : '';
-                            hash = Lampa.Utils.hash([season, separator, episode, baseTitle].join(''));
-                        } else { hash = Lampa.Utils.hash(baseTitle); }
-
+                        
                         if (hash) {
                             CURRENT_HASH = hash;
                             var matchFile = params.url && params.url.match(/\/stream\/([^?]+)/);
                             var matchLink = params.url && params.url.match(/[?&]link=([^&]+)/);
                             var matchIndex = params.url && params.url.match(/[?&]index=(\d+)/);
-
+                            
                             if (matchFile && matchLink) {
                                 updateContinueWatchParams(hash, {
                                     file_name: decodeURIComponent(matchFile[1]),
@@ -556,8 +566,7 @@
                                     title: baseTitle,
                                     season: season,
                                     episode: episode,
-                                    episode_title: params.title || params.episode_title,
-                                    timestamp: Date.now()
+                                    episode_title: params.title || params.episode_title
                                 });
                             }
                         }
@@ -568,6 +577,10 @@
         };
     }
 
+    // ========================================================================
+    // 6. КНОПКА
+    // ========================================================================
+
     function handleContinueClick(movieData) {
         var params = getStreamParams(movieData);
         if (!params) { Lampa.Noty.show('Нет сохраненной истории'); return; }
@@ -577,7 +590,7 @@
     function setupContinueButton() {
         Lampa.Listener.follow('full', function (e) {
             if (e.type === 'complite') {
-                setTimeout(function () {
+                setTimeout(function() {
                     var activity = e.object.activity;
                     var render = activity.render();
                     if (render.find('.button--continue-watch').length) return;
@@ -587,16 +600,16 @@
                     var timeStr = "";
 
                     if (params) {
-                        var title = e.data.movie.number_of_seasons ?
-                            (e.data.movie.original_name || e.data.movie.original_title) :
-                            (e.data.movie.original_title || e.data.movie.original_name);
-
+                        var title = e.data.movie.original_name || e.data.movie.original_title || e.data.movie.title;
                         var hash;
-                        if (params.season && params.episode) {
+                        
+                        if (e.data.movie.number_of_seasons && params.season && params.episode) {
                             var separator = params.season > 10 ? ':' : '';
                             hash = Lampa.Utils.hash([params.season, separator, params.episode, title].join(''));
-                        } else { hash = Lampa.Utils.hash(title); }
-
+                        } else { 
+                            hash = Lampa.Utils.hash(title); 
+                        }
+                        
                         var view = Lampa.Timeline.view(hash);
                         if (view && view.percent > 0) {
                             percent = view.percent;
@@ -638,8 +651,9 @@
                     else if (buttonsContainer.length) buttonsContainer.append(continueBtn);
                     else render.find('.full-start__button').last().after(continueBtn);
 
-                    Lampa.Controller.toggle('content');
-                }, 100);
+                    Lampa.Controller.toggle('content'); 
+                    console.log("[ContinueWatch] v56 Patched");
+                }, 100); 
             }
         });
     }
