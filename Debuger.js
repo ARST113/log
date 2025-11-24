@@ -214,7 +214,7 @@
     }
 
     // ========================================================================
-    // 4. СБОРКА ПЛЕЙЛИСТА (ИСПРАВЛЕНА ПОЗИЦИЯ)
+    // 4. СБОРКА ПЛЕЙЛИСТА (BULLETPROOF VERSION)
     // ========================================================================
     function buildPlaylist(movie, currentParams, currentUrl, quietMode, callback) {  
         if (IS_BUILDING_PLAYLIST && !quietMode) {
@@ -227,8 +227,10 @@
         var title = movie.original_name || movie.original_title || movie.name || movie.title;  
         var allParams = getParams();
         var playlist = [];  
+        var SAFETY_TIMER = null; // Предохранитель
 
         var finalize = function(resultList) {
+            if (SAFETY_TIMER) { clearTimeout(SAFETY_TIMER); SAFETY_TIMER = null; }
             if (!quietMode) {
                 Lampa.Loading.stop();
                 IS_BUILDING_PLAYLIST = false;
@@ -236,7 +238,7 @@
             callback(resultList);
         };
 
-        // 1. Из кэша
+        // 1. Сборка из кэша
         for (var hash in allParams) {  
             var p = allParams[hash];  
             if (p.title === title && p.season && p.episode) {  
@@ -255,7 +257,6 @@
                     });
                 }
                 
-                // ВАЖНО: Определяем, является ли этот эпизод текущим
                 var isCurrent = (p.season === currentParams.season && p.episode === currentParams.episode);
 
                 var item = {  
@@ -266,7 +267,6 @@
                     torrent_hash: p.torrent_hash || p.torrent_link,
                     card: movie,
                     url: buildStreamUrl(p),
-                    // ИСПРАВЛЕНИЕ: Только текущий эпизод получает время, остальные -1 (старт сначала)
                     position: isCurrent ? (timeline ? (timeline.time || -1) : -1) : -1
                 };  
                 if (isCurrent) item.url = currentUrl;
@@ -279,7 +279,7 @@
             return;
         }
 
-        // 2. Запрос к TorrServer с механизмом Retry
+        // 2. Логика запросов с защитой
         var isCancelled = false;
         var retryCount = 0;
         var maxRetries = 5; 
@@ -289,6 +289,12 @@
                 isCancelled = true;
                 finalize([]); 
             }, 'Подготовка плейлиста...');
+            
+            // ПРЕДОХРАНИТЕЛЬ: Если через 15 секунд ничего не произошло - принудительный выход
+            SAFETY_TIMER = setTimeout(function() {
+                console.log("[ContinueWatch] Safety fuse triggered. Force finalizing.");
+                if(!isCancelled) finalize(playlist);
+            }, 15000);
         }
 
         Lampa.Torserver.hash({
@@ -306,8 +312,8 @@
                 Lampa.Torserver.files(torrent.hash, function(json) {
                     if (isCancelled) return;
 
+                    // Если данные пришли корректные
                     if (json && json.file_stats && json.file_stats.length > 0) {
-                        
                         var totalFiles = json.file_stats.length;
                         var processedCount = 0;
 
@@ -371,7 +377,6 @@
                                             });
                                         }
 
-                                        // ВАЖНО: Проверяем, текущий ли это эпизод
                                         var isCurrent = (seasonValue === currentParams.season && episodeValue === currentParams.episode);
 
                                         var item = {
@@ -389,7 +394,6 @@
                                                 season: seasonValue,
                                                 episode: episodeValue
                                             }),
-                                            // ИСПРАВЛЕНИЕ: Ставим позицию только если это выбранная серия
                                             position: isCurrent ? (timeline ? (timeline.time || -1) : -1) : -1
                                         };
                                         
@@ -410,17 +414,21 @@
                         finalize(playlist);
 
                     } else {
+                        // Если JSON пустой или null - ретрай
                         if (retryCount < maxRetries) {
                             retryCount++;
-                            if(!quietMode) Lampa.Loading.setText('Ожидание метаданных (' + retryCount + '/' + maxRetries + ')...');
+                            if (!quietMode) Lampa.Loading.setText('Ожидание данных (попытка ' + retryCount + ' из ' + maxRetries + ')...');
                             setTimeout(fetchFiles, 2000);
                         } else {
+                            // Если все попытки исчерпаны - отдаем что есть
                             finalize(playlist);
                         }
                     }
                 }, function() { 
+                    // Ошибка запроса (сеть, 404, таймаут) - тоже ретрай
                     if (retryCount < maxRetries) {
                         retryCount++;
+                        if (!quietMode) Lampa.Loading.setText('Ошибка сети, повтор ' + retryCount + '...');
                         setTimeout(fetchFiles, 2000);
                     } else {
                         if(!isCancelled) finalize(playlist); 
@@ -428,7 +436,10 @@
                 });
             };
             fetchFiles();
-        }, function() { if(!isCancelled) finalize(playlist); });
+        }, function() { 
+            // Ошибка получения хеша
+            if(!isCancelled) finalize(playlist); 
+        });
     }
 
     // ========================================================================
@@ -484,9 +495,7 @@
                 Lampa.Player.callback(function() { Lampa.Controller.toggle('content'); });  
             });
         } else {
-            // Внутренний плеер: ЗАПУСК СРАЗУ
-            
-            // ХИТРОСТЬ: Создаем временный плейлист из 2-х элементов.
+            // Внутренний плеер: Native UI Fix
             var tempPlaylist = [];
             
             var currentItem = {
@@ -690,7 +699,7 @@
                     else render.find('.full-start__button').last().after(continueBtn);
 
                     Lampa.Controller.toggle('content'); 
-                    console.log("[ContinueWatch] v64 Native Playlist UI + Position Fix");
+                    console.log("[ContinueWatch] v65 Bulletproof Ready");
                 }, 100); 
             }
         });
