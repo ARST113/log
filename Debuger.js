@@ -214,7 +214,7 @@
     }
 
     // ========================================================================
-    // 4. СБОРКА ПЛЕЙЛИСТА (RETRY MODE)
+    // 4. СБОРКА ПЛЕЙЛИСТА (ИСПРАВЛЕНА ПОЗИЦИЯ)
     // ========================================================================
     function buildPlaylist(movie, currentParams, currentUrl, quietMode, callback) {  
         if (IS_BUILDING_PLAYLIST && !quietMode) {
@@ -255,6 +255,9 @@
                     });
                 }
                 
+                // ВАЖНО: Определяем, является ли этот эпизод текущим
+                var isCurrent = (p.season === currentParams.season && p.episode === currentParams.episode);
+
                 var item = {  
                     title: p.episode_title || ('S' + p.season + ' E' + p.episode),
                     season: p.season,  
@@ -263,9 +266,10 @@
                     torrent_hash: p.torrent_hash || p.torrent_link,
                     card: movie,
                     url: buildStreamUrl(p),
-                    position: timeline ? (timeline.time || -1) : -1
+                    // ИСПРАВЛЕНИЕ: Только текущий эпизод получает время, остальные -1 (старт сначала)
+                    position: isCurrent ? (timeline ? (timeline.time || -1) : -1) : -1
                 };  
-                if (p.episode === currentParams.episode && p.season === currentParams.season) item.url = currentUrl;
+                if (isCurrent) item.url = currentUrl;
                 playlist.push(item);  
             }  
         }
@@ -367,6 +371,9 @@
                                             });
                                         }
 
+                                        // ВАЖНО: Проверяем, текущий ли это эпизод
+                                        var isCurrent = (seasonValue === currentParams.season && episodeValue === currentParams.episode);
+
                                         var item = {
                                             title: movie.number_of_seasons ? ('S' + seasonValue + ' E' + episodeValue) : (movie.title || title),
                                             season: seasonValue,
@@ -382,7 +389,8 @@
                                                 season: seasonValue,
                                                 episode: episodeValue
                                             }),
-                                            position: timeline ? (timeline.time || -1) : -1
+                                            // ИСПРАВЛЕНИЕ: Ставим позицию только если это выбранная серия
+                                            position: isCurrent ? (timeline ? (timeline.time || -1) : -1) : -1
                                         };
                                         
                                         if (movie.number_of_seasons) {
@@ -479,13 +487,8 @@
             // Внутренний плеер: ЗАПУСК СРАЗУ
             
             // ХИТРОСТЬ: Создаем временный плейлист из 2-х элементов.
-            // 1. Текущий файл
-            // 2. Пустышка "Загрузка..."
-            // Это заставит Lampa включить режим сериала и отрисовать кнопки
-            
             var tempPlaylist = [];
             
-            // 1. Реальный элемент
             var currentItem = {
                 url: url,
                 title: params.episode_title || ('S' + params.season + ' E' + params.episode),
@@ -496,7 +499,6 @@
             };
             tempPlaylist.push(currentItem);
             
-            // 2. Фейковый элемент (если это сериал)
             if (movie.number_of_seasons) {
                 tempPlaylist.push({
                     title: 'Загрузка списка...',
@@ -513,7 +515,6 @@
                 timeline: timeline,
                 season: params.season,
                 episode: params.episode,
-                // Передаем временный плейлист, чтобы кнопки появились СРАЗУ
                 playlist: tempPlaylist
             };
             
@@ -523,14 +524,12 @@
             setupPlayerListeners();
             Lampa.Player.callback(function() { Lampa.Controller.toggle('content'); });
 
-            // ФОНОВАЯ ПОДГРУЗКА РЕАЛЬНОГО ПЛЕЙЛИСТА
             if (movie.number_of_seasons && params.season && params.episode) {
                 console.log("[ContinueWatch] Starting background playlist build (with retry)...");
                 buildPlaylist(movie, params, url, true, function(playlist) {
                     console.log("[ContinueWatch] Background playlist ready:", playlist.length);
                     
                     if (playlist.length > 1) {
-                         // Подменяем фейковый плейлист на реальный
                          Lampa.Player.playlist(playlist);
                          Lampa.Noty.show('Плейлист загружен (' + playlist.length + ' с.)');
                     }
@@ -691,7 +690,7 @@
                     else render.find('.full-start__button').last().after(continueBtn);
 
                     Lampa.Controller.toggle('content'); 
-                    console.log("[ContinueWatch] v63 Native Playlist UI");
+                    console.log("[ContinueWatch] v64 Native Playlist UI + Position Fix");
                 }, 100); 
             }
         });
