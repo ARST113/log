@@ -214,7 +214,7 @@
     }
 
     // ========================================================================
-    // 4. СБОРКА ПЛЕЙЛИСТА (BULLETPROOF VERSION)
+    // 4. СБОРКА ПЛЕЙЛИСТА (RETRY SYSTEM)
     // ========================================================================
     function buildPlaylist(movie, currentParams, currentUrl, quietMode, callback) {  
         if (IS_BUILDING_PLAYLIST && !quietMode) {
@@ -227,7 +227,7 @@
         var title = movie.original_name || movie.original_title || movie.name || movie.title;  
         var allParams = getParams();
         var playlist = [];  
-        var SAFETY_TIMER = null; // Предохранитель
+        var SAFETY_TIMER = null;
 
         var finalize = function(resultList) {
             if (SAFETY_TIMER) { clearTimeout(SAFETY_TIMER); SAFETY_TIMER = null; }
@@ -238,7 +238,7 @@
             callback(resultList);
         };
 
-        // 1. Сборка из кэша
+        // 1. Из кэша (мгновенно)
         for (var hash in allParams) {  
             var p = allParams[hash];  
             if (p.title === title && p.season && p.episode) {  
@@ -258,7 +258,6 @@
                 }
                 
                 var isCurrent = (p.season === currentParams.season && p.episode === currentParams.episode);
-
                 var item = {  
                     title: p.episode_title || ('S' + p.season + ' E' + p.episode),
                     season: p.season,  
@@ -279,10 +278,10 @@
             return;
         }
 
-        // 2. Логика запросов с защитой
+        // 2. Запрос к TorrServer с усиленным Retry
         var isCancelled = false;
         var retryCount = 0;
-        var maxRetries = 5; 
+        var maxRetries = 10; 
 
         if (!quietMode) {
             Lampa.Loading.start(function() {
@@ -290,11 +289,13 @@
                 finalize([]); 
             }, 'Подготовка плейлиста...');
             
-            // ПРЕДОХРАНИТЕЛЬ: Если через 15 секунд ничего не произошло - принудительный выход
+            // Предохранитель 25 секунд
             SAFETY_TIMER = setTimeout(function() {
-                console.log("[ContinueWatch] Safety fuse triggered. Force finalizing.");
-                if(!isCancelled) finalize(playlist);
-            }, 15000);
+                if(!isCancelled) {
+                    console.log("[ContinueWatch] Timeout. Finalizing with what we have.");
+                    finalize(playlist);
+                }
+            }, 25000);
         }
 
         Lampa.Torserver.hash({
@@ -304,7 +305,7 @@
             data: { lampa: true, movie: movie }
         }, function(torrent) {
             if (isCancelled) return;
-            if (!quietMode) Lampa.Loading.setText('Получение списка файлов...');
+            if (!quietMode) Lampa.Loading.setText('Ожидание метаданных...');
 
             var fetchFiles = function() {
                 if (isCancelled) return;
@@ -312,15 +313,16 @@
                 Lampa.Torserver.files(torrent.hash, function(json) {
                     if (isCancelled) return;
 
-                    // Если данные пришли корректные
+                    // ПРОВЕРКА: Пришел ли список файлов?
                     if (json && json.file_stats && json.file_stats.length > 0) {
+                        
                         var totalFiles = json.file_stats.length;
                         var processedCount = 0;
 
                         json.file_stats.forEach(function(file) {
                             if (isCancelled) return;
                             processedCount++;
-                            if (!quietMode && (processedCount % 5 === 0 || processedCount === totalFiles)) {
+                            if (!quietMode && (processedCount % 10 === 0)) {
                                 Lampa.Loading.setText('Обработка: ' + Math.round((processedCount / totalFiles) * 100) + '%');
                             }
 
@@ -335,7 +337,6 @@
                                         episodeValue = parseInt(matchStart[1]);
                                         seasonValue = currentParams.season;
                                     }
-
                                     if (!episodeValue) {
                                         var fileInfo = { movie: movie, files: [file], filename: fileName, path: file.path, is_file: true };
                                         var info = Lampa.Torserver.parse(fileInfo);
@@ -414,21 +415,19 @@
                         finalize(playlist);
 
                     } else {
-                        // Если JSON пустой или null - ретрай
+                        // Retry
                         if (retryCount < maxRetries) {
                             retryCount++;
-                            if (!quietMode) Lampa.Loading.setText('Ожидание данных (попытка ' + retryCount + ' из ' + maxRetries + ')...');
+                            if (!quietMode) Lampa.Loading.setText('Ожидание файлов (попытка ' + retryCount + ')...');
                             setTimeout(fetchFiles, 2000);
                         } else {
-                            // Если все попытки исчерпаны - отдаем что есть
                             finalize(playlist);
                         }
                     }
                 }, function() { 
-                    // Ошибка запроса (сеть, 404, таймаут) - тоже ретрай
                     if (retryCount < maxRetries) {
                         retryCount++;
-                        if (!quietMode) Lampa.Loading.setText('Ошибка сети, повтор ' + retryCount + '...');
+                        if (!quietMode) Lampa.Loading.setText('Сервер занят (попытка ' + retryCount + ')...');
                         setTimeout(fetchFiles, 2000);
                     } else {
                         if(!isCancelled) finalize(playlist); 
@@ -437,7 +436,6 @@
             };
             fetchFiles();
         }, function() { 
-            // Ошибка получения хеша
             if(!isCancelled) finalize(playlist); 
         });
     }
@@ -495,9 +493,8 @@
                 Lampa.Player.callback(function() { Lampa.Controller.toggle('content'); });  
             });
         } else {
-            // Внутренний плеер: Native UI Fix
+            // Внутренний плеер: ЗАПУСК СРАЗУ
             var tempPlaylist = [];
-            
             var currentItem = {
                 url: url,
                 title: params.episode_title || ('S' + params.season + ' E' + params.episode),
@@ -507,13 +504,8 @@
                 card: movie
             };
             tempPlaylist.push(currentItem);
-            
             if (movie.number_of_seasons) {
-                tempPlaylist.push({
-                    title: 'Загрузка списка...',
-                    url: '',
-                    timeline: {}
-                });
+                tempPlaylist.push({ title: 'Загрузка списка...', url: '', timeline: {} });
             }
 
             var playerData = {    
@@ -534,10 +526,9 @@
             Lampa.Player.callback(function() { Lampa.Controller.toggle('content'); });
 
             if (movie.number_of_seasons && params.season && params.episode) {
-                console.log("[ContinueWatch] Starting background playlist build (with retry)...");
+                console.log("[ContinueWatch] Starting background playlist build...");
                 buildPlaylist(movie, params, url, true, function(playlist) {
                     console.log("[ContinueWatch] Background playlist ready:", playlist.length);
-                    
                     if (playlist.length > 1) {
                          Lampa.Player.playlist(playlist);
                          Lampa.Noty.show('Плейлист загружен (' + playlist.length + ' с.)');
@@ -623,7 +614,7 @@
     }
 
     // ========================================================================
-    // 6. КНОПКА
+    // 6. КНОПКА (С ПРЕДЗАГРУЗКОЙ)
     // ========================================================================
 
     function handleContinueClick(movieData) {
@@ -647,6 +638,12 @@
                     var timeStr = "";
 
                     if (params) {
+                        // ПРЕДЗАГРУЗКА ДАННЫХ TORRSERVER
+                        if (params.torrent_link) {
+                            console.log("[ContinueWatch] Preloading metadata...");
+                            Lampa.Torserver.files(params.torrent_link, function(){}, function(){});
+                        }
+
                         var title = e.data.movie.original_name || e.data.movie.original_title || e.data.movie.title;
                         var hash;
                         
@@ -699,7 +696,7 @@
                     else render.find('.full-start__button').last().after(continueBtn);
 
                     Lampa.Controller.toggle('content'); 
-                    console.log("[ContinueWatch] v65 Bulletproof Ready");
+                    console.log("[ContinueWatch] v69 Preload Edition Ready");
                 }, 100); 
             }
         });
