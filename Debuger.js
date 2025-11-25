@@ -50,6 +50,40 @@
         params[hash].timestamp = Date.now();
         setParams(params);
     }
+    
+    // НОВОЕ: Функция для сохранения кэша файлов
+    function savePlaylistCache(torrentLink, files) {
+        var params = getParams();
+        // Используем хеш ссылки торрента как ключ для кэша файлов
+        var cacheKey = 'cache_' + Lampa.Utils.hash(torrentLink);
+        
+        if (!params[cacheKey]) params[cacheKey] = {};
+        
+        // Сохраняем только нужное: путь, id, размер
+        params[cacheKey].files = files.map(function(f) {
+            return {
+                path: f.path,
+                id: f.id,
+                length: f.length
+            };
+        });
+        params[cacheKey].timestamp = Date.now();
+        
+        setParams(params);
+        console.log("[ContinueWatch] Playlist cached for future fast starts");
+    }
+
+    function getPlaylistFromCache(torrentLink) {
+        var params = getParams();
+        var cacheKey = 'cache_' + Lampa.Utils.hash(torrentLink);
+        
+        // Кэш валиден 7 дней
+        if (params[cacheKey] && params[cacheKey].files && 
+            (Date.now() - params[cacheKey].timestamp < 7 * 24 * 60 * 60 * 1000)) {
+            return params[cacheKey].files;
+        }
+        return null;
+    }
 
     function getTorrServerUrl() {
         if (!TORRSERVER_CACHE) {
@@ -85,7 +119,13 @@
                 var now = Date.now();
                 var changed = false;
                 for (var hash in params) {
-                    if (params[hash].timestamp && now - params[hash].timestamp > 30 * 24 * 60 * 60 * 1000) {
+                    // Чистим историю (30 дней) и старый кэш файлов (14 дней)
+                    if (hash.startsWith('cache_')) {
+                        if (params[hash].timestamp && now - params[hash].timestamp > 14 * 24 * 60 * 60 * 1000) {
+                             delete params[hash];
+                             changed = true;
+                        }
+                    } else if (params[hash].timestamp && now - params[hash].timestamp > 30 * 24 * 60 * 60 * 1000) {
                         delete params[hash];
                         changed = true;
                     }
@@ -105,6 +145,9 @@
             var latestEpisode = null;
             var latestTimestamp = 0;
             for (var hash in params) {
+                // Пропускаем кэш файлов при поиске истории
+                if (hash.startsWith('cache_')) continue;
+                
                 var p = params[hash];
                 if (p.title === title && p.season && p.episode) {
                     if (p.timestamp && p.timestamp > latestTimestamp) {
@@ -214,7 +257,7 @@
     }
 
     // ========================================================================
-    // 4. СБОРКА ПЛЕЙЛИСТА (RETRY SYSTEM)
+    // 4. СБОРКА ПЛЕЙЛИСТА (TURBO CACHE MODE)
     // ========================================================================
     function buildPlaylist(movie, currentParams, currentUrl, quietMode, callback) {  
         if (IS_BUILDING_PLAYLIST && !quietMode) {
@@ -238,47 +281,126 @@
             callback(resultList);
         };
 
-        // 1. Из кэша (мгновенно)
-        for (var hash in allParams) {  
-            var p = allParams[hash];  
-            if (p.title === title && p.season && p.episode) {  
-                var separator = p.season > 10 ? ':' : '';  
-                var episodeHash = Lampa.Utils.hash([p.season, separator, p.episode, title].join(''));  
-                var timeline = Lampa.Timeline.view(episodeHash);  
-                
-                if (timeline) {
-                    wrapTimelineHandler(timeline, {
-                        season: p.season,
-                        episode: p.episode,
-                        title: title,
-                        file_name: p.file_name,
-                        torrent_link: p.torrent_link,
-                        file_index: p.file_index
-                    });
+        // --- ЛОГИКА СБОРКИ ИЗ СПИСКА ФАЙЛОВ ---
+        var processFiles = function(files) {
+            var tempPlaylist = [];
+            
+            files.forEach(function(file) {
+                try {
+                    var episodeValue = null;
+                    var seasonValue = null;
+
+                    if (movie.number_of_seasons) {
+                        var fileName = file.path.split('/').pop();
+                        var matchStart = fileName.match(/^(\d{1,3})\./);
+                        if (matchStart) {
+                            episodeValue = parseInt(matchStart[1]);
+                            seasonValue = currentParams.season;
+                        }
+                        if (!episodeValue) {
+                            var fileInfo = { movie: movie, files: [file], filename: fileName, path: file.path, is_file: true };
+                            var info = Lampa.Torserver.parse(fileInfo);
+                            if (info.season === currentParams.season) {
+                                episodeValue = info.episode;
+                                seasonValue = info.season;
+                            }
+                        }
+                    }
+
+                    if ((episodeValue && seasonValue === currentParams.season) || !movie.number_of_seasons) {
+                        var alreadyExists = false;
+                        if (movie.number_of_seasons) {
+                            alreadyExists = tempPlaylist.some(function(p) { return p.episode === episodeValue; });
+                        }
+
+                        if (!alreadyExists) {
+                            var episodeHash;
+                            if (movie.number_of_seasons) {
+                                var separator = seasonValue > 10 ? ':' : '';
+                                episodeHash = Lampa.Utils.hash([seasonValue, separator, episodeValue, title].join(''));
+                            } else {
+                                episodeHash = Lampa.Utils.hash(title);
+                            }
+
+                            var timeline = Lampa.Timeline.view(episodeHash);
+                            if (!timeline) timeline = { hash: episodeHash, percent: 0, time: 0, duration: 0 };
+                            
+                            var tempParams = getParams();
+                            if (!tempParams[episodeHash]) {
+                                updateContinueWatchParams(episodeHash, {
+                                    file_name: file.path,
+                                    torrent_link: currentParams.torrent_link,
+                                    file_index: file.id || 0,
+                                    title: title,
+                                    season: seasonValue,
+                                    episode: episodeValue,
+                                    percent: 0, time: 0, duration: 0
+                                });
+                            }
+
+                            var isCurrent = (seasonValue === currentParams.season && episodeValue === currentParams.episode);
+
+                            var item = {
+                                title: movie.number_of_seasons ? ('S' + seasonValue + ' E' + episodeValue) : (movie.title || title),
+                                season: seasonValue,
+                                episode: episodeValue,
+                                timeline: timeline,
+                                torrent_hash: currentParams.torrent_link,
+                                card: movie,
+                                url: buildStreamUrl({
+                                    file_name: file.path,
+                                    torrent_link: currentParams.torrent_link,
+                                    file_index: file.id || 0,
+                                    title: title,
+                                    season: seasonValue,
+                                    episode: episodeValue
+                                }),
+                                position: isCurrent ? (timeline ? (timeline.time || -1) : -1) : -1
+                            };
+                            
+                            if (movie.number_of_seasons) {
+                                if (episodeValue === currentParams.episode) item.url = currentUrl;
+                            } else if (file.id === currentParams.file_index) {
+                                item.url = currentUrl;
+                            }
+                            
+                            tempPlaylist.push(item);
+                        }
+                    }
+                } catch (e) {}
+            });
+            
+            if (movie.number_of_seasons) tempPlaylist.sort(function(a, b) { return a.episode - b.episode; });
+            return tempPlaylist;
+        };
+
+        // 1. ПОПЫТКА БЫСТРОГО СТАРТА ИЗ КЭША ФАЙЛОВ
+        if (currentParams.torrent_link) {
+            var cachedFiles = getPlaylistFromCache(currentParams.torrent_link);
+            if (cachedFiles) {
+                console.log("[ContinueWatch] TURBO START: Using cached playlist files");
+                var cachedPlaylist = processFiles(cachedFiles);
+                if (cachedPlaylist.length > 0) {
+                    finalize(cachedPlaylist);
+                    // В фоне запускаем обновление кэша (тихо)
+                    setTimeout(function() { 
+                         Lampa.Torserver.hash({link: currentParams.torrent_link, data: {lampa: true}}, function(t){
+                             Lampa.Torserver.files(t.hash, function(j){
+                                 if(j && j.file_stats && j.file_stats.length) savePlaylistCache(currentParams.torrent_link, j.file_stats);
+                             }, function(){});
+                         }, function(){});
+                    }, 5000);
+                    return; // ВЫХОДИМ, ТАК КАК ВСЁ ГОТОВО
                 }
-                
-                var isCurrent = (p.season === currentParams.season && p.episode === currentParams.episode);
-                var item = {  
-                    title: p.episode_title || ('S' + p.season + ' E' + p.episode),
-                    season: p.season,  
-                    episode: p.episode,  
-                    timeline: timeline,
-                    torrent_hash: p.torrent_hash || p.torrent_link,
-                    card: movie,
-                    url: buildStreamUrl(p),
-                    position: isCurrent ? (timeline ? (timeline.time || -1) : -1) : -1
-                };  
-                if (isCurrent) item.url = currentUrl;
-                playlist.push(item);  
-            }  
+            }
         }
 
+        // 2. ЕСЛИ КЭША НЕТ - ЗАПУСКАЕМ ПОЛНЫЙ ЦИКЛ СЕТИ
         if (!currentParams.torrent_link) {
-            finalize(playlist);
+            finalize([]);
             return;
         }
 
-        // 2. Запрос к TorrServer с усиленным Retry
         var isCancelled = false;
         var retryCount = 0;
         var maxRetries = 10; 
@@ -289,10 +411,9 @@
                 finalize([]); 
             }, 'Подготовка плейлиста...');
             
-            // Предохранитель 25 секунд
             SAFETY_TIMER = setTimeout(function() {
                 if(!isCancelled) {
-                    console.log("[ContinueWatch] Timeout. Finalizing with what we have.");
+                    console.log("[ContinueWatch] Timeout. Finalizing.");
                     finalize(playlist);
                 }
             }, 25000);
@@ -313,105 +434,19 @@
                 Lampa.Torserver.files(torrent.hash, function(json) {
                     if (isCancelled) return;
 
-                    // ПРОВЕРКА: Пришел ли список файлов?
                     if (json && json.file_stats && json.file_stats.length > 0) {
+                        
+                        // СОХРАНЯЕМ В КЭШ ДЛЯ БУДУЩИХ ЗАПУСКОВ
+                        savePlaylistCache(currentParams.torrent_link, json.file_stats);
                         
                         var totalFiles = json.file_stats.length;
                         var processedCount = 0;
-
-                        json.file_stats.forEach(function(file) {
-                            if (isCancelled) return;
-                            processedCount++;
-                            if (!quietMode && (processedCount % 10 === 0)) {
-                                Lampa.Loading.setText('Обработка: ' + Math.round((processedCount / totalFiles) * 100) + '%');
-                            }
-
-                            try {
-                                var episodeValue = null;
-                                var seasonValue = null;
-
-                                if (movie.number_of_seasons) {
-                                    var fileName = file.path.split('/').pop();
-                                    var matchStart = fileName.match(/^(\d{1,3})\./);
-                                    if (matchStart) {
-                                        episodeValue = parseInt(matchStart[1]);
-                                        seasonValue = currentParams.season;
-                                    }
-                                    if (!episodeValue) {
-                                        var fileInfo = { movie: movie, files: [file], filename: fileName, path: file.path, is_file: true };
-                                        var info = Lampa.Torserver.parse(fileInfo);
-                                        if (info.season === currentParams.season) {
-                                            episodeValue = info.episode;
-                                            seasonValue = info.season;
-                                        }
-                                    }
-                                }
-
-                                if ((episodeValue && seasonValue === currentParams.season) || !movie.number_of_seasons) {
-                                    var alreadyExists = false;
-                                    if (movie.number_of_seasons) {
-                                        alreadyExists = playlist.some(function(p) { return p.episode === episodeValue; });
-                                    }
-
-                                    if (!alreadyExists) {
-                                        var episodeHash;
-                                        if (movie.number_of_seasons) {
-                                            var separator = seasonValue > 10 ? ':' : '';
-                                            episodeHash = Lampa.Utils.hash([seasonValue, separator, episodeValue, title].join(''));
-                                        } else {
-                                            episodeHash = Lampa.Utils.hash(title);
-                                        }
-
-                                        var timeline = Lampa.Timeline.view(episodeHash);
-                                        if (!timeline) timeline = { hash: episodeHash, percent: 0, time: 0, duration: 0 };
-                                        
-                                        var tempParams = getParams();
-                                        if (!tempParams[episodeHash]) {
-                                            updateContinueWatchParams(episodeHash, {
-                                                file_name: file.path,
-                                                torrent_link: currentParams.torrent_link,
-                                                file_index: file.id || 0,
-                                                title: title,
-                                                season: seasonValue,
-                                                episode: episodeValue,
-                                                percent: 0, time: 0, duration: 0
-                                            });
-                                        }
-
-                                        var isCurrent = (seasonValue === currentParams.season && episodeValue === currentParams.episode);
-
-                                        var item = {
-                                            title: movie.number_of_seasons ? ('S' + seasonValue + ' E' + episodeValue) : (movie.title || title),
-                                            season: seasonValue,
-                                            episode: episodeValue,
-                                            timeline: timeline,
-                                            torrent_hash: currentParams.torrent_link,
-                                            card: movie,
-                                            url: buildStreamUrl({
-                                                file_name: file.path,
-                                                torrent_link: currentParams.torrent_link,
-                                                file_index: file.id || 0,
-                                                title: title,
-                                                season: seasonValue,
-                                                episode: episodeValue
-                                            }),
-                                            position: isCurrent ? (timeline ? (timeline.time || -1) : -1) : -1
-                                        };
-                                        
-                                        if (movie.number_of_seasons) {
-                                            if (episodeValue === currentParams.episode) item.url = currentUrl;
-                                        } else if (file.id === currentParams.file_index) {
-                                            item.url = currentUrl;
-                                        }
-                                        
-                                        playlist.push(item);
-                                    }
-                                }
-                            } catch (e) {}
-                        });
                         
-                        if (isCancelled) return;
-                        if (movie.number_of_seasons) playlist.sort(function(a, b) { return a.episode - b.episode; });
+                        if (!quietMode) Lampa.Loading.setText('Обработка...');
+                        
+                        // Используем нашу функцию обработки
+                        playlist = processFiles(json.file_stats);
+                        
                         finalize(playlist);
 
                     } else {
@@ -475,6 +510,8 @@
         var isExternalPlayer = (player_type !== 'inner' && player_type !== 'lampa');
 
         if (isExternalPlayer) {
+            // ДЛЯ ВНЕШНЕГО ПЛЕЕРА - ТЕПЕРЬ РАБОТАЕТ КЭШ
+            // Если кэш есть - старт будет мгновенным без Loading
             buildPlaylist(movie, params, url, false, function(playlist) {
                 if (playlist.length === 0 && !params.torrent_link) return;
                 
@@ -527,11 +564,12 @@
 
             if (movie.number_of_seasons && params.season && params.episode) {
                 console.log("[ContinueWatch] Starting background playlist build...");
+                // ТУТ ТОЖЕ СРАБОТАЕТ КЭШ И БУДЕТ МГНОВЕННО
                 buildPlaylist(movie, params, url, true, function(playlist) {
                     console.log("[ContinueWatch] Background playlist ready:", playlist.length);
                     if (playlist.length > 1) {
                          Lampa.Player.playlist(playlist);
-                         Lampa.Noty.show('Плейлист загружен (' + playlist.length + ' с.)');
+                         if(!getPlaylistFromCache(params.torrent_link)) Lampa.Noty.show('Плейлист загружен (' + playlist.length + ' с.)');
                     }
                 });
             }
@@ -595,7 +633,7 @@
                             var matchIndex = params.url && params.url.match(/[?&]index=(\d+)/);
                             
                             if (matchFile && matchLink) {
-                                updateContinueWatchParams(hash, {
+                                var dataToSave = {
                                     file_name: decodeURIComponent(matchFile[1]),
                                     torrent_link: matchLink[1],
                                     file_index: matchIndex ? parseInt(matchIndex[1]) : 0,
@@ -603,7 +641,13 @@
                                     season: season,
                                     episode: episode,
                                     episode_title: params.title || params.episode_title
-                                });
+                                };
+                                updateContinueWatchParams(hash, dataToSave);
+
+                                // АВТО-КЭШ: Если запустили через обычный интерфейс Lampa, тоже кэшируем файлы
+                                if(params.files && params.files.length) {
+                                    savePlaylistCache(matchLink[1], params.files);
+                                }
                             }
                         }
                     }
@@ -638,10 +682,13 @@
                     var timeStr = "";
 
                     if (params) {
-                        // ПРЕДЗАГРУЗКА ДАННЫХ TORRSERVER
-                        if (params.torrent_link) {
+                        // ПРЕДЗАГРУЗКА: Если в кэше пусто - начинаем греть TorrServer
+                        if (params.torrent_link && !getPlaylistFromCache(params.torrent_link)) {
                             console.log("[ContinueWatch] Preloading metadata...");
-                            Lampa.Torserver.files(params.torrent_link, function(){}, function(){});
+                            Lampa.Torserver.files(params.torrent_link, function(json){
+                                // Если успели получить ответ - сразу кэшируем
+                                if(json && json.file_stats && json.file_stats.length) savePlaylistCache(params.torrent_link, json.file_stats);
+                            }, function(){});
                         }
 
                         var title = e.data.movie.original_name || e.data.movie.original_title || e.data.movie.title;
@@ -696,7 +743,7 @@
                     else render.find('.full-start__button').last().after(continueBtn);
 
                     Lampa.Controller.toggle('content'); 
-                    console.log("[ContinueWatch] v69 Preload Edition Ready");
+                    console.log("[ContinueWatch] v70 Turbo Cache Ready");
                 }, 100); 
             }
         });
