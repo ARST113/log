@@ -37,9 +37,10 @@
     function setParams(data) {
         MEMORY_CACHE = data;
         clearTimeout(SAVE_TIMEOUT);
+        // Очень быстрое сохранение, чтобы не потерять прогресс при переключении
         SAVE_TIMEOUT = setTimeout(function() {
             Lampa.Storage.set('continue_watch_params', data);
-        }, 50);
+        }, 10); 
     }
 
     function updateContinueWatchParams(hash, data) {
@@ -94,6 +95,7 @@
         }, 5000);
     }
 
+    // === ЛОГИКА ВЫБОРА СЕРИИ v78 (Приоритет ID) ===
     function getStreamParams(movie) {
         if (!movie) return null;
         var title = movie.original_name || movie.original_title || movie.name || movie.title;
@@ -105,35 +107,36 @@
             
             for (var hash in params) {
                 var p = params[hash];
-                if (p.title === title && (p.file_index !== undefined || (p.season && p.episode)) && p.timestamp) {
+                // Ищем записи, где есть file_index (надежно) или S/E
+                if (p.title === title && p.timestamp) {
                     candidates.push(p);
                 }
             }
 
             if (candidates.length === 0) return null;
 
-            candidates.sort(function(a, b) { return b.timestamp - a.timestamp; });
+            // Сортировка: самые свежие сверху
+            candidates.sort(function(a, b) {
+                return b.timestamp - a.timestamp;
+            });
 
             var best = candidates[0];
             var now = best.timestamp;
 
-            // Логика "Недосмотренное важнее"
+            // Защита от гонки (проверяем записи за последние 5 мин)
             for (var i = 1; i < candidates.length; i++) {
                 var other = candidates[i];
                 var timeDiff = Math.abs(now - other.timestamp);
 
-                if (timeDiff < 12 * 60 * 60 * 1000) {
-                    var bestPercent = best.percent || 0;
-                    var otherPercent = other.percent || 0;
-                    var bestIsFinished = bestPercent > 95;
-                    var otherIsFinished = otherPercent > 95;
-
-                    if (bestIsFinished && !otherIsFinished) {
-                        best = other;
-                        continue;
-                    }
-                    if (bestIsFinished === otherIsFinished) {
-                        // Приоритет по номеру серии
+                if (timeDiff < 5 * 60 * 1000) { 
+                    // Если есть file_index, сравниваем по нему (это надежнее для аниме)
+                    if (best.file_index !== undefined && other.file_index !== undefined) {
+                        if (parseInt(other.file_index) > parseInt(best.file_index)) {
+                            best = other; // Выбираем файл с большим индексом (следующая серия)
+                        }
+                    } 
+                    // Иначе по сезонам
+                    else if (best.season && other.season) {
                         var bestScore = (best.season * 10000) + best.episode;
                         var otherScore = (other.season * 10000) + other.episode;
                         if (otherScore > bestScore) best = other;
@@ -216,6 +219,9 @@
         var originalHandler = timeline.handler;
         timeline.handler = function (percent, time, duration) {
             if (originalHandler) originalHandler(percent, time, duration);
+            
+            // Сохраняем ВСЕ данные при обновлении таймлайна
+            // Это гарантирует, что при переключении серии в плеере, новая серия запишется полностью
             updateContinueWatchParams(timeline.hash, {
                 file_name: params.file_name,
                 torrent_link: params.torrent_link,
@@ -234,7 +240,7 @@
     }
 
     // ========================================================================
-    // 4. СБОРКА ПЛЕЙЛИСТА (v77 UNIVERSAL MATCHER)
+    // 4. СБОРКА ПЛЕЙЛИСТА (v78 INDEX MASTER)
     // ========================================================================
     function buildPlaylist(movie, currentParams, currentUrl, quietMode, callback) {  
         if (IS_BUILDING_PLAYLIST && !quietMode) {
@@ -258,7 +264,7 @@
             callback(resultList);
         };
 
-        // 1. Сборка из кэша
+        // 1. Кэш (Исторический)
         for (var hash in allParams) {  
             var p = allParams[hash];  
             if (p.title === title && p.season && p.episode) {  
@@ -277,7 +283,13 @@
                     });
                 }
                 
-                var isCurrent = (p.season === currentParams.season && p.episode === currentParams.episode);
+                // ПРОВЕРКА ПО ID (ОСНОВНАЯ)
+                var isCurrent = false;
+                if (currentParams.file_index !== undefined && p.file_index !== undefined) {
+                    isCurrent = (parseInt(p.file_index) === parseInt(currentParams.file_index));
+                } else {
+                    isCurrent = (p.season === currentParams.season && p.episode === currentParams.episode);
+                }
 
                 var item = {  
                     title: p.episode_title || ('S' + p.season + ' E' + p.episode),
@@ -287,7 +299,8 @@
                     torrent_hash: p.torrent_hash || p.torrent_link,
                     card: movie,
                     url: buildStreamUrl(p),
-                    position: isCurrent ? (timeline ? (timeline.time || -1) : -1) : -1
+                    // Если ID совпал - ставим время. Если нет - сброс (-1)
+                    position: isCurrent ? (timeline ? (timeline.time || 0) : 0) : -1 
                 };  
                 if (isCurrent) item.url = currentUrl;
                 playlist.push(item);  
@@ -362,31 +375,31 @@
                                     }
                                 }
 
-                                // === ГИБРИДНАЯ ПРОВЕРКА v77 ===
-                                // Совпадение или по ID, или по Сезону/Эпизоду
-                                var matchById = (currentParams.file_index !== undefined && file.id === currentParams.file_index);
-                                var matchBySE = (episodeValue && seasonValue === currentParams.season && episodeValue === currentParams.episode);
+                                // === ID MATCHING (v78) ===
+                                // Сначала проверяем ID (самый надежный метод для аниме и плейлистов)
+                                var isIndexMatch = false;
+                                if (currentParams.file_index !== undefined) {
+                                    isIndexMatch = (parseInt(file.id) === parseInt(currentParams.file_index));
+                                }
                                 
-                                // Является ли этот файл ТЕМ САМЫМ, который мы запускаем?
-                                var isCurrentFile = matchById || matchBySE;
+                                var isSmartMatch = (episodeValue && seasonValue === currentParams.season && episodeValue === currentParams.episode);
 
-                                // Условие добавления в плейлист (Аниме фикс + Обычный)
-                                var shouldAdd = isCurrentFile || matchBySE || !movie.number_of_seasons;
-
-                                if (shouldAdd) {
+                                // Если совпал ID или S/E
+                                if (isIndexMatch || isSmartMatch || !movie.number_of_seasons) {
                                     
                                     var alreadyExists = false;
                                     if (movie.number_of_seasons) {
                                         alreadyExists = playlist.some(function(p) { 
                                             if (p.url && p.url.indexOf('index=' + file.id) > -1) return true;
-                                            if (episodeValue && p.episode === episodeValue) return true;
+                                            // Если индексы совпали, то это дубликат, пропускаем
+                                            if (isIndexMatch && p.position > -1) return true;
                                             return false;
                                         });
                                     }
 
                                     if (!alreadyExists) {
-                                        // Фолбэк данных
-                                        if (isCurrentFile && !episodeValue) {
+                                        // Фолбэк
+                                        if (isIndexMatch && !episodeValue) {
                                             episodeValue = currentParams.episode;
                                             seasonValue = currentParams.season;
                                         }
@@ -417,6 +430,8 @@
                                             });
                                         }
 
+                                        var isCurrentFile = isIndexMatch || isSmartMatch;
+
                                         var finalUrl = buildStreamUrl({
                                             file_name: file.path,
                                             torrent_link: currentParams.torrent_link,
@@ -435,8 +450,9 @@
                                                 torrent_hash: currentParams.torrent_link,
                                                 card: movie,
                                                 url: finalUrl,
-                                                // ТОЛЬКО текущий файл получает позицию
-                                                position: isCurrentFile ? (timeline ? (timeline.time || -1) : -1) : -1
+                                                // ВАЖНО: Если это текущий файл, ставим 0 (начало) или время. 
+                                                // Никогда не ставим -1 текущему файлу!
+                                                position: isCurrentFile ? (timeline ? (timeline.time || 0) : 0) : -1
                                             };
                                             
                                             if (isCurrentFile) item.url = currentUrl;
@@ -650,7 +666,7 @@
     }
 
     // ========================================================================
-    // 6. КНОПКА
+    // 6. КНОПКА (С ПРЕДЗАГРУЗКОЙ)
     // ========================================================================
 
     function handleContinueClick(movieData) {
@@ -731,7 +747,7 @@
                     else render.find('.full-start__button').last().after(continueBtn);
 
                     Lampa.Controller.toggle('content'); 
-                    console.log("[ContinueWatch] v77 Universal Matcher");
+                    console.log("[ContinueWatch] v78 Index Master Ready");
                 }, 100); 
             }
         });
