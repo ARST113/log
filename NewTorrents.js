@@ -4,50 +4,41 @@
     function startPlugin() {
         window.plugin_torrents_ready = true;
 
-        // --- 1. ПЕРЕХВАТЧИК ПЛЕЕРА ---
-        // Решает две задачи: 
-        // А) Обработка continue_watching (авто-продолжение)
-        // Б) Блокировка внешнего плеера на Android (удаление torrent_hash)
+        // --- 1. ГЛОБАЛЬНАЯ НАСТРОЙКА (СРАЗУ ПРИ ЗАГРУЗКЕ) ---
+        // Устанавливаем флаги немедленно, чтобы к моменту клика система уже знала, как работать.
+        Lampa.Storage.set('internal_torrclient', true); // Отключаем внешние торрент-клиенты
+        Lampa.Storage.set('player_torrent', 'inner');   // Выбираем встроенный плеер для торрентов
+        Lampa.Storage.set('launch_player', 'inner');    // Перебиваем глобальный запуск плеера
+
+        // --- 2. ПЕРЕХВАТЧИК ПЛЕЕРА ---
         var original_play = Lampa.Player.play;
 
         Lampa.Player.play = function (object) {
             var activity = Lampa.Activity.active();
 
-            // Проверяем, что это наш компонент и установлен флаг
+            // Проверяем активность и флаг
             if (activity && activity.component === 'torrents' && activity.continue_watching) {
                 if (object) {
                     // А) Логика продолжения просмотра
                     if (object.timeline) {
                         object.timeline.continued = true;
-                        // continued_bloc не ставим, чтобы работала стандартная логика (например, вопрос "Продолжить?")
                     }
 
-                    // Б) КРИТИЧНО ДЛЯ ANDROID: Удаляем хеш торрента
-                    // В src/interaction/player.js есть условие: if (... || data.torrent_hash) -> запуск внешнего плеера.
-                    // Удаляя хеш, мы заставляем Лампу думать, что это обычный стрим, и открыть внутренний плеер.
-                    delete object.torrent_hash; 
+                    // Б) Дополнительная защита для Android:
+                    // Даже если настройки Storage сбойнут, отсутствие хеша не даст запустить внешний плеер
+                    delete object.torrent_hash;
                     
-                    console.log('Plugin: torrent_hash deleted to force internal player');
+                    console.log('Plugin: torrent_hash deleted & continued=true set');
                 }
             }
 
-            // Вызываем оригинальный метод плеера
+            // Запускаем оригинальный плеер
             original_play(object);
         };
 
         function add() {
-            // --- 2. НАЖАТИЕ НА КНОПКУ ---
+            // --- 3. ОБРАБОТЧИК КЛИКА ---
             function button_click(data) {
-                // ГАРАНТИРОВАННОЕ ВКЛЮЧЕНИЕ ВНУТРЕННЕГО ПЛЕЕРА
-                // 1. Отключаем внешний торрент-клиент (Flud/TorrServe app)
-                Lampa.Storage.set('internal_torrclient', true);
-                
-                // 2. Выбираем внутренний видео-плеер в настройках
-                Lampa.Storage.set('player_torrent', 'inner');
-                
-                // 3. Перебиваем глобальный флаг запуска (самый важный приоритет)
-                Lampa.Storage.set('launch_player', 'inner');
-
                 // Очистка Torserver перед новым поиском
                 if (window.Torserver) window.Torserver.clear();
 
@@ -73,12 +64,12 @@
                     search_two: data.movie.original_title,
                     movie: data.movie,
                     page: 1,
-                    // Флаг для нашего перехватчика
+                    // Флаг для перехватчика
                     continue_watching: true 
                 });
             };
 
-            // Меню выбора Jackett (стандартное)
+            // Меню выбора Jackett
             function showJackettSelect(e) {
                 var jackett_default = {
                     'jacred.pro': '1', 'jacred.xyz': '1', 'jr.maxvol.pro': '1',
@@ -131,10 +122,9 @@
                 });
             }
 
-            // --- 3. ОТРИСОВКА КНОПКИ ---
+            // --- 4. ДОБАВЛЕНИЕ КНОПКИ ---
             Lampa.Listener.follow('full', function (e) {
                 if (e.type == 'complite') {
-                    // Ваша SVG иконка
                     var icon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="50px" height="50px" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17.7585,15.7315v10.24a6.2415,6.2415,0,0,0,6.1855,6.2969l.056,0h0a6.2413,6.2413,0,0,0,6.2417-6.2412l0-.0559v-10.24"/><line x1="30.2415" y1="26.0271" x2="30.2415" y2="32.2685"/><line x1="17.7585" y1="25.9714" x2="17.7585" y2="40.2097"/><circle cx="24" cy="24" r="21.5"/></svg>';
                     
                     var button = '<div class="full-start__button view--torrent">' + icon + '<span>' + Lampa.Lang.translate('title_torrents') + ' ...</span></div>';
@@ -150,7 +140,7 @@
                 }
             });
 
-            // Настройки (для Jackett)
+            // Настройки
             Lampa.SettingsApi.addParam({
                 component: 'parser',
                 param: { name: 'jackett_url_pva', type: 'input', value: '', default: '' },
