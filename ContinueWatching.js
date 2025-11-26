@@ -4,92 +4,41 @@
     // ========================================================================
     // ПЕРЕМЕННЫЕ
     // ========================================================================
-    var PENDING_CHANGES = {}; // Буфер только для ИЗМЕНЕННЫХ данных
     var TORRSERVER_CACHE = null;
-    var SAVE_TIMEOUT = null;
     var CURRENT_HASH = null;
     var CURRENT_MOVIE = null;
-    var CURRENT_TIMELINE_VIEW = null;
-
     var PLAYER_START_HANDLER = null;
     var PLAYER_DESTROY_HANDLER = null;
     var LISTENERS_INITIALIZED = false;
-
     var IS_BUILDING_PLAYLIST = false;
     var LAUNCH_DEBOUNCE = null;
 
     // ========================================================================
-    // 1. ХРАНИЛИЩЕ (УМНАЯ БУФЕРИЗАЦИЯ)
+    // 1. ХРАНИЛИЩЕ (INSTANT WRITE - БЕЗ ЗАДЕРЖЕК)
     // ========================================================================
     
     Lampa.Storage.sync('continue_watch_params', 'object_object');
 
     Lampa.Storage.listener.follow('change', function(e) {
         if (e.name === 'torrserver_url' || e.name === 'torrserver_url_two' || e.name === 'torrserver_use_link') TORRSERVER_CACHE = null;
-        // Если хранилище обновилось извне (синхронизация), мы не трогаем PENDING_CHANGES,
-        // они наложатся поверх при следующем чтении.
     });
 
-    // Читаем Диск + Накладываем сверху незаписанные изменения из Буфера
     function getParams() {
-        var diskParams = Lampa.Storage.get('continue_watch_params', {});
-        
-        // Виртуальное слияние для чтения (чтобы UI был мгновенным)
-        for (var hash in PENDING_CHANGES) {
-            if (!diskParams[hash]) diskParams[hash] = {};
-            for (var key in PENDING_CHANGES[hash]) {
-                diskParams[hash][key] = PENDING_CHANGES[hash][key];
-            }
-        }
-        return diskParams;
+        return Lampa.Storage.get('continue_watch_params', {});
     }
 
-    // Пишем в Буфер -> Буфер сливается с Диском с задержкой
+    // ЗАПИСЬ: Мгновенно и синхронно
     function updateContinueWatchParams(hash, data) {
-        // 1. Пишем в RAM (мгновенно)
-        if (!PENDING_CHANGES[hash]) PENDING_CHANGES[hash] = {};
+        var params = Lampa.Storage.get('continue_watch_params', {});
+        if (!params[hash]) params[hash] = {};
         
-        for (var key in data) {
-            PENDING_CHANGES[hash][key] = data[key];
+        for (var key in data) { 
+            params[hash][key] = data[key]; 
         }
-        PENDING_CHANGES[hash].timestamp = Date.now();
-
-        // 2. Запускаем таймер сброса на диск (Debounce)
-        clearTimeout(SAVE_TIMEOUT);
-        SAVE_TIMEOUT = setTimeout(commitToStorage, 2000); // Пишем на диск раз в 2 секунды
+        params[hash].timestamp = Date.now();
+        
+        Lampa.Storage.set('continue_watch_params', params);
     }
-
-    // ФУНКЦИЯ СЛИЯНИЯ (Самая важная часть)
-    function commitToStorage() {
-        if (Object.keys(PENDING_CHANGES).length === 0) return;
-
-        try {
-            // 1. Читаем свежий диск
-            var diskParams = Lampa.Storage.get('continue_watch_params', {});
-            
-            // 2. Аккуратно внедряем только то, что изменилось
-            for (var hash in PENDING_CHANGES) {
-                if (!diskParams[hash]) diskParams[hash] = {};
-                for (var key in PENDING_CHANGES[hash]) {
-                    diskParams[hash][key] = PENDING_CHANGES[hash][key];
-                }
-            }
-
-            // 3. Сохраняем
-            Lampa.Storage.set('continue_watch_params', diskParams);
-            
-            // 4. Очищаем буфер (данные теперь на диске)
-            PENDING_CHANGES = {};
-            // console.log("[ContinueWatch] Storage synced successfully");
-        } catch (e) {
-            console.error("[ContinueWatch] Save error:", e);
-        }
-    }
-
-    // Принудительное сохранение при закрытии/сворачивании
-    window.addEventListener("beforeunload", function() {
-        commitToStorage();
-    });
 
     function getTorrServerUrl() {
         if (!TORRSERVER_CACHE) {
@@ -135,7 +84,7 @@
         }, 5000);
     }
 
-    // === УМНЫЙ ВЫБОР СЕРИИ (v79/v82 Logic) ===
+    // === УМНЫЙ ВЫБОР (v80 Logic) ===
     function getStreamParams(movie) {
         if (!movie) return null;
         var title = movie.original_name || movie.original_title || movie.name || movie.title;
@@ -153,14 +102,11 @@
 
             if (candidates.length === 0) return null;
 
-            candidates.sort(function(a, b) {
-                return b.timestamp - a.timestamp;
-            });
+            candidates.sort(function(a, b) { return b.timestamp - a.timestamp; });
 
             var best = candidates[0];
             var now = best.timestamp;
 
-            // Логика приоритета недосмотренного (Anti-Flop)
             for (var i = 1; i < candidates.length; i++) {
                 var other = candidates[i];
                 var timeDiff = Math.abs(now - other.timestamp);
@@ -271,7 +217,7 @@
     }
 
     // ========================================================================
-    // 4. СБОРКА ПЛЕЙЛИСТА
+    // 4. СБОРКА ПЛЕЙЛИСТА (v85 STRICT ISOLATION)
     // ========================================================================
     function buildPlaylist(movie, currentParams, currentUrl, quietMode, callback) {  
         if (IS_BUILDING_PLAYLIST && !quietMode) {
@@ -295,10 +241,17 @@
             callback(resultList);
         };
 
-        // 1. Кэш
+        // 1. Сборка из кэша (СТРОГАЯ ФИЛЬТРАЦИЯ)
         for (var hash in allParams) {  
             var p = allParams[hash];  
             if (p.title === title && p.season && p.episode) {  
+                
+                // [FIX v85] Если торрент-ссылка отличается - НЕ БЕРЕМ ЭТОТ ФАЙЛ
+                // Это решает проблему смешивания старых и новых раздач
+                if (currentParams.torrent_link && p.torrent_link && p.torrent_link !== currentParams.torrent_link) {
+                    continue;
+                }
+
                 var separator = p.season > 10 ? ':' : '';  
                 var episodeHash = Lampa.Utils.hash([p.season, separator, p.episode, title].join(''));  
                 var timeline = Lampa.Timeline.view(episodeHash);  
@@ -315,7 +268,7 @@
                     });
                 }
                 
-                // ID MATCH (Надежно)
+                // ID MATCH
                 var isCurrent = false;
                 if (currentParams.file_index !== undefined && p.file_index !== undefined) {
                     isCurrent = (parseInt(p.file_index) === parseInt(currentParams.file_index));
@@ -323,7 +276,6 @@
                     isCurrent = (p.season == currentParams.season && p.episode == currentParams.episode);
                 }
 
-                // Titles
                 var displayTitle = p.episode_title;
                 if (!displayTitle) {
                     displayTitle = 'S' + p.season + ' E' + p.episode;
@@ -340,7 +292,6 @@
                     torrent_hash: p.torrent_hash || p.torrent_link,
                     card: movie,
                     url: buildStreamUrl(p),
-                    // ВАЖНО: Текущему - время, остальным - сброс. Иначе плеер может выбрать старый файл
                     position: isCurrent ? (timeline ? (timeline.time || 0) : 0) : -1 
                 };  
                 if (isCurrent) item.url = currentUrl;
@@ -684,8 +635,6 @@
                             var matchIndex = params.url && params.url.match(/[?&]index=(\d+)/);
                             
                             if (matchFile && matchLink) {
-                                // ВАЖНО: При ручном старте сохраняем title только если его нет
-                                // Или если это episode_title, а не название сериала
                                 var epTitle = params.episode_title || ('S' + season + ' E' + episode);
                                 
                                 updateContinueWatchParams(hash, {
@@ -788,7 +737,7 @@
                     else render.find('.full-start__button').last().after(continueBtn);
 
                     Lampa.Controller.toggle('content'); 
-                    console.log("[ContinueWatch] v84 Buffer");
+                    console.log("[ContinueWatch] v85 Strict Isolation Ready");
                 }, 100); 
             }
         });
