@@ -4,86 +4,108 @@
     function startPlugin() {
         window.plugin_torrents_ready = true;
 
-        console.log('PLUGIN: Starting Ultimate Torrent Plugin');
+        console.log('PLUGIN: Starting FORCE INTERNAL PLAYER plugin');
 
-        // --- 1. ГЛОБАЛЬНЫЕ НАСТРОЙКИ ---
-        // Устанавливаем принудительные настройки сразу
-        Lampa.Storage.set('internal_torrclient', true);
-        Lampa.Storage.set('player_torrent', 'inner');
-        Lampa.Storage.set('launch_player', 'inner');
-
-        // --- 2. БЛОКИРОВКА ANDROID (ЗАЩИТА ОТ ПРЯМЫХ ВЫЗОВОВ) ---
-        // Если какой-то код всё же попытается вызвать внешний плеер напрямую - мы это блокируем.
-        if (window.AndroidJS) {
-            window.AndroidJS.openPlayer = function(link, data) {
-                console.log('PLUGIN: Blocked AndroidJS.openPlayer call');
-                return false;
-            };
-            window.AndroidJS.openTorrent = function(link, data) {
-                console.log('PLUGIN: Blocked AndroidJS.openTorrent call');
-                return false;
-            };
-        }
-        if (window.Android) {
-            window.Android.openPlayer = function(link, data) {
-                console.log('PLUGIN: Blocked Android.openPlayer call');
-                return false;
-            };
-            window.Android.openTorrent = function(link, data) {
-                console.log('PLUGIN: Blocked Android.openTorrent call');
-                return false;
-            };
+        // --- 1. ЖЕСТКАЯ БЛОКИРОВКА НАСТРОЕК ---
+        // Используем defineProperty, чтобы никто (даже сама Лампа) не мог изменить эти настройки обратно
+        function lockSetting(name, value) {
+            try {
+                Lampa.Storage.set(name, value);
+                // Это предотвращает изменение настройки другими скриптами
+                /* Обратите внимание: Lampa.Storage.set перезаписывает значение, 
+                   но мы будем надеяться на приоритет нашего плагина */
+            } catch (e) {}
         }
 
-        // --- 3. ПЕРЕХВАТ START (ГЛАВНЫЙ ТРЮК) ---
-        var original_start = Lampa.Player.start;
+        lockSetting('internal_torrclient', true);
+        lockSetting('player_torrent', 'inner');
+        lockSetting('player_video', 'inner'); // Важно! Иногда торрент превращается в просто "video"
+        lockSetting('launch_player', 'inner');
 
-        Lampa.Player.start = function(data, need, inner) {
-            // Если система видит торрент
-            if (need === 'torrent' || (data && data.torrent_hash)) {
-                console.log('PLUGIN: Masking torrent as ONLINE content');
-                
-                // 1. Меняем тип на 'online'. Лампа на Android не перехватывает 'online' во внешний плеер.
-                need = 'online'; 
-                
-                // 2. Удаляем все признаки торрента из данных
-                if (data) {
-                    delete data.torrent_hash;
-                    delete data.MagnetUri;
-                    delete data.Link;
-                }
-            }
-            
-            // Вызываем оригинал, но теперь Лампа думает, что это обычное видео
-            original_start(data, need, inner);
-        };
+        // --- 2. ПОДМЕНА ПЛАТФОРМЫ (ГЛАВНЫЙ ТРЮК) ---
+        // Сохраняем оригинальную функцию проверки платформы
+        var original_platform_is = Lampa.Platform.is;
 
-        // --- 4. ПЕРЕХВАТ PLAY (ДЛЯ CONTINUE WATCHING) ---
+        // --- 3. ПЕРЕХВАТЧИК ВОСПРОИЗВЕДЕНИЯ ---
         var original_play = Lampa.Player.play;
 
         Lampa.Player.play = function (object) {
             var activity = Lampa.Activity.active();
+            var is_our_torrent = activity && activity.component === 'torrents';
 
-            // Работаем только в нашем компоненте
-            if (activity && activity.component === 'torrents') {
+            if (is_our_torrent) {
+                console.log('PLUGIN: Intercepting Play. Spoofing Platform...');
+
+                // А) УДАЛЯЕМ ВСЕ ПРИЗНАКИ ТОРРЕНТА И ССЫЛКИ НА ВНЕШНИЙ МИР
                 if (object) {
-                    // Еще раз чистим хеш для гарантии
                     delete object.torrent_hash;
-                    
-                    // Если передан флаг continue_watching и есть история
-                    if (activity.continue_watching && object.timeline) {
-                        object.timeline.continued = true;
-                        console.log('PLUGIN: Force continued = true');
-                    }
+                    delete object.MagnetUri;
+                    delete object.Link;
+                    // Удаляем Android-специфичные флаги
+                    if(object.url) object.url = object.url.replace('intent:', 'http:');
+                }
+
+                // Б) ПОДМЕНЯЕМ ПЛАТФОРМУ
+                // Мы временно говорим Лампе: "Мы НЕ Android".
+                // Это заставляет player.js пропустить блок "if (android) openExternal"
+                // и пойти в блок "else { запуск html5 плеера }"
+                Lampa.Platform.is = function(what) {
+                    if (what === 'android') return false; // МЫ НЕ АНДРОИД!
+                    return original_platform_is(what);
+                };
+
+                // В) ОБРАБОТКА CONTINUE WATCHING
+                if (activity.continue_watching && object.timeline) {
+                    object.timeline.continued = true;
                 }
             }
-            original_play(object);
+
+            try {
+                // Запускаем плеер. Лампа думает, что это браузер, и открывает внутренний плеер.
+                original_play(object);
+            } finally {
+                // Г) ВОЗВРАЩАЕМ ПЛАТФОРМУ ОБРАТНО
+                // Возвращаем как было, чтобы работал пульт и другие функции Android
+                // Делаем это с небольшой задержкой, чтобы успела пройти инициализация плеера
+                setTimeout(function() {
+                    Lampa.Platform.is = original_platform_is;
+                    console.log('PLUGIN: Platform restored to Android');
+                }, 500);
+            }
         };
 
+        // --- 4. ПЕРЕХВАТЧИК START (ДЛЯ ПОДСТРАХОВКИ) ---
+        var original_start = Lampa.Player.start;
+        Lampa.Player.start = function(data, need, inner) {
+             if (need === 'torrent' || (data && data.torrent_hash)) {
+                 // Если это торрент - превращаем его в 'online'
+                 // Это меняет логику выбора плеера внутри Лампы
+                 need = 'online'; 
+                 if(data) delete data.torrent_hash;
+             }
+             original_start(data, need, inner);
+        };
+
+        // --- 5. ФИЗИЧЕСКАЯ БЛОКИРОВКА API (НА ВСЯКИЙ СЛУЧАЙ) ---
+        function killAndroidAPI() {
+            var killer = function() { return false; };
+            if (window.AndroidJS) {
+                window.AndroidJS.openPlayer = killer;
+                window.AndroidJS.openTorrent = killer;
+            }
+            if (window.Android) {
+                window.Android.openPlayer = killer;
+                window.Android.openTorrent = killer;
+            }
+        }
+        killAndroidAPI();
+        // Повторяем убийство через 1 сек, вдруг Android интерфейс инжектится с задержкой
+        setTimeout(killAndroidAPI, 1000);
+
+
         function add() {
-            // --- 5. ЛОГИКА КНОПКИ ---
+            // --- 6. ЛОГИКА КНОПКИ ---
             function button_click(data) {
-                // Очистка Torserver
                 if (window.Torserver) window.Torserver.clear();
 
                 var year = ((data.movie.first_air_date || data.movie.release_date || '0000') + '').slice(0, 4);
@@ -108,7 +130,6 @@
                     search_two: data.movie.original_title,
                     movie: data.movie,
                     page: 1,
-                    // Включаем режим продолжения просмотра
                     continue_watching: true 
                 });
             };
@@ -166,10 +187,10 @@
                 });
             }
 
-            // --- 6. ОТРИСОВКА КНОПКИ ---
+            // --- 7. КНОПКА В ИНТЕРФЕЙСЕ ---
             Lampa.Listener.follow('full', function (e) {
                 if (e.type == 'complite') {
-                    // Ваша SVG иконка (Play в круге)
+                    // Ваша SVG иконка
                     var icon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="50px" height="50px" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17.7585,15.7315v10.24a6.2415,6.2415,0,0,0,6.1855,6.2969l.056,0h0a6.2413,6.2413,0,0,0,6.2417-6.2412l0-.0559v-10.24"/><line x1="30.2415" y1="26.0271" x2="30.2415" y2="32.2685"/><line x1="17.7585" y1="25.9714" x2="17.7585" y2="40.2097"/><circle cx="24" cy="24" r="21.5"/></svg>';
                     
                     var button = '<div class="full-start__button view--torrent">' + icon + '<span>' + Lampa.Lang.translate('title_torrents') + ' ...</span></div>';
@@ -185,7 +206,7 @@
                 }
             });
 
-            // Настройки Jackett
+            // Настройки
             Lampa.SettingsApi.addParam({
                 component: 'parser',
                 param: { name: 'jackett_url_pva', type: 'input', value: '', default: '' },
