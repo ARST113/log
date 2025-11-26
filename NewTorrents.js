@@ -4,47 +4,54 @@
     function startPlugin() {
         window.plugin_torrents_ready = true;
 
-        // --- 1. ГЛОБАЛЬНЫЕ НАСТРОЙКИ (СРАЗУ ПРИ СТАРТЕ) ---
+        // --- 1. ГЛОБАЛЬНЫЕ НАСТРОЙКИ ---
+        // Устанавливаем при старте, чтобы перебить сохраненные настройки пользователя
         Lampa.Storage.set('internal_torrclient', true);
         Lampa.Storage.set('player_torrent', 'inner');
         Lampa.Storage.set('launch_player', 'inner');
 
-        // --- 2. ПЕРЕХВАТЧИК ФУНКЦИИ START (ГЛАВНАЯ ЗАЩИТА) ---
-        // Это самый эффективный способ запретить внешний плеер на Android.
-        // Мы перехватываем логику выбора плеера до того, как она проверит настройки системы.
+        // --- 2. ПЕРЕХВАТЧИК ЗАПУСКА (ГЛАВНАЯ ЗАЩИТА) ---
+        // Переопределяем функцию выбора плеера.
+        // Если это торрент - мы НЕМЕДЛЕННО вызываем inner() (внутренний плеер),
+        // полностью игнорируя проверки на Android и внешние приложения.
         var original_start = Lampa.Player.start;
 
         Lampa.Player.start = function(data, need, inner) {
-            // Если запрос на торрент или есть хеш торрента
+            // Проверяем, является ли источник торрентом
             if (need === 'torrent' || (data && data.torrent_hash)) {
-                console.log('Plugin: Intercepted start(), forcing inner() player');
-                // Сразу вызываем callback внутреннего плеера, прерывая цепочку проверок
-                inner(); 
-                return;
+                console.log('Plugin: Intercepted start(). FORCE INNER PLAYER.');
+                
+                // Прерываем стандартную цепочку и запускаем встроенный плеер
+                if (typeof inner === 'function') {
+                    inner();
+                }
+                return; 
             }
-            // Для всего остального (онлайн, трейлеры) используем стандартную логику
+            
+            // Для всего остального (YouTube, онлайн) работает как обычно
             original_start(data, need, inner);
         };
 
-        // --- 3. ПЕРЕХВАТЧИК ФУНКЦИИ PLAY (ЛОГИКА ДАННЫХ) ---
-        // Здесь мы чистим данные и обрабатываем флаг продолжения просмотра
+        // --- 3. ПЕРЕХВАТЧИК ВОСПРОИЗВЕДЕНИЯ (ЛОГИКА ДАННЫХ) ---
+        // Здесь мы обрабатываем флаг continue_watching и чистим данные
         var original_play = Lampa.Player.play;
 
         Lampa.Player.play = function (object) {
             var activity = Lampa.Activity.active();
 
-            // Если мы в компоненте торрентов
+            // Работаем только если сейчас активен компонент торрентов
             if (activity && activity.component === 'torrents') {
                 if (object) {
-                    // Удаляем хеш для подстраховки (чтобы внутренний плеер не сходил с ума)
+                    // Удаляем хеш для полной стерильности (чтобы плеер не думал, что это внешний контент)
                     delete object.torrent_hash;
 
-                    // Если передан флаг continue_watching, форсируем продолжение
+                    // Обработка флага продолжения просмотра
+                    // Если флаг передан в Activity.push и у видео есть история
                     if (activity.continue_watching && object.timeline) {
                         object.timeline.continued = true;
                     }
                     
-                    console.log('Plugin: Play wrapper executed. Continued:', !!(activity.continue_watching && object.timeline));
+                    console.log('Plugin: Play wrapper. Continued set:', !!(activity.continue_watching && object.timeline));
                 }
             }
 
@@ -52,9 +59,9 @@
         };
 
         function add() {
-            // --- 4. ЛОГИКА КНОПКИ ---
+            // --- 4. КЛИК ПО КНОПКЕ ---
             function button_click(data) {
-                // Очистка Torserver
+                // Очистка Torserver от старых раздач
                 if (window.Torserver) window.Torserver.clear();
 
                 var year = ((data.movie.first_air_date || data.movie.release_date || '0000') + '').slice(0, 4);
@@ -79,7 +86,7 @@
                     search_two: data.movie.original_title,
                     movie: data.movie,
                     page: 1,
-                    // Флаг для нашей логики continue watching
+                    // ВАЖНО: Параметр для пропуска рекламы/продолжения
                     continue_watching: true 
                 });
             };
@@ -140,7 +147,7 @@
             // --- 5. ДОБАВЛЕНИЕ КНОПКИ В ИНТЕРФЕЙС ---
             Lampa.Listener.follow('full', function (e) {
                 if (e.type == 'complite') {
-                    // Ваша иконка
+                    // Ваша иконка (Play в круге)
                     var icon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="50px" height="50px" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17.7585,15.7315v10.24a6.2415,6.2415,0,0,0,6.1855,6.2969l.056,0h0a6.2413,6.2413,0,0,0,6.2417-6.2412l0-.0559v-10.24"/><line x1="30.2415" y1="26.0271" x2="30.2415" y2="32.2685"/><line x1="17.7585" y1="25.9714" x2="17.7585" y2="40.2097"/><circle cx="24" cy="24" r="21.5"/></svg>';
                     
                     var button = '<div class="full-start__button view--torrent">' + icon + '<span>' + Lampa.Lang.translate('title_torrents') + ' ...</span></div>';
