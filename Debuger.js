@@ -37,25 +37,17 @@
 
     function setParams(data) {
         MEMORY_CACHE = data;
-        // Ускоряем сохранение: вместо 500мс ждем всего 50мс, чтобы минимизировать потерю данных при выходе
         clearTimeout(SAVE_TIMEOUT);
         SAVE_TIMEOUT = setTimeout(function() {
             Lampa.Storage.set('continue_watch_params', data);
-        }, 50); 
+        }, 500);
     }
 
     function updateContinueWatchParams(hash, data) {
         var params = getParams();
         if (!params[hash]) params[hash] = {};
-        
-        // Обновляем данные
-        for (var key in data) { 
-            params[hash][key] = data[key]; 
-        }
-        
-        // Всегда обновляем метку времени
+        for (var key in data) { params[hash][key] = data[key]; }
         params[hash].timestamp = Date.now();
-        
         setParams(params);
     }
 
@@ -103,7 +95,7 @@
         }, 5000);
     }
 
-    // --- ИСПРАВЛЕННАЯ ЛОГИКА ВЫБОРА СЕРИИ ---
+    // === УМНЫЙ ВЫБОР СЕРИИ (v74 FIX) ===
     function getStreamParams(movie) {
         if (!movie) return null;
         var title = movie.original_name || movie.original_title || movie.name || movie.title;
@@ -113,7 +105,7 @@
         if (movie.number_of_seasons) {
             var candidates = [];
             
-            // 1. Находим все записи для этого сериала
+            // 1. Собираем все записи этого сериала
             for (var hash in params) {
                 var p = params[hash];
                 if (p.title === title && p.season && p.episode && p.timestamp) {
@@ -123,43 +115,53 @@
 
             if (candidates.length === 0) return null;
 
-            // 2. Сортируем: самые свежие (по времени) сверху
+            // 2. Сортируем по времени (самые свежие сверху)
             candidates.sort(function(a, b) {
                 return b.timestamp - a.timestamp;
             });
 
-            var bestCandidate = candidates[0];
+            var best = candidates[0];
+            var now = best.timestamp;
 
-            // 3. ЛОГИКА "АНТИ-ОТКАТ":
-            // Проверяем другие недавние записи (в пределах 5 минут от лидера)
-            // Если есть серия с БОЛЬШИМ номером, которую смотрели только что - берем её.
-            // Это лечит баг, когда старая серия обновляется на секунду позже новой.
-            var now = candidates[0].timestamp;
-            
+            // 3. АНАЛИЗ КАНДИДАТОВ (Последние 12 часов)
+            // Ищем лучшего кандидата среди недавних
             for (var i = 1; i < candidates.length; i++) {
                 var other = candidates[i];
                 var timeDiff = Math.abs(now - other.timestamp);
-                
-                // Если разница меньше 5 минут (активное переключение)
-                if (timeDiff < 5 * 60 * 1000) {
-                    // Сравниваем (Сезон * 1000 + Эпизод)
-                    var bestScore = (bestCandidate.season * 10000) + bestCandidate.episode;
-                    var otherScore = (other.season * 10000) + other.episode;
+
+                // Если запись свежая (меньше 12 часов разницы с самой последней)
+                if (timeDiff < 12 * 60 * 60 * 1000) {
                     
-                    // Если "другая" серия новее по сюжету -> выбираем её
-                    if (otherScore > bestScore) {
-                        bestCandidate = other;
-                        console.log("[ContinueWatch] Smart Switch: Preferring newer episode", other.season, other.episode);
+                    var bestPercent = best.percent || 0;
+                    var otherPercent = other.percent || 0;
+                    
+                    var bestIsFinished = bestPercent > 95;
+                    var otherIsFinished = otherPercent > 95;
+
+                    // ПРАВИЛО 1: Недосмотренное важнее досмотренного
+                    if (bestIsFinished && !otherIsFinished) {
+                        best = other;
+                        console.log("[ContinueWatch] Preferring unfinished episode:", other.season, other.episode);
+                        continue;
+                    }
+
+                    // ПРАВИЛО 2: Если статусы равны (оба недосмотрены), берем ту, что дальше по номеру
+                    if (bestIsFinished === otherIsFinished) {
+                        var bestScore = (best.season * 10000) + best.episode;
+                        var otherScore = (other.season * 10000) + other.episode;
+                        
+                        if (otherScore > bestScore) {
+                            best = other;
+                            console.log("[ContinueWatch] Preferring later episode:", other.season, other.episode);
+                        }
                     }
                 } else {
-                    // Если разница больше 5 минут, дальше искать нет смысла (это старые просмотры)
-                    break; 
+                    break; // Дальше идут старые записи
                 }
             }
 
-            return bestCandidate;
+            return best;
         } else {
-            // Для фильмов всё просто
             var hash = Lampa.Utils.hash(title);
             return params[hash] || null;
         }
@@ -217,7 +219,6 @@
             var road = e.data.road;
             if (hash && road) {
                 var params = getParams();
-                // Если этот хеш нам знаком, обновляем его таймстемп и прогресс
                 if (params[hash]) {
                     updateContinueWatchParams(hash, {
                         percent: road.percent,
@@ -253,7 +254,7 @@
     }
 
     // ========================================================================
-    // 4. СБОРКА ПЛЕЙЛИСТА
+    // 4. СБОРКА ПЛЕЙЛИСТА (v69 STABLE)
     // ========================================================================
     function buildPlaylist(movie, currentParams, currentUrl, quietMode, callback) {  
         if (IS_BUILDING_PLAYLIST && !quietMode) {
@@ -626,7 +627,6 @@
                             var matchIndex = params.url && params.url.match(/[?&]index=(\d+)/);
                             
                             if (matchFile && matchLink) {
-                                // СОХРАНЯЕМ ВСЕ ПОЛЯ (Исправление "пустого" запуска)
                                 updateContinueWatchParams(hash, {
                                     file_name: decodeURIComponent(matchFile[1]),
                                     torrent_link: matchLink[1],
@@ -670,7 +670,6 @@
                     var timeStr = "";
 
                     if (params) {
-                        // PRELOAD
                         if (params.torrent_link) {
                             console.log("[ContinueWatch] Preloading metadata...");
                             Lampa.Torserver.files(params.torrent_link, function(){}, function(){});
@@ -728,7 +727,7 @@
                     else render.find('.full-start__button').last().after(continueBtn);
 
                     Lampa.Controller.toggle('content'); 
-                    console.log("[ContinueWatch] v73 Smart Anti-Flop Logic");
+                    console.log("[ContinueWatch] v74 Unfinished Priority Ready");
                 }, 100); 
             }
         });
