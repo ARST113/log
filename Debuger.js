@@ -4,9 +4,7 @@
     // ========================================================================
     // ПЕРЕМЕННЫЕ
     // ========================================================================
-    var MEMORY_CACHE = null;
     var TORRSERVER_CACHE = null;
-    var SAVE_TIMEOUT = null;
     var CURRENT_HASH = null;
     var CURRENT_MOVIE = null;
     var CURRENT_TIMELINE_VIEW = null;
@@ -19,36 +17,37 @@
     var LAUNCH_DEBOUNCE = null;
 
     // ========================================================================
-    // 1. ХРАНИЛИЩЕ
+    // 1. ХРАНИЛИЩЕ (БЕЗОПАСНАЯ ЗАПИСЬ)
     // ========================================================================
     
     Lampa.Storage.sync('continue_watch_params', 'object_object');
 
     Lampa.Storage.listener.follow('change', function(e) {
-        if (e.name === 'continue_watch_params') MEMORY_CACHE = null;
         if (e.name === 'torrserver_url' || e.name === 'torrserver_url_two' || e.name === 'torrserver_use_link') TORRSERVER_CACHE = null;
     });
 
+    // Чтение - можно из кэша Lampa (он сам обновляется)
     function getParams() {
-        if (!MEMORY_CACHE) MEMORY_CACHE = Lampa.Storage.get('continue_watch_params', {});
-        return MEMORY_CACHE;
+        return Lampa.Storage.get('continue_watch_params', {});
     }
 
-    function setParams(data) {
-        MEMORY_CACHE = data;
-        clearTimeout(SAVE_TIMEOUT);
-        // Очень быстрое сохранение, чтобы не потерять прогресс при переключении
-        SAVE_TIMEOUT = setTimeout(function() {
-            Lampa.Storage.set('continue_watch_params', data);
-        }, 10); 
-    }
-
+    // ГЛАВНОЕ ИСПРАВЛЕНИЕ: Прямая запись без промежуточного буфера
     function updateContinueWatchParams(hash, data) {
-        var params = getParams();
+        // 1. Читаем АКТУАЛЬНУЮ версию хранилища прямо перед записью
+        var params = Lampa.Storage.get('continue_watch_params', {});
+        
         if (!params[hash]) params[hash] = {};
-        for (var key in data) { params[hash][key] = data[key]; }
+        
+        // 2. Аккуратно обновляем поля
+        for (var key in data) { 
+            params[hash][key] = data[key]; 
+        }
+        
+        // 3. Обновляем время
         params[hash].timestamp = Date.now();
-        setParams(params);
+        
+        // 4. Сохраняем сразу (Lampa сама справится с частотой записи)
+        Lampa.Storage.set('continue_watch_params', params);
     }
 
     function getTorrServerUrl() {
@@ -81,7 +80,7 @@
     function cleanupOldParams() {
         setTimeout(function() {
             try {
-                var params = getParams();
+                var params = Lampa.Storage.get('continue_watch_params', {});
                 var now = Date.now();
                 var changed = false;
                 for (var hash in params) {
@@ -90,12 +89,12 @@
                         changed = true;
                     }
                 }
-                if (changed) setParams(params);
+                if (changed) Lampa.Storage.set('continue_watch_params', params);
             } catch (e) {}
         }, 5000);
     }
 
-    // === ЛОГИКА ВЫБОРА СЕРИИ v78 (Приоритет ID) ===
+    // === УМНЫЙ ВЫБОР СЕРИИ (v79 Logic) ===
     function getStreamParams(movie) {
         if (!movie) return null;
         var title = movie.original_name || movie.original_title || movie.name || movie.title;
@@ -105,9 +104,9 @@
         if (movie.number_of_seasons) {
             var candidates = [];
             
+            // 1. Собираем кандидатов
             for (var hash in params) {
                 var p = params[hash];
-                // Ищем записи, где есть file_index (надежно) или S/E
                 if (p.title === title && p.timestamp) {
                     candidates.push(p);
                 }
@@ -115,7 +114,7 @@
 
             if (candidates.length === 0) return null;
 
-            // Сортировка: самые свежие сверху
+            // 2. Сортируем по времени (свежие сверху)
             candidates.sort(function(a, b) {
                 return b.timestamp - a.timestamp;
             });
@@ -123,26 +122,33 @@
             var best = candidates[0];
             var now = best.timestamp;
 
-            // Защита от гонки (проверяем записи за последние 5 мин)
+            // 3. Логика "Только вперед" для недавних просмотров
+            // Если мы смотрели несколько серий за последние 15 минут
             for (var i = 1; i < candidates.length; i++) {
                 var other = candidates[i];
                 var timeDiff = Math.abs(now - other.timestamp);
 
-                if (timeDiff < 5 * 60 * 1000) { 
-                    // Если есть file_index, сравниваем по нему (это надежнее для аниме)
+                // Если записи "горячие" (разница меньше 15 мин)
+                if (timeDiff < 15 * 60 * 1000) {
+                    
+                    // Сравниваем по ID файла (самое надежное для аниме)
                     if (best.file_index !== undefined && other.file_index !== undefined) {
                         if (parseInt(other.file_index) > parseInt(best.file_index)) {
-                            best = other; // Выбираем файл с большим индексом (следующая серия)
+                            best = other; // Берем файл с большим номером
+                            console.log("[ContinueWatch] Smart Pick by Index:", other.file_index);
                         }
                     } 
-                    // Иначе по сезонам
+                    // Или по Сезонам/Эпизодам
                     else if (best.season && other.season) {
                         var bestScore = (best.season * 10000) + best.episode;
                         var otherScore = (other.season * 10000) + other.episode;
-                        if (otherScore > bestScore) best = other;
+                        if (otherScore > bestScore) {
+                            best = other;
+                            console.log("[ContinueWatch] Smart Pick by S/E:", other.season, other.episode);
+                        }
                     }
                 } else {
-                    break;
+                    break; // Дальше идут старые записи, их не трогаем
                 }
             }
             return best;
@@ -202,6 +208,7 @@
             var road = e.data.road;
             if (hash && road) {
                 var params = getParams();
+                // Проверяем наличие в базе, чтобы не писать лишнее
                 if (params[hash]) {
                     updateContinueWatchParams(hash, {
                         percent: road.percent,
@@ -220,8 +227,7 @@
         timeline.handler = function (percent, time, duration) {
             if (originalHandler) originalHandler(percent, time, duration);
             
-            // Сохраняем ВСЕ данные при обновлении таймлайна
-            // Это гарантирует, что при переключении серии в плеере, новая серия запишется полностью
+            // Сохраняем полную информацию при каждом обновлении
             updateContinueWatchParams(timeline.hash, {
                 file_name: params.file_name,
                 torrent_link: params.torrent_link,
@@ -240,7 +246,7 @@
     }
 
     // ========================================================================
-    // 4. СБОРКА ПЛЕЙЛИСТА (v78 INDEX MASTER)
+    // 4. СБОРКА ПЛЕЙЛИСТА (v79 ID MATCH + INTEGRITY)
     // ========================================================================
     function buildPlaylist(movie, currentParams, currentUrl, quietMode, callback) {  
         if (IS_BUILDING_PLAYLIST && !quietMode) {
@@ -264,7 +270,7 @@
             callback(resultList);
         };
 
-        // 1. Кэш (Исторический)
+        // 1. Кэш
         for (var hash in allParams) {  
             var p = allParams[hash];  
             if (p.title === title && p.season && p.episode) {  
@@ -283,12 +289,12 @@
                     });
                 }
                 
-                // ПРОВЕРКА ПО ID (ОСНОВНАЯ)
+                // Сравнение с учетом типов данных (==)
                 var isCurrent = false;
                 if (currentParams.file_index !== undefined && p.file_index !== undefined) {
-                    isCurrent = (parseInt(p.file_index) === parseInt(currentParams.file_index));
+                    isCurrent = (p.file_index == currentParams.file_index);
                 } else {
-                    isCurrent = (p.season === currentParams.season && p.episode === currentParams.episode);
+                    isCurrent = (p.season == currentParams.season && p.episode == currentParams.episode);
                 }
 
                 var item = {  
@@ -299,7 +305,7 @@
                     torrent_hash: p.torrent_hash || p.torrent_link,
                     card: movie,
                     url: buildStreamUrl(p),
-                    // Если ID совпал - ставим время. Если нет - сброс (-1)
+                    // Ставим позицию только текущему
                     position: isCurrent ? (timeline ? (timeline.time || 0) : 0) : -1 
                 };  
                 if (isCurrent) item.url = currentUrl;
@@ -375,30 +381,25 @@
                                     }
                                 }
 
-                                // === ID MATCHING (v78) ===
-                                // Сначала проверяем ID (самый надежный метод для аниме и плейлистов)
+                                // ID MATCHING (Мягкое сравнение)
                                 var isIndexMatch = false;
                                 if (currentParams.file_index !== undefined) {
-                                    isIndexMatch = (parseInt(file.id) === parseInt(currentParams.file_index));
+                                    isIndexMatch = (file.id == currentParams.file_index);
                                 }
-                                
-                                var isSmartMatch = (episodeValue && seasonValue === currentParams.season && episodeValue === currentParams.episode);
+                                var isSmartMatch = (episodeValue && seasonValue == currentParams.season && episodeValue == currentParams.episode);
 
-                                // Если совпал ID или S/E
                                 if (isIndexMatch || isSmartMatch || !movie.number_of_seasons) {
                                     
                                     var alreadyExists = false;
                                     if (movie.number_of_seasons) {
                                         alreadyExists = playlist.some(function(p) { 
                                             if (p.url && p.url.indexOf('index=' + file.id) > -1) return true;
-                                            // Если индексы совпали, то это дубликат, пропускаем
                                             if (isIndexMatch && p.position > -1) return true;
                                             return false;
                                         });
                                     }
 
                                     if (!alreadyExists) {
-                                        // Фолбэк
                                         if (isIndexMatch && !episodeValue) {
                                             episodeValue = currentParams.episode;
                                             seasonValue = currentParams.season;
@@ -450,8 +451,6 @@
                                                 torrent_hash: currentParams.torrent_link,
                                                 card: movie,
                                                 url: finalUrl,
-                                                // ВАЖНО: Если это текущий файл, ставим 0 (начало) или время. 
-                                                // Никогда не ставим -1 текущему файлу!
                                                 position: isCurrentFile ? (timeline ? (timeline.time || 0) : 0) : -1
                                             };
                                             
@@ -747,7 +746,7 @@
                     else render.find('.full-start__button').last().after(continueBtn);
 
                     Lampa.Controller.toggle('content'); 
-                    console.log("[ContinueWatch] v78 Index Master Ready");
+                    console.log("[ContinueWatch] v79 Storage Integrity Fix");
                 }, 100); 
             }
         });
