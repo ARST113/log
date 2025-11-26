@@ -7,17 +7,14 @@
     var TORRSERVER_CACHE = null;
     var CURRENT_HASH = null;
     var CURRENT_MOVIE = null;
-    var CURRENT_TIMELINE_VIEW = null;
-
     var PLAYER_START_HANDLER = null;
     var PLAYER_DESTROY_HANDLER = null;
     var LISTENERS_INITIALIZED = false;
-
     var IS_BUILDING_PLAYLIST = false;
     var LAUNCH_DEBOUNCE = null;
 
     // ========================================================================
-    // 1. ХРАНИЛИЩЕ (ПРЯМАЯ ЗАПИСЬ)
+    // 1. ХРАНИЛИЩЕ (INSTANT WRITE - БЕЗ ЗАДЕРЖЕК)
     // ========================================================================
     
     Lampa.Storage.sync('continue_watch_params', 'object_object');
@@ -26,21 +23,18 @@
         if (e.name === 'torrserver_url' || e.name === 'torrserver_url_two' || e.name === 'torrserver_use_link') TORRSERVER_CACHE = null;
     });
 
-    // Читаем всегда свежее с диска
     function getParams() {
         return Lampa.Storage.get('continue_watch_params', {});
     }
 
-    // Пишем сразу на диск, минуя переменные
+    // ЗАПИСЬ: Мгновенно и синхронно
     function updateContinueWatchParams(hash, data) {
         var params = Lampa.Storage.get('continue_watch_params', {});
-        
         if (!params[hash]) params[hash] = {};
         
         for (var key in data) { 
             params[hash][key] = data[key]; 
         }
-        
         params[hash].timestamp = Date.now();
         
         Lampa.Storage.set('continue_watch_params', params);
@@ -90,7 +84,7 @@
         }, 5000);
     }
 
-    // === УМНЫЙ ВЫБОР СЕРИИ ===
+    // === УМНЫЙ ВЫБОР (v80 Logic) ===
     function getStreamParams(movie) {
         if (!movie) return null;
         var title = movie.original_name || movie.original_title || movie.name || movie.title;
@@ -108,9 +102,7 @@
 
             if (candidates.length === 0) return null;
 
-            candidates.sort(function(a, b) {
-                return b.timestamp - a.timestamp;
-            });
+            candidates.sort(function(a, b) { return b.timestamp - a.timestamp; });
 
             var best = candidates[0];
             var now = best.timestamp;
@@ -193,7 +185,6 @@
                         percent: road.percent,
                         time: road.time,
                         duration: road.duration,
-                        // [FIX] Сохраняем название при обновлении таймлайна
                         episode_title: params[hash].episode_title 
                     });
                 }
@@ -226,7 +217,7 @@
     }
 
     // ========================================================================
-    // 4. СБОРКА ПЛЕЙЛИСТА
+    // 4. СБОРКА ПЛЕЙЛИСТА (v85 STRICT ISOLATION)
     // ========================================================================
     function buildPlaylist(movie, currentParams, currentUrl, quietMode, callback) {  
         if (IS_BUILDING_PLAYLIST && !quietMode) {
@@ -250,10 +241,17 @@
             callback(resultList);
         };
 
-        // 1. Кэш
+        // 1. Сборка из кэша (СТРОГАЯ ФИЛЬТРАЦИЯ)
         for (var hash in allParams) {  
             var p = allParams[hash];  
             if (p.title === title && p.season && p.episode) {  
+                
+                // [FIX v85] Если торрент-ссылка отличается - НЕ БЕРЕМ ЭТОТ ФАЙЛ
+                // Это решает проблему смешивания старых и новых раздач
+                if (currentParams.torrent_link && p.torrent_link && p.torrent_link !== currentParams.torrent_link) {
+                    continue;
+                }
+
                 var separator = p.season > 10 ? ':' : '';  
                 var episodeHash = Lampa.Utils.hash([p.season, separator, p.episode, title].join(''));  
                 var timeline = Lampa.Timeline.view(episodeHash);  
@@ -270,7 +268,7 @@
                     });
                 }
                 
-                // [FIX] Строгое приведение к int для сравнения
+                // ID MATCH
                 var isCurrent = false;
                 if (currentParams.file_index !== undefined && p.file_index !== undefined) {
                     isCurrent = (parseInt(p.file_index) === parseInt(currentParams.file_index));
@@ -278,7 +276,6 @@
                     isCurrent = (p.season == currentParams.season && p.episode == currentParams.episode);
                 }
 
-                // [FIX] Названия
                 var displayTitle = p.episode_title;
                 if (!displayTitle) {
                     displayTitle = 'S' + p.season + ' E' + p.episode;
@@ -590,7 +587,6 @@
                     title: data.card.original_name || data.card.original_title || data.card.title,
                     season: data.season,
                     episode: data.episode,
-                    // [FIX] Сохраняем правильное название эпизода
                     episode_title: data.episode_title || ('S' + data.season + ' E' + data.episode)
                 });
             }
@@ -639,6 +635,8 @@
                             var matchIndex = params.url && params.url.match(/[?&]index=(\d+)/);
                             
                             if (matchFile && matchLink) {
+                                var epTitle = params.episode_title || ('S' + season + ' E' + episode);
+                                
                                 updateContinueWatchParams(hash, {
                                     file_name: decodeURIComponent(matchFile[1]),
                                     torrent_link: matchLink[1],
@@ -646,8 +644,7 @@
                                     title: baseTitle,
                                     season: season,
                                     episode: episode,
-                                    // [FIX] Не перезаписываем title
-                                    episode_title: params.episode_title || ('S' + season + ' E' + episode)
+                                    episode_title: epTitle
                                 });
                             }
                         }
@@ -659,7 +656,7 @@
     }
 
     // ========================================================================
-    // 6. КНОПКА (С ПРЕДЗАГРУЗКОЙ)
+    // 6. КНОПКА
     // ========================================================================
 
     function handleContinueClick(movieData) {
@@ -740,7 +737,7 @@
                     else render.find('.full-start__button').last().after(continueBtn);
 
                     Lampa.Controller.toggle('content'); 
-                    console.log("[ContinueWatch] v82 Final Stability Ready");
+                    console.log("[ContinueWatch] v85 Strict Isolation Ready");
                 }, 100); 
             }
         });
