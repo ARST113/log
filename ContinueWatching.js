@@ -441,7 +441,7 @@
     }
 
     // ========================================================================
-    // 5. ЗАПУСК ПЛЕЕРА
+    // 5. ЗАПУСК ПЛЕЕРА (МОДИФИЦИРОВАНО: ПОДДЕРЖКА ВСТРОЕННОГО ПЛЕЕРА)
     // ========================================================================
     function launchPlayer(movie, params) {  
         var url = buildStreamUrl(params);  
@@ -471,29 +471,58 @@
             duration: timeline.duration
         });
 
+        // --- ЛОГИКА ВЫБОРА ПЛЕЕРА ---
         var player_type = Lampa.Storage.field('player_torrent');
-        var isExternalPlayer = (player_type !== 'inner' && player_type !== 'lampa');
+        var force_inner = (player_type === 'inner');
+        var isExternalPlayer = !force_inner && (player_type !== 'lampa');
+
+        // Подготовка данных для плеера
+        var playerData = {    
+            url: url,    
+            title: params.episode_title || params.title || movie.title,  
+            card: movie,    
+            torrent_hash: params.torrent_link,    
+            timeline: timeline,  
+            season: params.season,  
+            episode: params.episode,  
+            position: timeline.time || -1  
+        };
+
+        // --- СПУФИНГ И ЧИСТКА (ДЛЯ ВСТРОЕННОГО ПЛЕЕРА) ---
+        if (force_inner) {
+            console.log("[ContinueWatch] Forcing INNER player via spoofing");
+            
+            // 1. Чистим признаки торрента, чтобы Android не перехватил
+            delete playerData.torrent_hash;
+            
+            // 2. Включаем подмену платформы
+            var original_platform_is = Lampa.Platform.is;
+            Lampa.Platform.is = function(what) {
+                if (what === 'android') return false; 
+                return original_platform_is(what);
+            };
+
+            // 3. Возвращаем как было через 500мс
+            setTimeout(function() {
+                Lampa.Platform.is = original_platform_is;
+            }, 500);
+
+            // 4. Принудительный флаг
+            Lampa.Storage.set('internal_torrclient', true);
+        }
 
         if (isExternalPlayer) {
+            // ВНЕШНИЙ ПЛЕЕР (Android default)
             buildPlaylist(movie, params, url, false, function(playlist) {
                 if (playlist.length === 0 && !params.torrent_link) return;
+                playerData.playlist = playlist.length ? playlist : null;
                 
-                var playerData = {    
-                    url: url,    
-                    title: params.episode_title || params.title || movie.title,  
-                    card: movie,    
-                    torrent_hash: params.torrent_link,    
-                    timeline: timeline,  
-                    season: params.season,  
-                    episode: params.episode,  
-                    playlist: playlist.length ? playlist : null,
-                    position: timeline.time || -1  
-                };  
                 Lampa.Player.play(playerData);
                 Lampa.Player.callback(function() { Lampa.Controller.toggle('content'); });  
             });
         } else {
-            // Внутренний плеер: ЗАПУСК СРАЗУ
+            // ВНУТРЕННИЙ ПЛЕЕР (Lampa / Inner)
+            // Создаем временный плейлист для старта
             var tempPlaylist = [];
             var currentItem = {
                 url: url,
@@ -507,24 +536,15 @@
             if (movie.number_of_seasons) {
                 tempPlaylist.push({ title: 'Загрузка списка...', url: '', timeline: {} });
             }
+            playerData.playlist = tempPlaylist;
 
-            var playerData = {    
-                url: url,    
-                title: params.episode_title || params.title || movie.title,  
-                card: movie,    
-                torrent_hash: params.torrent_link,    
-                timeline: timeline,
-                season: params.season,
-                episode: params.episode,
-                playlist: tempPlaylist
-            };
-            
             if (timeline.time > 0) Lampa.Noty.show('Восстанавливаем: ' + formatTime(timeline.time));
             
             Lampa.Player.play(playerData);
             setupPlayerListeners();
             Lampa.Player.callback(function() { Lampa.Controller.toggle('content'); });
 
+            // Фоновая загрузка плейлиста для сериалов
             if (movie.number_of_seasons && params.season && params.episode) {
                 console.log("[ContinueWatch] Starting background playlist build...");
                 buildPlaylist(movie, params, url, true, function(playlist) {
