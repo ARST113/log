@@ -131,14 +131,7 @@
         var query = [];
         if (params.torrent_link) query.push('link=' + params.torrent_link);
         query.push('index=' + (params.file_index || 0));
-        
-        // --- ОБНОВЛЕНИЕ: Учет настройки preload ---
-        // Lampa обычно использует логику: если preload включен, клиент ждет буфера. 
-        // Но для прямой ссылки мы все равно должны передать 'play', чтобы сервер начал отдавать поток.
-        // Если нужно явное поведение предзагрузки в URL, можно добавить &preload, но это зависит от версии TorrServer.
-        // Для совместимости оставляем 'play', а настройка будет влиять на поведение плеера Лампы (если она это поддерживает).
         query.push('play');
-        
         return url + '?' + query.join('&');
     }
 
@@ -752,6 +745,13 @@
     }
 
     function add() {
+        // --- ПРОВЕРКА ПЛАТФОРМЫ ---
+        // Отключаем плагин на WebOS и Tizen
+        if (Lampa.Platform.is('webos') || Lampa.Platform.is('tizen')) {
+            console.log('Plugin [ContinueWatch]: Disabled on WebOS/Tizen');
+            return;
+        }
+
         addSettings(); // <-- Внедрение настройки
         patchPlayer();
         cleanupOldParams();
