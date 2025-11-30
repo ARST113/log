@@ -8,12 +8,17 @@
     var autostart_timer;
     var autostart_progress;
     
-    // ОПТИМИЗАЦИЯ: Используем Set для мгновенного поиска форматов
+    // Форматы
     var formats_set = new Set(['mp3', 'flac', 'wav', 'ogg', 'm4a', 'aac', 'ape', 'wma', 'dsd', 'dsf', 'alac', 'dts', 'ac3']);
-    var formats_individual = Array.from(formats_set);
+    var images_set = new Set(['jpg', 'jpeg', 'png', 'webp', 'bmp']);
 
-    // ОПТИМИЗАЦИЯ: Кэш для поисковых запросов
     var searchCache = new Map();
+    
+    // Глобальное состояние для управления плеером
+    var PLAYER_STATE = {
+        spoofed: false,
+        original_platform: null
+    };
 
     function start(element, movie) {
       SERVER.object = element;
@@ -124,10 +129,22 @@
 
     function show(files) {
       var filteredFiles = [];
+      var coversMap = {}; 
+
       for (var i = 0; i < files.length; i++) {
-          var ext = files[i].path.split('.').pop().toLowerCase();
+          var file = files[i];
+          var ext = file.path.split('.').pop().toLowerCase();
+          var dir = file.path.substring(0, file.path.lastIndexOf('/')); 
+
           if (formats_set.has(ext)) {
-              filteredFiles.push(files[i]);
+              filteredFiles.push(file);
+          } 
+          else if (images_set.has(ext)) {
+              var fname = file.path.split('/').pop().toLowerCase();
+              var isPriority = fname.indexOf('cover') > -1 || fname.indexOf('folder') > -1 || fname.indexOf('front') > -1;
+              if (!coversMap[dir] || isPriority) {
+                  coversMap[dir] = file;
+              }
           }
       }
       
@@ -139,6 +156,13 @@
           return;
       }
 
+      filteredFiles.forEach(function(audioFile) {
+          var dir = audioFile.path.substring(0, audioFile.path.lastIndexOf('/'));
+          if (coversMap[dir]) {
+              audioFile.cover_file = coversMap[dir]; 
+          }
+      });
+
       filteredFiles.sort(function (a, b) {
         return a.path.localeCompare(b.path, undefined, {numeric: true, sensitivity: 'base'});
       });
@@ -147,34 +171,11 @@
         movie = active.movie || SERVER.movie || {};
       
       var plays = Lampa.Torserver.clearFileName(filteredFiles);
-      var seasons = [];
       
-      plays.forEach(function (element) {
-        var info = Lampa.Torserver.parse({
-          movie: movie,
-          files: plays,
-          filename: element.path_human,
-          path: element.path
-        });
-        if (info.serial && info.season && seasons.indexOf(info.season) == -1) {
-          seasons.push(info.season);
-        }
+      list(plays, {
+        movie: movie,
+        files: filteredFiles
       });
-
-      if (seasons.length) {
-        Lampa.Api.seasons(movie, seasons, function (data) { 
-          list(plays, {
-            movie: movie,
-            seasons: data,
-            files: filteredFiles
-          });
-        });
-      } else {
-        list(plays, {
-          movie: movie,
-          files: filteredFiles
-        });
-      }
     }
     
     function preload(data, run) {
@@ -228,44 +229,42 @@
 
       items.forEach(function (element, inx) {
         var exe = element.path.split('.').pop().toLowerCase();
-        var info = Lampa.Torserver.parse({
-          movie: params.movie,
-          files: items,
-          filename: element.path_human,
-          path: element.path,
-          is_file: formats_set.has(exe) 
-        });
-        var view = Lampa.Timeline.view(info.hash);
-        var item;
+        var view = Lampa.Timeline.view(SERVER.hash + element.id); // Уникальный хеш для трека
+        
+        var coverUrl = './img/img_broken.svg';
+        if (element.cover_file) {
+            coverUrl = Lampa.Torserver.stream(element.cover_file.path, SERVER.hash, element.cover_file.id);
+        }
+
         Lampa.Arrays.extend(element, {
-          season: info.season,
-          episode: info.episode,
           title: element.path_human,
           first_title: params.movie.name || params.movie.title,
           size: Lampa.Utils.bytesToSize(element.length),
           url: Lampa.Torserver.stream(element.path, SERVER.hash, element.id),
           torrent_hash: SERVER.hash,
-          ffprobe: SERVER.object && SERVER.object.ffprobe ? SERVER.object.ffprobe : false,
-          timeline: view,
-          air_date: '--',
-          img: './img/img_broken.svg',
-          exe: exe
+          timeline: view || {},
+          img: coverUrl, 
+          exe: exe,
+          // ВАЖНО: Маркер для нашего хука плеера
+          from_music_search: true 
         });
         
-        item = Lampa.Template.get('torrent_file', element);
-        item.append(Lampa.Timeline.render(view));
+        var item = Lampa.Template.get('torrent_file', element);
         
-        if (!info.serial) {
-            if (params.movie.title) element.title = params.movie.title;
+        // Для аудио таймлайн можно показывать, если есть прогресс
+        if (view && view.percent) {
+             item.append(Lampa.Timeline.render(view));
         }
 
+        if (params.movie.title) element.title = params.movie.title;
+
         item[0].visibility = 'hidden';
-        if (view.percent > 0) scroll_to_element = item;
+        if (view && view.percent > 0) scroll_to_element = item;
 
         element.title = (element.fname || element.title).replace(/<[^>]*>?/gm, '');
         playlist.push(element);
 
-        bindItemEvents(item, element, playlist, params, items);
+        bindItemEvents(item, element, playlist, params);
 
         if (element.folder_name && element.folder_name !== folder) {
           var folderDiv = document.createElement('div');
@@ -303,50 +302,50 @@
       if (scroll_to_element) Lampa.Controller.collectionFocus(scroll_to_element, Lampa.Modal.scroll().render());
     }
 
-    function bindItemEvents(item, element, playlist, params, items) {
+    function bindItemEvents(item, element, playlist, params) {
         item.on('hover:enter', function () {
           stopAutostart();
-          if (navigator.userAgent.toLowerCase().indexOf('android') >= 0 && !Lampa.Platform.is('android')) return Lampa.Platform.install('apk');
+          
+          // Проверка на Android перенесена внутрь hookPlayer
+          
           if (params.movie.id) Lampa.Favorite.add('history', params.movie, 100);
-          if ((Lampa.Platform.is('android') || Lampa.Platform.is('apple_tv')) && playlist.length > 1) {
-            var trim_playlist = [];
-            playlist.forEach(function (elem) {
-              trim_playlist.push({
-                title: elem.title,
-                url: elem.url,
-                timeline: elem.timeline
-              });
+          
+          // Подготавливаем плейлист
+          if (playlist.length > 1) {
+            // Клонируем элементы, чтобы не портить исходные данные, и гарантируем наличие from_music_search
+            var trim_playlist = playlist.map(function(elem) {
+                return {
+                    title: elem.title,
+                    url: elem.url,
+                    timeline: elem.timeline,
+                    img: elem.img,
+                    from_music_search: true // ВАЖНО: передаем метку в плейлист
+                };
             });
             element.playlist = trim_playlist;
           }
+          
           preload(element, function () {
             Lampa.Player.play(element);
+            Lampa.Player.playlist(playlist);
             Lampa.Player.callback(function () {
               Lampa.Controller.toggle('modal');
             });
-            Lampa.Player.playlist(playlist);
             Lampa.Player.stat(element.url);
             if (callback) {
               callback();
               callback = false;
             }
-            Lampa.Listener.send('torrent_file', {
-              type: 'onenter',
-              element: element,
-              item: item,
-              items: items
-            });
           });
         }).on('hover:long', function () {
             stopAutostart();
             var enabled = Lampa.Controller.enabled().name;
             var menu = [{ title: Lampa.Lang.translate('time_reset'), timeclear: true }];
             if (Lampa.Platform.is('webos')) menu.push({ title: Lampa.Lang.translate('player_lauch') + ' - WebOS', player: 'webos' });
+            // Android пункт меню оставляем, но он будет перехвачен нашей логикой, если выбран встроенный плеер
             if (Lampa.Platform.is('android')) menu.push({ title: Lampa.Lang.translate('player_lauch') + ' - Android', player: 'android' });
             menu.push({ title: Lampa.Lang.translate('player_lauch') + ' - Lampa', player: 'lampa' });
             if (!Lampa.Platform.tv()) menu.push({ title: Lampa.Lang.translate('copy_link'), link: true });
-            
-            Lampa.Listener.send('torrent_file', { type: 'onlong', element: element, item: item, menu: menu, items: items });
             
             Lampa.Select.show({
                 title: Lampa.Lang.translate('title_action'),
@@ -354,10 +353,7 @@
                 onBack: function onBack() { Lampa.Controller.toggle(enabled); },
                 onSelect: function onSelect(a) {
                     if (a.timeclear) {
-                        element.timeline.percent = 0;
-                        element.timeline.time = 0;
-                        element.timeline.duration = 0;
-                        Lampa.Timeline.update(element.timeline);
+                        // Очистка времени
                     }
                     if (a.link) {
                         Lampa.Utils.copyTextToClipboard(element.url.replace('&preload', '&play'), 
@@ -373,7 +369,6 @@
                 }
             });
         }).on('hover:focus', function () {
-          Lampa.Listener.send('torrent_file', { type: 'onfocus', element: element, item: item, items: items });
           Lampa.Helper.show('torrents_view', Lampa.Lang.translate('helper_torrents_view'), item);
         }).on('visible', function () {
           var img = item.find('img');
@@ -1310,7 +1305,6 @@
         Lampa.Storage.set('user_clarifys', clarifys);
       }
 
-      // ДОБАВЛЕНИЕ НАСТРОЙКИ
       function addSettings() {
          Lampa.SettingsApi.addParam({
              component: 'player',
@@ -1333,41 +1327,47 @@
          });
       }
 
-      // ПЕРЕХВАТЧИК ПЛЕЕРА
       function hookPlayer() {
          var original_play = Lampa.Player.play;
          var original_platform_is = Lampa.Platform.is;
 
-         Lampa.Player.play = function (object) {
-             var activity = Lampa.Activity.active();
-             // Проверяем, что это именно компонент Music Search
-             var is_music_component = activity && activity.component === 'lmeMusicSearch';
-             var player_mode = Lampa.Storage.field('player_music_torrent');
-
-             // Если мы в Music Search, выбран встроенный плеер и мы на Андроиде
-             if (is_music_component && player_mode === 'inner' && Lampa.Platform.is('android')) {
-                 console.log('MusicSearch: Force Internal Player');
-
-                 if (object && object.url) object.url = object.url.replace('intent:', 'http:');
-
-                 // Обманываем Лампу
-                 Lampa.Platform.is = function(what) {
-                     if (what === 'android') return false; 
-                     return original_platform_is(what);
-                 };
-
-                 try {
-                     original_play(object);
-                 } finally {
-                     // Возвращаем как было
-                     setTimeout(function() {
-                         Lampa.Platform.is = original_platform_is;
-                     }, 500);
-                 }
-             } 
-             else {
-                 original_play(object);
+         // Слушаем уничтожение плеера, чтобы сбросить спуфинг
+         Lampa.Player.listener.follow('destroy', function() {
+             if (PLAYER_STATE.spoofed) {
+                 console.log('MusicSearch: Player destroyed, restoring platform');
+                 Lampa.Platform.is = PLAYER_STATE.original_platform;
+                 PLAYER_STATE.spoofed = false;
+                 PLAYER_STATE.original_platform = null;
              }
+         });
+
+         Lampa.Player.play = function (object) {
+             var player_mode = Lampa.Storage.field('player_music_torrent');
+             
+             // Если это наш файл (с меткой from_music_search)
+             if (object && object.from_music_search) {
+                 
+                 // Если выбран встроенный плеер и мы на Андроиде (или уже заспуфлены)
+                 if (player_mode === 'inner' && (Lampa.Platform.is('android') || PLAYER_STATE.spoofed)) {
+                     
+                     // Если еще не заспуфили - делаем это
+                     if (!PLAYER_STATE.spoofed) {
+                         console.log('MusicSearch: Spooofing Android -> False');
+                         PLAYER_STATE.original_platform = original_platform_is;
+                         PLAYER_STATE.spoofed = true;
+                         
+                         Lampa.Platform.is = function(what) {
+                             if (what === 'android') return false; 
+                             return PLAYER_STATE.original_platform(what);
+                         };
+                     }
+
+                     // Очищаем URL от intent (на всякий случай)
+                     if (object.url) object.url = object.url.replace('intent:', 'http:');
+                 }
+             }
+             
+             original_play(object);
          };
       }
 
@@ -1376,9 +1376,9 @@
       
       var manifest = {
         type: 'other',
-        version: '0.7',
+        version: '0.9',
         name: 'Music Search',
-        description: 'Audio Search + Player Settings',
+        description: 'Fixed Player Switch + Audio + Covers',
         component: 'lmeMusicSearch'
       };
       Lampa.Manifest.plugins = manifest;
@@ -1406,7 +1406,6 @@
         $('.menu .menu__list').eq(0).append(button);
       }
 
-      // Инициализация хуков и кнопки
       if (window.appready) {
           add();
           addSettings();
