@@ -86,7 +86,6 @@
       });
     }
 
-    // ОПТИМИЗАЦИЯ: Ускоренный опрос файлов (1 сек интервал)
     function files() {
       var repeat = 0;
       var maxAttempts = 60; 
@@ -124,7 +123,6 @@
     }
 
     function show(files) {
-      // ОПТИМИЗАЦИЯ: Быстрая фильтрация через Set
       var filteredFiles = [];
       for (var i = 0; i < files.length; i++) {
           var ext = files[i].path.split('.').pop().toLowerCase();
@@ -141,7 +139,6 @@
           return;
       }
 
-      // ОПТИМИЗАЦИЯ: Numeric sort
       filteredFiles.sort(function (a, b) {
         return a.path.localeCompare(b.path, undefined, {numeric: true, sensitivity: 'base'});
       });
@@ -215,7 +212,6 @@
       } else run();
     }
 
-    // ОПТИМИЗАЦИЯ: Использование DocumentFragment
     function list(items, params) {
       var html = $('<div class="torrent-files"></div>');
       var playlist = [];
@@ -511,19 +507,17 @@
       addSource();
     }
     
-    // ИСПРАВЛЕНИЕ: Безопасное кэширование, избегающее Circular JSON
     function get() {
       var params = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
       var oncomplite = arguments.length > 1 ? arguments[1] : undefined;
       var onerror = arguments.length > 2 ? arguments[2] : undefined;
       
-      // Создаем безопасный объект для ключа, беря только данные, а не DOM-элементы
       var safeParamsForKey = {
           search: params.search,
           query: params.query,
           movieId: params.movie ? params.movie.id : 0,
           page: params.page || 1,
-          type: Lampa.Storage.field('parser_torrent_type') // Учитываем тип парсера в ключе
+          type: Lampa.Storage.field('parser_torrent_type') 
       };
       
       var cacheKey = JSON.stringify(safeParamsForKey);
@@ -761,7 +755,6 @@
       
       var viewed = Lampa.Storage.cache('torrents_view', 5000, []);
       
-      // ОПТИМИЗАЦИЯ: Кэш для регулярных выражений поиска
       var regexCache = {};
 
       scroll.minus(files.render().find('.explorer__files-head'));
@@ -1008,7 +1001,6 @@
         }
       };
       
-      // ОПТИМИЗАЦИЯ: Debounce для фильтрации
       this.applyFilter = function () {
         clearTimeout(filterTimeout);
         var _this = this;
@@ -1044,13 +1036,12 @@
                 yer = filter_data.year,
                 fmt = Lampa.Arrays.toArray(filter_data.format); 
 
-            // ОПТИМИЗАЦИЯ: Кэширование регулярных выражений
             var test = function test(search, test_index) {
               if (!regexCache[search]) {
                   try {
                       regexCache[search] = new RegExp(search);
                   } catch (e) {
-                      regexCache[search] = { test: function() { return false; } }; // Fallback
+                      regexCache[search] = { test: function() { return false; } }; 
                   }
               }
               return test_index ? title.indexOf(search) >= 0 : regexCache[search].test(title);
@@ -1319,14 +1310,75 @@
         Lampa.Storage.set('user_clarifys', clarifys);
       }
 
+      // ДОБАВЛЕНИЕ НАСТРОЙКИ
+      function addSettings() {
+         Lampa.SettingsApi.addParam({
+             component: 'player',
+             param: {
+                 name: 'player_music_torrent',
+                 type: 'select',
+                 values: {
+                     'android': 'Android (Внешний)',
+                     'inner': 'Lampa (Встроенный)'
+                 },
+                 default: 'android'
+             },
+             field: {
+                 name: 'Плеер для музыки (Music Search)',
+                 description: 'Выберите плеер для воспроизведения торрентов из Music Search'
+             },
+             onChange: function(value) {
+                 Lampa.Storage.set('player_music_torrent', value);
+             }
+         });
+      }
+
+      // ПЕРЕХВАТЧИК ПЛЕЕРА
+      function hookPlayer() {
+         var original_play = Lampa.Player.play;
+         var original_platform_is = Lampa.Platform.is;
+
+         Lampa.Player.play = function (object) {
+             var activity = Lampa.Activity.active();
+             // Проверяем, что это именно компонент Music Search
+             var is_music_component = activity && activity.component === 'lmeMusicSearch';
+             var player_mode = Lampa.Storage.field('player_music_torrent');
+
+             // Если мы в Music Search, выбран встроенный плеер и мы на Андроиде
+             if (is_music_component && player_mode === 'inner' && Lampa.Platform.is('android')) {
+                 console.log('MusicSearch: Force Internal Player');
+
+                 if (object && object.url) object.url = object.url.replace('intent:', 'http:');
+
+                 // Обманываем Лампу
+                 Lampa.Platform.is = function(what) {
+                     if (what === 'android') return false; 
+                     return original_platform_is(what);
+                 };
+
+                 try {
+                     original_play(object);
+                 } finally {
+                     // Возвращаем как было
+                     setTimeout(function() {
+                         Lampa.Platform.is = original_platform_is;
+                     }, 500);
+                 }
+             } 
+             else {
+                 original_play(object);
+             }
+         };
+      }
+
       cleanupUserClarifys();
       window.lmeMusicSearch_ready = true;
       
       var manifest = {
         type: 'other',
-        version: '0.6',
+        version: '0.7',
         name: 'Music Search',
-        description: 'Fixed Circular JSON Error',
+        description: 'Audio Search + Player Settings',
         component: 'lmeMusicSearch'
       };
       Lampa.Manifest.plugins = manifest;
@@ -1353,9 +1405,19 @@
         });
         $('.menu .menu__list').eq(0).append(button);
       }
-      if (window.appready) add();else {
+
+      // Инициализация хуков и кнопки
+      if (window.appready) {
+          add();
+          addSettings();
+          hookPlayer();
+      } else {
         Lampa.Listener.follow('app', function (e) {
-          if (e.type === 'ready') add();
+          if (e.type === 'ready') {
+              add();
+              addSettings();
+              hookPlayer();
+          }
         });
       }
     }
