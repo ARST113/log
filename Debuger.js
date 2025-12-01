@@ -66,7 +66,7 @@
             /episode\s*\d+/gi,
             /сезон\s*\d+/gi,
             /серия\s*\d+/gi,
-            /1080p|720p|4k|2160p|web-dl|webrip|hdtv/gi
+            /1080p|720p|4k|2160p|web-dl|webrip|hdtv|rip/gi
         ];
         
         patterns.forEach(function(pattern) {
@@ -75,14 +75,15 @@
 
         // Убираем спецсимволы и лишние пробелы
         fileName = fileName.replace(/[._\-]/g, ' ').replace(/\s+/g, ' ').trim();
-        return fileName;
+        // Если после очистки пусто, возвращаем исходное (без расширения) или ничего
+        return fileName || filePath.split('/').pop(); 
     }
 
     function updateContinueWatchParams(hash, data) {
         var params = getParams();
         if (!params[hash]) params[hash] = {};
         
-        // Автоматически извлекаем название, если его нет
+        // Автоматически извлекаем название, если его нет, но есть имя файла
         if (data.file_name && !data.episode_title && !params[hash].episode_title) {
             data.episode_title = extractEpisodeTitleFromPath(data.file_name);
         }
@@ -181,7 +182,6 @@
         var title = movie.original_name || movie.original_title || movie.name || movie.title;
         var nextEp = null;
         
-        // Ищем эпизод того же сезона, но с номером +1
         Object.keys(params).forEach(function(hash) {
             var p = params[hash];
             if (p.title === title && p.season === currentParams.season && p.episode === currentParams.episode + 1) {
@@ -268,7 +268,7 @@
     }
 
     // ========================================================================
-    // 4. ПЛЕЙЛИСТ (С ФИЛЬТРАЦИЕЙ ПО СЕЗОНУ)
+    // 4. ПЛЕЙЛИСТ
     // ========================================================================
     function buildPlaylist(movie, currentParams, currentUrl, quietMode, callback) {  
         if (STATE.building_playlist && !quietMode) {
@@ -292,10 +292,9 @@
             callback(resultList);
         };
 
-        // 1. ИЗ ИСТОРИИ (С ФИЛЬТРОМ СЕЗОНА)
+        // 1. ИЗ ИСТОРИИ
         for (var hash in allParams) {  
             var p = allParams[hash];  
-            // ФИЛЬТР: Только текущий сезон
             if (p.title === title && p.season && p.episode && (!currentParams.season || p.season === currentParams.season)) {  
                 var episodeHash = generateHash(movie, p.season, p.episode);
                 var timeline = Lampa.Timeline.view(episodeHash);  
@@ -303,6 +302,7 @@
                 if (timeline) wrapTimelineHandler(timeline, p);
                 
                 var isCurrent = (p.season === currentParams.season && p.episode === currentParams.episode);
+                // Для плейлиста используем красивое название
                 var displayTitle = p.episode_title || ('S' + p.season + ' E' + p.episode);
 
                 var item = {  
@@ -322,7 +322,7 @@
 
         if (!currentParams.torrent_link) { finalize(playlist); return; }
 
-        // 2. ИЗ TORRSERVER (С ФИЛЬТРОМ СЕЗОНА)
+        // 2. ИЗ TORRSERVER
         var processFiles = function(files) {
             if (!FILES_CACHE[currentParams.torrent_link]) {
                 FILES_CACHE[currentParams.torrent_link] = files;
@@ -339,7 +339,6 @@
                         movie: movie, files: [file], filename: file.path.split('/').pop(), path: file.path, is_file: true 
                     });
 
-                    // СТРОГИЙ ФИЛЬТР: Только если сезон совпадает
                     if (!movie.number_of_seasons || (episodeInfo.season === currentParams.season)) {
                         var epKey = episodeInfo.season + '_' + episodeInfo.episode;
                         
@@ -431,29 +430,34 @@
     // 5. ЛОГИКА ПЛЕЕРА И СИНХРОНИЗАЦИЯ
     // ========================================================================
     function launchPlayer(movie, params) {
-        // ЛОГИКА 1: Проверка на >90% и авто-переход
         var currentHash = generateHash(movie, params.season, params.episode);
         var timeline = Lampa.Timeline.view(currentHash);
 
+        // AUTO-NEXT Logic
         if (timeline && timeline.percent > 95 && movie.number_of_seasons) {
-            // Пытаемся найти следующую серию в истории
             var nextParams = findNextEpisode(movie, params);
             if (nextParams) {
-                Lampa.Noty.show('Запуск следующей серии (S' + nextParams.season + ' E' + nextParams.episode + ')...');
+                Lampa.Noty.show('Запуск следующей серии...');
                 params = nextParams;
-                // Сбрасываем таймлайн для новой серии, если он вдруг тоже "просмотрен"
                 currentHash = generateHash(movie, params.season, params.episode);
                 timeline = Lampa.Timeline.view(currentHash);
                 if (timeline && timeline.percent > 95) {
                     timeline.percent = 0; timeline.time = 0; 
                 }
             } else {
-                // Если следующей нет в истории, сбрасываем текущую в начало
                 Lampa.Noty.show('Серия просмотрена. Запуск с начала.');
                 params.time = 0;
                 params.percent = 0;
                 if(timeline) { timeline.time = 0; timeline.percent = 0; }
             }
+        }
+
+        // FIX: Если названия нет, извлекаем его принудительно перед стартом и сохраняем
+        if (!params.episode_title && params.file_name) {
+            params.episode_title = extractEpisodeTitleFromPath(params.file_name);
+            updateContinueWatchParams(currentHash, {
+                episode_title: params.episode_title
+            });
         }
 
         var url = buildStreamUrl(params);  
@@ -476,11 +480,12 @@
         var force_inner = (player_type === 'inner');
         var isExternalPlayer = !force_inner && (player_type !== 'lampa');
 
-        var displayTitle = params.episode_title || ('S' + params.season + ' E' + params.episode);
-        if (!movie.number_of_seasons) displayTitle = params.title || movie.title;
+        // Для плеера используем Полное название (включая русское)
+        var playerTitle = params.episode_title || ('S' + params.season + ' E' + params.episode);
+        if (!movie.number_of_seasons) playerTitle = params.title || movie.title;
 
         var playerData = {    
-            url: url, title: displayTitle, card: movie,    
+            url: url, title: playerTitle, card: movie,    
             torrent_hash: params.torrent_link, timeline: timeline,  
             season: params.season, episode: params.episode, position: timeline.time || -1  
         };
@@ -501,7 +506,7 @@
                 Lampa.Player.callback(function() { Lampa.Controller.toggle('content'); });  
             });
         } else {
-            var tempPlaylist = [{ url: url, title: displayTitle, timeline: timeline, season: params.season, episode: params.episode, card: movie }];
+            var tempPlaylist = [{ url: url, title: playerTitle, timeline: timeline, season: params.season, episode: params.episode, card: movie }];
             if (movie.number_of_seasons) tempPlaylist.push({ title: 'Загрузка списка...', url: '', timeline: {} });
             playerData.playlist = tempPlaylist;
 
@@ -545,7 +550,6 @@
         LISTENERS.initialized = false;
     }
 
-    // ЛОГИКА 3: Исправление синхронизации внешнего плеера
     function patchPlayer() {
         var originalPlay = Lampa.Player.play;
         Lampa.Player.play = function (params) {
@@ -555,7 +559,6 @@
                     var hash = generateHash(movie, params.season, params.episode);
                     if (hash) {
                         var timeline = Lampa.Timeline.view(hash);
-                        // Защита: не обновляем метаданные в 0, если эпизод уже просмотрен (или почти просмотрен внешним плеером)
                         var hasSignificantProgress = timeline && (timeline.percent > 5);
                         
                         if (!hasSignificantProgress) {
@@ -564,12 +567,13 @@
                             var matchIndex = params.url && params.url.match(/[?&]index=(\d+)/);
                             
                             if (matchFile && matchLink) {
+                                var fileName = decodeURIComponent(matchFile[1]);
                                 var epTitle = params.title || params.episode_title;
-                                // Если заголовка нет в параметрах, пробуем извлечь из файла
-                                if (!epTitle) epTitle = extractEpisodeTitleFromPath(decodeURIComponent(matchFile[1]));
+                                // Принудительно извлекаем заголовок при прямом запуске
+                                if (!epTitle) epTitle = extractEpisodeTitleFromPath(fileName);
 
                                 updateContinueWatchParams(hash, {
-                                    file_name: decodeURIComponent(matchFile[1]),
+                                    file_name: fileName,
                                     torrent_link: matchLink[1],
                                     file_index: matchIndex ? parseInt(matchIndex[1]) : 0,
                                     title: movie.original_name || movie.original_title || movie.title,
@@ -615,7 +619,6 @@
                     var params = getStreamParams(e.data.movie);
                     if (!params) return;
 
-                    // Предзагрузка для быстрого старта
                     if (params.torrent_link && !FILES_CACHE[params.torrent_link]) {
                         Lampa.Torserver.files(params.torrent_link, function(json){
                             if(json && json.file_stats) FILES_CACHE[params.torrent_link] = json.file_stats;
@@ -630,16 +633,11 @@
                     if (view && view.percent > 0) { percent = view.percent; timeStr = formatTime(view.time); } 
                     else if (params.time) { percent = params.percent || 0; timeStr = formatTime(params.time); }
 
+                    // ЛАКОНИЧНЫЙ ТЕКСТ КНОПКИ
                     var labelText = 'Продолжить';
                     if (params.season && params.episode) {
                         labelText += ' S' + params.season + ' E' + params.episode;
                     }
-                    
-                    // Добавляем красивое название эпизода
-                    if (params.episode_title) {
-                        labelText += ' - ' + params.episode_title;
-                    }
-
                     if (timeStr) labelText += ' <span style="opacity:0.7;font-size:0.9em">(' + timeStr + ')</span>';
 
                     var dashArray = (percent * 65.97 / 100).toFixed(2);
@@ -673,7 +671,7 @@
         cleanupOldParams();
         setupContinueButton();
         setupTimelineSaving();
-        console.log("[ContinueWatch] v72 Loaded. AutoNext + Filter + Sync + Titles.");
+        console.log("[ContinueWatch] v73 Loaded. Instant Titles Fix.");
     }
 
     if (window.appready) add();
