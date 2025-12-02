@@ -2,7 +2,7 @@
     'use strict';
 
     // ========================================================================
-    // 1. КОНФИГУРАЦИЯ
+    // 1. КОНФИГУРАЦИЯ И CSS
     // ========================================================================
     
     var SERVER = {};
@@ -37,7 +37,20 @@
         .music-item.focus{background:rgba(255,255,255,0.15);transform:scale(1.01)}.music-item__icon{width:30px;height:30px;border-radius:4px;background:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;margin-right:12px;flex-shrink:0}
         .music-item__info{flex:1;min-width:0;display:flex;flex-direction:column}.music-item__title{font-size:15px;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
         .music-item__meta{font-size:11px;color:#888;margin-top:2px}.music-item__format{background:rgba(255,255,255,0.1);padding:1px 4px;border-radius:3px;margin-right:6px;font-weight:bold;font-size:9px}
-        .music-item__size{color:#666}@media screen and (max-width:580px){.music-player{min-width:auto;max-width:160px}.music-player__info{display:none}}
+        .music-item__size{color:#666}
+        .music-playlist{padding:20px}
+        .music-playlist__header{font-size:20px;font-weight:bold;color:#fff;margin-bottom:15px;display:flex;align-items:center;justify-content:space-between}
+        .music-playlist__count{font-size:14px;color:#888;font-weight:normal}
+        .music-playlist__item{display:flex;align-items:center;padding:10px;margin-bottom:4px;background:rgba(255,255,255,0.03);border-radius:6px;transition:all 0.2s;cursor:pointer}
+        .music-playlist__item.active{background:rgba(76,175,80,0.2);border:1px solid rgba(76,175,80,0.4)}
+        .music-playlist__item.focus{background:rgba(255,255,255,0.15);transform:scale(1.01)}
+        .music-playlist__item-num{width:30px;text-align:center;font-size:14px;color:#666;flex-shrink:0}
+        .music-playlist__item-info{flex:1;min-width:0;margin:0 10px}
+        .music-playlist__item-title{font-size:14px;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .music-playlist__item-artist{font-size:11px;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+        .music-playlist__item-format{background:rgba(255,255,255,0.1);padding:2px 6px;border-radius:3px;font-size:10px;color:#aaa;flex-shrink:0}
+        .music-playlist__empty{text-align:center;padding:40px 20px;color:#666;font-size:14px}
+        @media screen and (max-width:580px){.music-player{min-width:auto;max-width:160px}.music-player__info{display:none}}
     `;
 
     var templates = {
@@ -50,6 +63,16 @@
                     <div class="music-player__status">Готов</div>
                 </div>
                 <div class="music-player__controls">
+                    <div class="music-player__button music-player__playlist selector" title="Playlist">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <line x1="8" y1="6" x2="21" y2="6"></line>
+                            <line x1="8" y1="12" x2="21" y2="12"></line>
+                            <line x1="8" y1="18" x2="21" y2="18"></line>
+                            <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                            <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                            <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                        </svg>
+                    </div>
                     <div class="music-player__button music-player__prev selector"><svg width="14" height="14" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" fill="white"/></svg></div>
                     <div class="music-player__button music-player__play selector">
                         <svg class="play-icon" width="16" height="16" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="white"/></svg>
@@ -72,7 +95,7 @@
     }
 
     // ========================================================================
-    // 2. SIMPLE NATIVE PLAYER
+    // 2. PLAYER LOGIC
     // ========================================================================
     function createMusicPlayer() {
         var html = $(templates.music_player);
@@ -85,66 +108,26 @@
         audio.crossOrigin = "anonymous";
         audio.preload = "auto";
 
-        audio.addEventListener("play", function () { 
-            updateState(true); 
-            setStatus('Играет');
-            console.log('[MusicPlayer] Playing:', audio.src);
-        });
-        
-        audio.addEventListener("pause", function () { 
-            updateState(false); 
-            setStatus('Пауза'); 
-            console.log('[MusicPlayer] Paused');
-        });
-        
-        audio.addEventListener("ended", function () { 
-            _this.next(); 
-        });
+        audio.addEventListener("play", function () { updateState(true); setStatus('Играет'); console.log('[MusicPlayer] Playing:', audio.src); });
+        audio.addEventListener("pause", function () { updateState(false); setStatus('Пауза'); console.log('[MusicPlayer] Paused'); });
+        audio.addEventListener("ended", function () { _this.next(); });
         
         audio.addEventListener("error", function (e) {
             var errorCode = audio.error ? audio.error.code : 0;
-            var errorMessage = audio.error ? audio.error.message : 'Unknown';
-            
-            console.log('[MusicPlayer] Error code:', errorCode, 'Message:', errorMessage);
-            console.log('[MusicPlayer] URL:', audio.src);
-            
-            if (errorCode === 4) {
-                setStatus('Формат не поддерживается');
-            } else if (errorCode === 3) {
-                setStatus('Ошибка декодирования');
-            } else if (errorCode === 2) {
-                setStatus('Ошибка сети');
-            } else if (errorCode === 1) {
-                setStatus('Загрузка прервана');
-            } else {
-                setStatus('Ошибка воспроизведения');
-            }
-            
+            if (errorCode === 4) setStatus('Формат не поддерживается');
+            else if (errorCode === 3) setStatus('Ошибка декодирования');
+            else if (errorCode === 2) setStatus('Ошибка сети');
+            else if (errorCode === 1) setStatus('Загрузка прервана');
+            else setStatus('Ошибка воспроизведения');
             updateState(false);
             html.removeClass('loading');
         });
         
-        audio.addEventListener("waiting", function() { 
-            html.addClass('loading'); 
-            setStatus('Буферизация...');
-        });
-        
-        audio.addEventListener("canplay", function() { 
-            html.removeClass('loading'); 
-        });
-        
-        audio.addEventListener("loadeddata", function() { 
-            html.removeClass('loading');
-        });
-        
-        audio.addEventListener("loadedmetadata", function() { 
-            console.log('[MusicPlayer] Duration:', audio.duration);
-        });
+        audio.addEventListener("waiting", function() { html.addClass('loading'); setStatus('Буферизация...'); });
+        audio.addEventListener("canplay", function() { html.removeClass('loading'); });
+        audio.addEventListener("loadeddata", function() { html.removeClass('loading'); });
 
-        function setStatus(text) { 
-            html.find('.music-player__status').text(text); 
-        }
-
+        function setStatus(text) { html.find('.music-player__status').text(text); }
         function updateState(isPlaying) {
             html.toggleClass('stop', !isPlaying);
             html.toggleClass('loading', false);
@@ -158,47 +141,32 @@
             }
         };
 
-        this.setPlaylist = function (playlist) { 
-            currentPlaylist = playlist; 
-        };
-
+        this.setPlaylist = function (playlist) { currentPlaylist = playlist; };
+        
         this.play = function (track, playlist) {
             if (playlist) currentPlaylist = playlist;
-            
-            currentTrackIndex = currentPlaylist.findIndex(function(t) { 
-                return t.url === track.url; 
-            });
+            currentTrackIndex = currentPlaylist.findIndex(function(t) { return t.url === track.url; });
             if (currentTrackIndex === -1) currentTrackIndex = 0;
-
             clearTimeout(playTimer);
-            
             html.find('.music-player__name').text(track.title);
             html.find('.music-player__artist').text(track.artist || track.album || '');
             html.find('.music-player__cover').attr('src', track.img || './img/img_broken.svg');
             html.removeClass('hide');
             html.addClass('loading');
             setStatus('Загрузка...');
-
-            playTimer = setTimeout(function() {
-                _this.playTrack(track);
-            }, 200);
+            playTimer = setTimeout(function() { _this.playTrack(track); }, 200);
         };
 
         this.playTrack = function(track) {
-            console.log('[MusicPlayer] Loading:', track.title, track.format);
-            
             audio.pause();
             audio.src = '';
-            
             setTimeout(function() {
                 audio.src = track.url;
                 audio.load();
-                
                 var playPromise = audio.play();
                 if (playPromise) {
                     playPromise.catch(function(error) {
                         if (error.name !== 'AbortError') {
-                            console.log('[MusicPlayer] Play error:', error.name);
                             setStatus('Не удалось запустить');
                             updateState(false);
                         }
@@ -207,273 +175,183 @@
             }, 100);
         };
 
-        this.toggle = function() {
-            if (audio.paused) { 
-                audio.play().catch(function(){}); 
-            } else {
-                audio.pause();
-            }
-        };
-
+        this.toggle = function() { if (audio.paused) audio.play().catch(function(){}); else audio.pause(); };
+        
         this.next = function() {
             if (currentPlaylist.length > 0) {
                 currentTrackIndex = (currentTrackIndex + 1) % currentPlaylist.length;
                 this.play(currentPlaylist[currentTrackIndex], currentPlaylist);
             }
         };
-
+        
         this.prev = function() {
             if (currentPlaylist.length > 0) {
                 currentTrackIndex = (currentTrackIndex - 1 + currentPlaylist.length) % currentPlaylist.length;
                 this.play(currentPlaylist[currentTrackIndex], currentPlaylist);
             }
         };
+        
+        this.stop = function() { audio.pause(); audio.src = ''; html.addClass('hide'); };
 
-        this.stop = function() { 
-            audio.pause();
-            audio.src = '';
-            html.addClass('hide'); 
+        // НОВАЯ ФУНКЦИЯ: Показать плейлист
+        this.showPlaylist = function() {
+            if (currentPlaylist.length === 0) {
+                Lampa.Noty.show('Плейлист пуст');
+                return;
+            }
+
+            var playlistHtml = $('<div class="music-playlist"></div>');
+            var header = $('<div class="music-playlist__header">Текущий плейлист <span class="music-playlist__count">' + currentPlaylist.length + ' треков</span></div>');
+            playlistHtml.append(header);
+
+            var currentUrl = audio.src;
+            
+            currentPlaylist.forEach(function(track, index) {
+                var isActive = track.url === currentUrl;
+                var item = $('<div class="music-playlist__item selector' + (isActive ? ' active' : '') + '"></div>');
+                
+                item.append($('<div class="music-playlist__item-num">' + (index + 1) + '</div>'));
+                
+                var info = $('<div class="music-playlist__item-info"></div>');
+                info.append($('<div class="music-playlist__item-title">' + track.title + '</div>'));
+                info.append($('<div class="music-playlist__item-artist">' + (track.artist || track.album || 'Unknown') + '</div>'));
+                item.append(info);
+                
+                item.append($('<div class="music-playlist__item-format">' + (track.format || 'MP3') + '</div>'));
+                
+                item.on('hover:enter', function() {
+                    _this.play(track, currentPlaylist);
+                    Lampa.Modal.close();
+                });
+                
+                playlistHtml.append(item);
+            });
+
+            Lampa.Modal.open({
+                title: '',
+                html: playlistHtml,
+                size: 'medium',
+                mask: true,
+                onBack: function() {
+                    Lampa.Modal.close();
+                    Lampa.Controller.toggle('head');
+                }
+            });
+
+            // Устанавливаем фокус на активный трек или первый
+            var activeItem = playlistHtml.find('.music-playlist__item.active');
+            var firstItem = activeItem.length ? activeItem : playlistHtml.find('.music-playlist__item').first();
+            
+            if (firstItem.length) {
+                Lampa.Controller.collectionFocus(firstItem[0], playlistHtml);
+            }
         };
 
-        // ✅ ТОЛЬКО hover:enter БЕЗ click
-        html.find('.music-player__play').on('hover:enter', function () { 
-            _this.toggle(); 
-        });
-
-        html.find('.music-player__next').on('hover:enter', function () { 
-            _this.next(); 
-        });
-
-        html.find('.music-player__prev').on('hover:enter', function () { 
-            _this.prev(); 
-        });
+        html.find('.music-player__playlist').on('hover:enter', function () { _this.showPlaylist(); });
+        html.find('.music-player__play').on('hover:enter', function () { _this.toggle(); });
+        html.find('.music-player__next').on('hover:enter', function () { _this.next(); });
+        html.find('.music-player__prev').on('hover:enter', function () { _this.prev(); });
     }
 
     // ========================================================================
-    // 3. TORRSERVER & PARSING
+    // 3. TORRSERVER LOGIC
     // ========================================================================
-    
     function start(element, movie) {
       SERVER.object = element;
       if (movie) SERVER.movie = movie;
-      if (Lampa.Torserver.url()) {
-        loading();
-        connect();
-      } else install();
+      if (Lampa.Torserver.url()) { loading(); connect(); } else install();
     }
-
-    function loading() {
-      Lampa.Modal.open({
-        title: '', html: Lampa.Template.get('modal_loading'), size: 'large', mask: true,
-        onBack: function onBack() { Lampa.Modal.close(); close(); }
-      });
-    }
-
-    function connect() {
-      Lampa.Torserver.connected(function () { hash(); }, function () { Lampa.Torserver.error(); });
-    }
-
+    function loading() { Lampa.Modal.open({ title: '', html: Lampa.Template.get('modal_loading'), size: 'large', mask: true, onBack: function onBack() { Lampa.Modal.close(); close(); } }); }
+    function connect() { Lampa.Torserver.connected(function () { hash(); }, function () { Lampa.Torserver.error(); }); }
     function hash() {
       var title = SERVER.object.Title || SERVER.object.title || 'Unknown';
       var magnet = SERVER.object.MagnetUri || SERVER.object.Link;
-
-      Lampa.Torserver.hash({
-        title: title,
-        link: magnet,
-        poster: SERVER.object.poster,
-        data: { lampa: true, movie: SERVER.movie }
-      }, function (json) {
-        SERVER.hash = json.hash;
-        files();
-      }, function (echo) {
-        Lampa.Modal.update(Lampa.Template.get('error', {
-            title: Lampa.Lang.translate('title_error'),
-            text: 'Ошибка добавления: ' + (echo || 'Unknown')
-        }));
-      });
+      Lampa.Torserver.hash({ title: title, link: magnet, poster: SERVER.object.poster, data: { lampa: true, movie: SERVER.movie } }, 
+        function (json) { SERVER.hash = json.hash; files(); }, 
+        function (echo) { Lampa.Modal.update(Lampa.Template.get('error', { title: Lampa.Lang.translate('title_error'), text: 'Ошибка добавления: ' + (echo || 'Unknown') })); }
+      );
     }
-
     function files() {
-      var repeat = 0;
-      var maxAttempts = 60; 
-      var ts_url = Lampa.Torserver.url();
-      var endpoint = ts_url.replace(/\/$/, '') + '/torrents'; 
-
+      var repeat = 0, maxAttempts = 60, ts_url = Lampa.Torserver.url(), endpoint = ts_url.replace(/\/$/, '') + '/torrents'; 
       timers.files = setInterval(function () {
         repeat++;
-        
-        fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json;charset=utf-8' },
-            body: JSON.stringify({ action: 'get', hash: SERVER.hash })
-        })
-        .then(function(response) {
-            if (!response.ok) throw new Error('HTTP');
-            return response.json();
-        })
-        .then(function(json) {
-            if (json && json.file_stats && json.file_stats.length > 0) {
-                clearInterval(timers.files);
-                show(json.file_stats);
-            }
-        })
+        fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json;charset=utf-8' }, body: JSON.stringify({ action: 'get', hash: SERVER.hash }) })
+        .then(function(response) { return response.json(); })
+        .then(function(json) { if (json && json.file_stats && json.file_stats.length > 0) { clearInterval(timers.files); show(json.file_stats); } })
         .catch(function(err) {}); 
-        
         if (repeat >= maxAttempts) {
-          Lampa.Modal.update(Lampa.Template.get('error', {
-            title: Lampa.Lang.translate('title_error'),
-            text: Lampa.Lang.translate('torrent_parser_timeout')
-          }));
-          Lampa.Torserver.clear();
-          Lampa.Torserver.drop(SERVER.hash);
-          clearInterval(timers.files);
+          Lampa.Modal.update(Lampa.Template.get('error', { title: Lampa.Lang.translate('title_error'), text: Lampa.Lang.translate('torrent_parser_timeout') }));
+          Lampa.Torserver.clear(); Lampa.Torserver.drop(SERVER.hash); clearInterval(timers.files);
         }
       }, 1500); 
     }
-
-    function install() {
-      Lampa.Modal.open({
-        title: '', html: Lampa.Template.get('torrent_install', {}), size: 'large',
-        onBack: function onBack() { Lampa.Modal.close(); Lampa.Controller.toggle('content'); }
-      });
-    }
-
-    // ========================================================================
-    // 4. DISPLAY LOGIC
-    // ========================================================================
-
+    function install() { Lampa.Modal.open({ title: '', html: Lampa.Template.get('torrent_install', {}), size: 'large', onBack: function onBack() { Lampa.Modal.close(); Lampa.Controller.toggle('content'); } }); }
     function show(files) {
         try {
-            var coversMap = {};
-            var albums = {}; 
-
+            var coversMap = {}, albums = {}; 
             if (!files || !Array.isArray(files)) return;
-
             for (var i = 0; i < files.length; i++) {
-                var file = files[i];
-                if (!file.path) continue;
-
+                var file = files[i]; if (!file.path) continue;
                 var ext = file.path.split('.').pop().toLowerCase();
                 var dir = file.path.substring(0, file.path.lastIndexOf('/'));
                 var pathParts = file.path.split('/');
-
                 if (images_set.has(ext)) {
                     var fname = file.path.split('/').pop().toLowerCase();
                     var isPriority = fname.indexOf('cover') > -1 || fname.indexOf('folder') > -1 || fname.indexOf('front') > -1;
                     if (!coversMap[dir] || isPriority) coversMap[dir] = file;
                 }
-                
                 if (formats_set.has(ext)) {
                     var trackName = pathParts[pathParts.length - 1].replace('.' + ext, '');
-                    var albumName = 'Unknown Album';
-                    var artistName = 'Unknown Artist';
-
-                    if (pathParts.length >= 2) albumName = pathParts[pathParts.length - 2];
-                    if (pathParts.length >= 3) artistName = pathParts[pathParts.length - 3];
-
+                    var albumName = pathParts.length >= 2 ? pathParts[pathParts.length - 2] : 'Unknown Album';
+                    var artistName = pathParts.length >= 3 ? pathParts[pathParts.length - 3] : 'Unknown Artist';
                     var albumKey = artistName + '||' + albumName;
                     if(!albums[albumKey]) albums[albumKey] = { artist: artistName, album: albumName, dir: dir, tracks: [], cover: null };
-
-                    albums[albumKey].tracks.push({
-                        file: file,
-                        title: trackName,
-                        format: ext.toUpperCase()
-                    });
+                    albums[albumKey].tracks.push({ file: file, title: trackName, format: ext.toUpperCase() });
                 }
             }
-
             var sortedAlbums = Object.values(albums).sort(function(a,b){ return a.artist.localeCompare(b.artist); });
-
-            if (sortedAlbums.length === 0) {
-                Lampa.Modal.update(Lampa.Template.get('error', { title: Lampa.Lang.translate('empty_title'), text: 'Аудио файлы не найдены' }));
-                return;
-            }
-
+            if (sortedAlbums.length === 0) { Lampa.Modal.update(Lampa.Template.get('error', { title: Lampa.Lang.translate('empty_title'), text: 'Аудио файлы не найдены' })); return; }
             sortedAlbums.forEach(function(album) {
                 if (coversMap[album.dir]) album.cover = Lampa.Torserver.stream(coversMap[album.dir].path, SERVER.hash, coversMap[album.dir].id);
                 else album.cover = './img/img_broken.svg';
-                
                 album.tracks.sort(function(a,b){ return a.file.path.localeCompare(b.file.path, undefined, {numeric: true}); });
             });
-
             renderList(sortedAlbums);
-        } catch (e) {
-            Lampa.Modal.update(Lampa.Template.get('error', { title: 'Render Error', text: e.message }));
-        }
+        } catch (e) { Lampa.Modal.update(Lampa.Template.get('error', { title: 'Render Error', text: e.message })); }
     }
-
     function renderList(albums) {
         var html = $('<div class="music-albums"></div>');
         var allTracksPlaylist = []; 
-
         albums.forEach(function(album) {
             var header = $(`<div class="music-album__header"><div class="music-album__artist">${album.artist}</div><div class="music-album__title">${album.album}</div></div>`);
             html.append(header);
-
             album.tracks.forEach(function(trackObj) {
                 var file = trackObj.file;
-                
-                var baseUrl = Lampa.Torserver.stream(file.path, SERVER.hash, file.id);
-                var trackUrl = baseUrl;
-                
-                if (trackUrl.indexOf('?') > -1) {
-                    if (trackUrl.indexOf('play') === -1) {
-                        trackUrl += '&play';
-                    }
-                } else {
-                    trackUrl += '?play';
-                }
-                
-                var trackData = {
-                    title: trackObj.title, 
-                    artist: album.artist, 
-                    album: album.album,
-                    url: trackUrl, 
-                    img: album.cover, 
-                    from_music_search: true,
-                    format: trackObj.format
-                };
+                var trackUrl = Lampa.Torserver.stream(file.path, SERVER.hash, file.id);
+                trackUrl += (trackUrl.indexOf('?') > -1 ? '&play' : '?play');
+                var trackData = { title: trackObj.title, artist: album.artist, album: album.album, url: trackUrl, img: album.cover, from_music_search: true, format: trackObj.format };
                 allTracksPlaylist.push(trackData);
-
-                var itemHtml = fillTemplate(templates.music_item, {
-                    title: trackObj.title,
-                    format: trackObj.format,
-                    size: Lampa.Utils.bytesToSize(file.length)
-                });
+                var itemHtml = fillTemplate(templates.music_item, { title: trackObj.title, format: trackObj.format, size: Lampa.Utils.bytesToSize(file.length) });
                 var item = $(itemHtml);
-
-                item.on('hover:enter', function() {
-                    window.musicPlayer.play(trackData, allTracksPlaylist);
-                });
+                item.on('hover:enter', function() { window.musicPlayer.play(trackData, allTracksPlaylist); });
                 html.append(item);
             });
         });
-
         Lampa.Modal.update(html);
         var firstItem = html.find('.music-item').first();
         if (firstItem.length) Lampa.Controller.collectionFocus(firstItem, Lampa.Modal.scroll().render());
     }
-
-    function close() {
-        Lampa.Torserver.drop(SERVER.hash);
-        Lampa.Torserver.clear();
-        clearInterval(timers.files);
-        SERVER = {};
-    }
+    function close() { Lampa.Torserver.drop(SERVER.hash); Lampa.Torserver.clear(); clearInterval(timers.files); SERVER = {}; }
 
     // ========================================================================
-    // 5. SEARCH & PARSERS
+    // 5. PARSERS
     // ========================================================================
-    
     var network = new Lampa.Reguest();
-    
     function get(params = {}, oncomplite, onerror) {
         var safeParamsForKey = { search: params.search, query: params.query, page: params.page || 1, type: Lampa.Storage.field('parser_torrent_type') };
         var cacheKey = JSON.stringify(safeParamsForKey);
-        
         if (searchCache.has(cacheKey)) { oncomplite(searchCache.get(cacheKey)); return; }
         function complite(data) { searchCache.set(cacheKey, data); oncomplite(data); }
-
         var parserType = Lampa.Storage.field('parser_torrent_type');
         if (parserType == 'jackett') jackett(Lampa.Utils.checkEmptyUrl(Lampa.Storage.field('jackett_url')), params, complite, onerror);
         else if (parserType == 'prowlarr') prowlarr(Lampa.Utils.checkEmptyUrl(Lampa.Storage.field('prowlarr_url')), params, complite, onerror);
@@ -482,46 +360,37 @@
             torrserver(url, params, complite, onerror);
         } else onerror(Lampa.Lang.translate('torrent_parser_set_link'));
     }
-
     function jackett(url, params, oncomplite, onerror) {
         var u = url + '/api/v2.0/indexers/all/results?apikey=' + Lampa.Storage.field('jackett_key') + '&Category[]=3000&Query=' + encodeURIComponent(params.search);
         network.native(u, function (json) {
             if (json.Results) {
-                var results = json.Results.map(function(el) {
-                    return { title: el.Title, Title: el.Title, Tracker: el.Tracker, size: Lampa.Utils.bytesToSize(el.Size), PublishDate: el.PublishDate, Seeders: el.Seeders, Peers: el.Peers, MagnetUri: el.MagnetUri || el.Link, hash: Lampa.Utils.hash(el.Title) };
-                });
+                var results = json.Results.map(function(el) { return { title: el.Title, Title: el.Title, Tracker: el.Tracker, size: Lampa.Utils.bytesToSize(el.Size), PublishDate: el.PublishDate, Seeders: el.Seeders, Peers: el.Peers, MagnetUri: el.MagnetUri || el.Link, hash: Lampa.Utils.hash(el.Title) }; });
                 oncomplite({ Results: results });
             } else onerror('');
         }, onerror);
     }
-
     function prowlarr(url, params, oncomplite, onerror) {
         var q = [{name:'apikey',value:Lampa.Storage.field('prowlarr_key')}, {name:'query',value:params.search}, {name:'categories',value:'3000'}, {name:'type',value:'search'}];
         var u = Lampa.Utils.buildUrl(url, '/api/v1/search', q);
         network.native(u, function (json) {
             if (Array.isArray(json)) {
-                var results = json.filter(function(e) { return e.protocol === 'torrent'; }).map(function(e) {
-                    return { title: e.title, Title: e.title, Tracker: e.indexer, size: Lampa.Utils.bytesToSize(e.size), PublishDate: e.publishDate, Seeders: e.seeders, Peers: e.leechers, MagnetUri: e.downloadUrl, hash: Lampa.Utils.hash(e.title) };
-                });
+                var results = json.filter(function(e) { return e.protocol === 'torrent'; }).map(function(e) { return { title: e.title, Title: e.title, Tracker: e.indexer, size: Lampa.Utils.bytesToSize(e.size), PublishDate: e.publishDate, Seeders: e.seeders, Peers: e.leechers, MagnetUri: e.downloadUrl, hash: Lampa.Utils.hash(e.title) }; });
                 oncomplite({ Results: results });
             } else onerror('');
         }, onerror);
     }
-
     function torrserver(url, params, oncomplite, onerror) {
         var u = Lampa.Utils.buildUrl(url, '/search/', [{ name: 'query', value: params.search }]);
         network.native(u, function (json) {
             if (Array.isArray(json)) {
-                var results = json.map(function(e) {
-                    return { title: e.Title, Title: e.Title, Tracker: e.Tracker, size: e.Size, PublishDate: e.CreateDate, Seeders: e.Seed, Peers: e.Peer, MagnetUri: e.Magnet, hash: Lampa.Utils.hash(e.Title) };
-                });
+                var results = json.map(function(e) { return { title: e.Title, Title: e.Title, Tracker: e.Tracker, size: e.Size, PublishDate: e.CreateDate, Seeders: e.Seed, Peers: e.Peer, MagnetUri: e.Magnet, hash: Lampa.Utils.hash(e.Title) }; });
                 oncomplite({ Results: results });
             } else onerror('');
         }, onerror);
     }
 
     // ========================================================================
-    // 6. SEARCH COMPONENT
+    // 6. MAIN COMPONENT
     // ========================================================================
     
     function component(object) {
@@ -530,15 +399,19 @@
         var filter = new Lampa.Filter(object);
         var results = [];
         var filtred = [];
+        var last = false;
+        var filterTimeout;
         
         files.clear = function() { scroll.clear(); };
-        this.destroy = function() { network.clear(); files.destroy(); scroll.destroy(); results = null; };
-
-        var filter_items = { 
-            format: [Lampa.Lang.translate('torrent_parser_any_two')], 
-            year: [Lampa.Lang.translate('torrent_parser_any_two')] 
+        this.destroy = function() { 
+            clearTimeout(filterTimeout);
+            network.clear(); 
+            files.destroy(); 
+            scroll.destroy(); 
+            results = null; 
         };
-        
+
+        var filter_items = { format: [Lampa.Lang.translate('torrent_parser_any_two')], year: [Lampa.Lang.translate('torrent_parser_any_two')] };
         var known_formats = ['FLAC', 'MP3', 'WAV', 'AAC', 'DSD', 'SACD', 'APE', 'DTS', 'AC3'];
         var i = 50, y = new Date().getFullYear();
         while (i--) filter_items.year.push((y - (49 - i)) + '');
@@ -548,8 +421,35 @@
 
         this.create = function () { return this.render(); };
         this.render = function () { return files.render(); };
+
         this.start = function () {
             Lampa.Background.immediately(Lampa.Utils.cardImgBackgroundBlur(object.movie));
+            
+            Lampa.Controller.add('lmeMusicSearch', {
+                toggle: function () {
+                    Lampa.Controller.collectionSet(scroll.render());
+                    Lampa.Controller.collectionFocus(last || false, scroll.render());
+                },
+                up: function () {
+                    if (Navigator.canmove('up')) Navigator.move('up');
+                    else Lampa.Controller.toggle('head');
+                },
+                down: function () {
+                    if (Navigator.canmove('down')) Navigator.move('down');
+                },
+                left: function () {
+                    if (Navigator.canmove('left')) Navigator.move('left');
+                    else Lampa.Controller.toggle('menu');
+                },
+                right: function () {
+                    if (Navigator.canmove('right')) Navigator.move('right');
+                },
+                back: function () {
+                    Lampa.Activity.backward();
+                }
+            });
+
+            Lampa.Controller.toggle('lmeMusicSearch');
             this.parse();
         };
 
@@ -569,51 +469,46 @@
 
         this.build = function() {
             if (!results || !results.Results) return;
-            
             results.Results.forEach(function(el) {
                 var t = el.Title.toUpperCase();
                 known_formats.forEach(function(f) { 
-                    if(t.indexOf(f) > -1 && filter_items.format.indexOf(f) === -1) {
-                        filter_items.format.push(f); 
-                    }
+                    if(t.indexOf(f) > -1 && filter_items.format.indexOf(f) === -1) filter_items.format.push(f); 
                 });
             });
-            
             filter.set('filter', [
-                { 
-                    title: 'Format', 
-                    items: filter_items.format.map(function(f) { return { title: f }; }), 
-                    stype: 'format' 
-                },
-                { 
-                    title: 'Year', 
-                    items: filter_items.year.map(function(f) { return { title: f }; }), 
-                    stype: 'year' 
-                }
+                { title: 'Format', items: filter_items.format.map(function(f) { return { title: f }; }), stype: 'format' },
+                { title: 'Year', items: filter_items.year.map(function(f) { return { title: f }; }), stype: 'year' }
             ]);
             
             var _this = this;
             
             filter.onSelect = function(type, a, b) {
                 if (type === 'filter') {
-                    var selectedFormat = b.stype === 'format' ? b.title : null;
-                    var selectedYear = b.stype === 'year' ? b.title : null;
+                    clearTimeout(filterTimeout);
+                    a.subtitle = b.title;
                     
-                    filtred = results.Results.filter(function(r) {
-                        var match = true;
+                    filterTimeout = setTimeout(function() {
+                        var selectedFormat = a.stype === 'format' ? b.title : null;
+                        var selectedYear = a.stype === 'year' ? b.title : null;
                         
-                        if (selectedFormat && selectedFormat !== Lampa.Lang.translate('torrent_parser_any_two')) {
-                            match = match && r.Title.toUpperCase().indexOf(selectedFormat) > -1;
+                        filtred = results.Results.filter(function(r) {
+                            var match = true;
+                            if (selectedFormat && selectedFormat !== Lampa.Lang.translate('torrent_parser_any_two')) {
+                                match = match && r.Title.toUpperCase().indexOf(selectedFormat) > -1;
+                            }
+                            if (selectedYear && selectedYear !== Lampa.Lang.translate('torrent_parser_any_two')) {
+                                match = match && r.Title.indexOf(selectedYear) > -1;
+                            }
+                            return match;
+                        });
+                        
+                        _this.showResults();
+                        last = scroll.render().find('.torrent-item:eq(0)')[0];
+                        if (last) {
+                            scroll.update(last);
+                            Lampa.Controller.collectionFocus(last, scroll.render());
                         }
-                        
-                        if (selectedYear && selectedYear !== Lampa.Lang.translate('torrent_parser_any_two')) {
-                            match = match && r.Title.indexOf(selectedYear) > -1;
-                        }
-                        
-                        return match;
-                    });
-                    
-                    _this.showResults();
+                    }, 100);
                 }
             };
             
@@ -623,34 +518,42 @@
         };
 
         this.showResults = function() {
+            var _this = this;
             scroll.clear();
             if (!filtred || filtred.length === 0) {
                 scroll.append($('<div style="padding:20px;color:#999;text-align:center;">Ничего не найдено</div>'));
                 files.appendFiles(scroll.render());
+                Lampa.Controller.collectionSet(scroll.render());
                 return;
             }
             
             filtred.slice(0, 50).forEach(function(el) {
                 var item = Lampa.Template.get('torrent', {
-                    title: el.Title, 
-                    size: el.size, 
-                    seeds: el.Seeders, 
-                    grabs: el.Peers,
-                    date: Lampa.Utils.parseTime(el.PublishDate).full, 
-                    tracker: el.Tracker
+                    title: el.Title, size: el.size, seeds: el.Seeders, grabs: el.Peers,
+                    date: Lampa.Utils.parseTime(el.PublishDate).full, tracker: el.Tracker
                 });
-                item.on('hover:enter', function() { start(el, object.movie); });
+                
+                item.on('hover:focus', function(e) {
+                    last = e.target;
+                    scroll.update(last);
+                });
+                
+                item.on('hover:enter', function() { 
+                    start(el, object.movie); 
+                });
+                
                 scroll.append(item);
             });
             
             files.appendFiles(scroll.render());
+            Lampa.Controller.collectionSet(scroll.render());
+            Lampa.Controller.collectionFocus(last || false, scroll.render());
         };
     }
 
     // ========================================================================
-    // 7. PLUGIN INITIALIZATION
+    // 7. INIT
     // ========================================================================
-    
     function startPlugin() {
         window.lmeMusicSearch_ready = true;
         $('body').append('<style>' + music_css + '</style>');
@@ -667,7 +570,7 @@
         function addBtn() {
             var btn = $(`<li class="menu__item selector">
                 <div class="menu__ico"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M9 18V5l12-2v13"/>ircle cx="6" cy="18" r="3"/>ircle cx="18" cy="16" r="3"/></svg></div>
-                <div class="menu__text">Music Search v3.7</div>
+                <div class="menu__text">Music Search v5.2</div>
             </li>`);
             btn.on('hover:enter', function() {
                 Lampa.Activity.push({
