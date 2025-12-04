@@ -4,7 +4,7 @@
     // ========================================================================
     // КОНФИГУРАЦИЯ И КЭШ
     // ========================================================================
-    var STORAGE_KEY = 'continue_watch_params';
+    var STORAGE_BASE_KEY = 'continue_watch_params';
     var MEMORY_CACHE = null;
     var TORRSERVER_CACHE = null;
     var FILES_CACHE = {}; 
@@ -25,57 +25,78 @@
     };
 
     // ========================================================================
-    // 1. ХРАНИЛИЩЕ
+    // 1. ХРАНИЛИЩЕ (PROFILE AWARE)
     // ========================================================================
     
-    Lampa.Storage.sync(STORAGE_KEY, 'object_object');
+    // Получение ключа с учетом профиля
+    function getStorageKey() {
+        var account = Lampa.Storage.get('account', '{}');
+        var profileId = account.profile ? account.profile.id : '';
+        return profileId ? STORAGE_BASE_KEY + '_' + profileId : STORAGE_BASE_KEY;
+    }
 
+    // Слушатель изменений хранилища
     Lampa.Storage.listener.follow('change', function(e) {
-        if (e.name === STORAGE_KEY) MEMORY_CACHE = null;
-        if (e.name === 'torrserver_url' || e.name === 'torrserver_url_two' || e.name === 'torrserver_use_link') TORRSERVER_CACHE = null;
+        var currentKey = getStorageKey();
+        
+        // Если изменился ключ текущего профиля
+        if (e.name === currentKey) MEMORY_CACHE = null;
+        
+        // Если сменился аккаунт/профиль — сбрасываем всё
+        if (e.name === 'account') {
+            MEMORY_CACHE = null;
+            TORRSERVER_CACHE = null;
+            FILES_CACHE = {};
+        }
+        
+        if (e.name === 'torrserver_url' || e.name === 'torrserver_url_two' || e.name === 'torrserver_use_link') {
+            TORRSERVER_CACHE = null;
+        }
     });
 
     function getParams() {
-        if (!MEMORY_CACHE) MEMORY_CACHE = Lampa.Storage.get(STORAGE_KEY, {});
+        if (!MEMORY_CACHE) {
+            var key = getStorageKey();
+            MEMORY_CACHE = Lampa.Storage.get(key, {});
+        }
         return MEMORY_CACHE;
     }
 
     function setParams(data, force) {
         MEMORY_CACHE = data;
         clearTimeout(TIMERS.save);
+        var key = getStorageKey();
 
         if (force) {
-            Lampa.Storage.set(STORAGE_KEY, data);
+            Lampa.Storage.set(key, data);
         } else {
             TIMERS.save = setTimeout(function() {
-                Lampa.Storage.set(STORAGE_KEY, data);
+                Lampa.Storage.set(key, data);
             }, 1000); 
         }
+    }
+
+    // Генерация уникального ID контента (Название + Год + ID)
+    function generateContentId(movie) {
+        if (!movie) return '';
+        var title = movie.original_name || movie.original_title || movie.name || movie.title || '';
+        var date = movie.first_air_date || movie.release_date || '';
+        var year = (date + '').split('-')[0];
+        var id = movie.id || '';
+        // Хэш от строки "Title_2023_12345"
+        return Lampa.Utils.hash([title, year, id].join('_'));
     }
 
     // Очистка названия эпизода от мусора
     function extractEpisodeTitleFromPath(filePath) {
         if (!filePath) return '';
-        var fileName = filePath.split('/').pop().replace(/\.[^/.]+$/, ""); // Убираем расширение
-        
-        // Убираем S01E01, 1x01 и прочее
+        var fileName = filePath.split('/').pop().replace(/\.[^/.]+$/, ""); 
         var patterns = [
-            /s\d{1,2}e\d{1,3}/gi,
-            /\d{1,2}x\d{1,3}/gi,
-            /season\s*\d+/gi,
-            /episode\s*\d+/gi,
-            /сезон\s*\d+/gi,
-            /серия\s*\d+/gi,
-            /1080p|720p|4k|2160p|web-dl|webrip|hdtv|rip/gi
+            /s\d{1,2}e\d{1,3}/gi, /\d{1,2}x\d{1,3}/gi, /season\s*\d+/gi, /episode\s*\d+/gi,
+            /сезон\s*\d+/gi, /серия\s*\d+/gi, /1080p|720p|4k|2160p|web-dl|webrip|hdtv|rip/gi
         ];
-        
-        patterns.forEach(function(pattern) {
-            fileName = fileName.replace(pattern, '');
-        });
-
-        // Убираем спецсимволы и лишние пробелы
+        patterns.forEach(function(pattern) { fileName = fileName.replace(pattern, ''); });
         fileName = fileName.replace(/[._\-]/g, ' ').replace(/\s+/g, ' ').trim();
-        // Если после очистки пусто, возвращаем исходное (без расширения) или ничего
         return fileName || filePath.split('/').pop(); 
     }
 
@@ -83,7 +104,13 @@
         var params = getParams();
         if (!params[hash]) params[hash] = {};
         
-        // Автоматически извлекаем название, если его нет, но есть имя файла
+        // Сохраняем content_id для точного поиска
+        if (data.movie && !params[hash].content_id) {
+            params[hash].content_id = generateContentId(data.movie);
+        }
+        // Удаляем объект movie из сохранения, чтобы не засорять память, он нужен только для генерации ID
+        if (data.movie) delete data.movie;
+
         if (data.file_name && !data.episode_title && !params[hash].episode_title) {
             data.episode_title = extractEpisodeTitleFromPath(data.file_name);
         }
@@ -98,7 +125,6 @@
         
         if (changed || !params[hash].timestamp) {
             params[hash].timestamp = Date.now();
-            // Критическое сохранение при >90%
             var isCritical = (data.percent && data.percent > 90);
             setParams(params, isCritical);
         }
@@ -151,9 +177,7 @@
 
     function getStreamParams(movie) {
         if (!movie) return null;
-        var title = movie.original_name || movie.original_title || movie.name || movie.title;
-        if (!title) return null;
-        
+        var contentId = generateContentId(movie);
         var params = getParams();
         
         if (movie.number_of_seasons) {
@@ -162,7 +186,8 @@
             
             Object.keys(params).forEach(function(hash) {
                 var p = params[hash];
-                if (p.title === title && p.season && p.episode) {
+                // Сравнение по content_id намного надежнее, чем по title
+                if (p.content_id === contentId && p.season && p.episode) {
                     if (p.timestamp && p.timestamp > latestTimestamp) {
                         latestTimestamp = p.timestamp;
                         latestEpisode = p;
@@ -171,20 +196,20 @@
             });
             return latestEpisode;
         } else {
-            var hash = Lampa.Utils.hash(title);
+            // Для фильмов ищем по хешу (который теперь базируется на content_id)
+            var hash = generateHash(movie);
             return params[hash] || null;
         }
     }
 
-    // Поиск следующего эпизода в истории
     function findNextEpisode(movie, currentParams) {
         var params = getParams();
-        var title = movie.original_name || movie.original_title || movie.name || movie.title;
+        var contentId = generateContentId(movie);
         var nextEp = null;
         
         Object.keys(params).forEach(function(hash) {
             var p = params[hash];
-            if (p.title === title && p.season === currentParams.season && p.episode === currentParams.episode + 1) {
+            if (p.content_id === contentId && p.season === currentParams.season && p.episode === currentParams.episode + 1) {
                 nextEp = p;
             }
         });
@@ -206,13 +231,14 @@
         return url + '?' + query.join('&');
     }
 
+    // Хеш теперь генерируется на основе уникального ID контента
     function generateHash(movie, season, episode) {
-        var title = movie.original_name || movie.original_title || movie.name || movie.title;
+        var contentId = generateContentId(movie);
         if (movie.number_of_seasons && season && episode) {
             var separator = season > 10 ? ':' : '';
-            return Lampa.Utils.hash([season, separator, episode, title].join(''));
+            return Lampa.Utils.hash([contentId, season, separator, episode].join('_'));
         }
-        return Lampa.Utils.hash(title);
+        return Lampa.Utils.hash(contentId);
     }
 
     // ========================================================================
@@ -229,7 +255,8 @@
                     updateContinueWatchParams(hash, {
                         percent: road.percent,
                         time: road.time,
-                        duration: road.duration
+                        duration: road.duration,
+                        // Важно не передавать сюда movie целиком, оно уже есть в params если нужно
                     });
                 }
             }
@@ -259,7 +286,8 @@
                     episode_title: params.episode_title,
                     percent: percent,
                     time: time,
-                    duration: duration
+                    duration: duration,
+                    // content_id уже сохранен при старте
                 });
             }
         };
@@ -278,7 +306,7 @@
         
         if(!quietMode) STATE.building_playlist = true;
 
-        var title = movie.original_name || movie.original_title || movie.name || movie.title;  
+        var contentId = generateContentId(movie);
         var allParams = getParams();
         var playlist = [];  
         var ABORT_CONTROLLER = false;
@@ -292,17 +320,16 @@
             callback(resultList);
         };
 
-        // 1. ИЗ ИСТОРИИ
+        // 1. ИЗ ИСТОРИИ (по content_id)
         for (var hash in allParams) {  
             var p = allParams[hash];  
-            if (p.title === title && p.season && p.episode && (!currentParams.season || p.season === currentParams.season)) {  
+            if (p.content_id === contentId && p.season && p.episode && (!currentParams.season || p.season === currentParams.season)) {  
                 var episodeHash = generateHash(movie, p.season, p.episode);
                 var timeline = Lampa.Timeline.view(episodeHash);  
                 
                 if (timeline) wrapTimelineHandler(timeline, p);
                 
                 var isCurrent = (p.season === currentParams.season && p.episode === currentParams.episode);
-                // Для плейлиста используем красивое название
                 var displayTitle = p.episode_title || ('S' + p.season + ' E' + p.episode);
 
                 var item = {  
@@ -354,18 +381,19 @@
                                     file_name: file.path,
                                     torrent_link: currentParams.torrent_link,
                                     file_index: file.id || 0,
-                                    title: title,
+                                    title: movie.title, // fallback
                                     season: episodeInfo.season,
                                     episode: episodeInfo.episode,
                                     episode_title: epTitle,
-                                    percent: 0, time: 0, duration: 0
+                                    percent: 0, time: 0, duration: 0,
+                                    movie: movie // передаем movie для генерации content_id внутри update
                                 });
                             }
 
                             var isCurrent = (episodeInfo.season === currentParams.season && episodeInfo.episode === currentParams.episode);
                             
                             var item = {
-                                title: movie.number_of_seasons ? (epTitle || ('S' + episodeInfo.season + ' E' + episodeInfo.episode)) : (movie.title || title),
+                                title: movie.number_of_seasons ? (epTitle || ('S' + episodeInfo.season + ' E' + episodeInfo.episode)) : (movie.title),
                                 season: episodeInfo.season,
                                 episode: episodeInfo.episode,
                                 timeline: timeline,
@@ -396,7 +424,7 @@
 
         Lampa.Torserver.hash({
             link: currentParams.torrent_link,
-            title: title,
+            title: movie.title,
             poster: movie.poster_path,
             data: { lampa: true, movie: movie }
         }, function(torrent) {
@@ -427,13 +455,12 @@
     }
 
     // ========================================================================
-    // 5. ЛОГИКА ПЛЕЕРА И СИНХРОНИЗАЦИЯ
+    // 5. ЛОГИКА ПЛЕЕРА
     // ========================================================================
     function launchPlayer(movie, params) {
         var currentHash = generateHash(movie, params.season, params.episode);
         var timeline = Lampa.Timeline.view(currentHash);
 
-        // AUTO-NEXT Logic
         if (timeline && timeline.percent > 95 && movie.number_of_seasons) {
             var nextParams = findNextEpisode(movie, params);
             if (nextParams) {
@@ -452,11 +479,11 @@
             }
         }
 
-        // FIX: Если названия нет, извлекаем его принудительно перед стартом и сохраняем
         if (!params.episode_title && params.file_name) {
             params.episode_title = extractEpisodeTitleFromPath(params.file_name);
             updateContinueWatchParams(currentHash, {
-                episode_title: params.episode_title
+                episode_title: params.episode_title,
+                movie: movie // для content_id
             });
         }
 
@@ -474,13 +501,12 @@
         }
         
         wrapTimelineHandler(timeline, params);  
-        updateContinueWatchParams(currentHash, { percent: timeline.percent, time: timeline.time });
+        updateContinueWatchParams(currentHash, { percent: timeline.percent, time: timeline.time, movie: movie });
 
         var player_type = Lampa.Storage.field('player_torrent');
         var force_inner = (player_type === 'inner');
         var isExternalPlayer = !force_inner && (player_type !== 'lampa');
 
-        // Для плеера используем Полное название (включая русское)
         var playerTitle = params.episode_title || ('S' + params.season + ' E' + params.episode);
         if (!movie.number_of_seasons) playerTitle = params.title || movie.title;
 
@@ -533,7 +559,8 @@
                     updateContinueWatchParams(hash, {
                         file_name: decodeURIComponent(matchFile[1]),
                         title: data.card.original_name || data.card.original_title || data.card.title,
-                        season: data.season, episode: data.episode
+                        season: data.season, episode: data.episode,
+                        movie: data.card
                     });
                 }
             }
@@ -569,7 +596,6 @@
                             if (matchFile && matchLink) {
                                 var fileName = decodeURIComponent(matchFile[1]);
                                 var epTitle = params.title || params.episode_title;
-                                // Принудительно извлекаем заголовок при прямом запуске
                                 if (!epTitle) epTitle = extractEpisodeTitleFromPath(fileName);
 
                                 updateContinueWatchParams(hash, {
@@ -579,7 +605,8 @@
                                     title: movie.original_name || movie.original_title || movie.title,
                                     season: params.season,
                                     episode: params.episode,
-                                    episode_title: epTitle
+                                    episode_title: epTitle,
+                                    movie: movie
                                 });
                             }
                         }
@@ -633,7 +660,6 @@
                     if (view && view.percent > 0) { percent = view.percent; timeStr = formatTime(view.time); } 
                     else if (params.time) { percent = params.percent || 0; timeStr = formatTime(params.time); }
 
-                    // ЛАКОНИЧНЫЙ ТЕКСТ КНОПКИ
                     var labelText = 'Продолжить';
                     if (params.season && params.episode) {
                         labelText += ' S' + params.season + ' E' + params.episode;
@@ -671,7 +697,7 @@
         cleanupOldParams();
         setupContinueButton();
         setupTimelineSaving();
-        console.log("[ContinueWatch] v73 Loaded. Instant Titles Fix.");
+        console.log("[ContinueWatch] v74 Loaded. Profiles + Unique ID Support.");
     }
 
     if (window.appready) add();
