@@ -12,7 +12,8 @@
     
     var TIMERS = {
         save: null,
-        debounce_click: null
+        debounce_click: null,
+        position_save: null
     };
 
     var LISTENERS = {
@@ -23,7 +24,8 @@
 
     var STATE = {
         building_playlist: false,
-        current_profile_key: null
+        current_profile_key: null,
+        initial_position_saved: new Set()
     };
 
     // ========================================================================
@@ -45,6 +47,7 @@
             MEMORY_CACHE = null;
             CONTENT_INDEX = null;
             BUTTON_ADDED.clear();
+            STATE.initial_position_saved.clear();
             return true;
         }
         return false;
@@ -71,6 +74,7 @@
                 FILES_CACHE = {};
                 CONTENT_INDEX = null;
                 BUTTON_ADDED.clear();
+                STATE.initial_position_saved.clear();
                 syncStorage();
             }, 100);
         }
@@ -86,6 +90,7 @@
                 FILES_CACHE = {};
                 CONTENT_INDEX = null;
                 BUTTON_ADDED.clear();
+                STATE.initial_position_saved.clear();
                 syncStorage();
                 console.log("[ContinueWatch] Профиль изменен, кэши очищены");
             }, 100);
@@ -178,7 +183,7 @@
     }
 
     // ========================================================================
-    // 3. ОПТИМИЗИРОВАННЫЕ ФУНКЦИИ ХРАНИЛИЩА
+    // 3. ОПТИМИЗИРОВАННЫЕ ФУНКЦИИ ХРАНИЛИЩА С ФИКСОМ СОХРАНЕНИЯ ПОЗИЦИИ
     // ========================================================================
 
     function getParams() {
@@ -201,14 +206,23 @@
         }
     }
 
-    function updateContinueWatchParams(hash, data) {
+    function updateContinueWatchParams(hash, data, forceSave) {
         var params = getParams();
         if (!params[hash]) params[hash] = {};
         
         var changed = false;
         
-        // Обновляем прогресс через стандартный Timeline
-        if (data.percent !== undefined || data.time !== undefined) {
+        // ВАЖНО: Сохраняем ВСЕ данные, включая позицию, в наше хранилище
+        // При первом запуске через кнопку "Продолжить" мы должны сохранить позицию сразу
+        for (var key in data) {
+            if (params[hash][key] !== data[key]) {
+                params[hash][key] = data[key];
+                changed = true;
+            }
+        }
+        
+        // Обновляем прогресс через стандартный Timeline ТОЛЬКО если есть данные о позиции
+        if ((data.percent !== undefined || data.time !== undefined) && (data.percent > 0 || data.time > 0)) {
             var timelineData = {
                 hash: hash,
                 percent: data.percent || 0,
@@ -225,24 +239,41 @@
             }
         }
         
-        // Сохраняем только специфичные данные плагина
-        for (var key in data) {
-            if (key !== 'percent' && key !== 'time' && key !== 'duration') {
-                if (params[hash][key] !== data[key]) {
-                    params[hash][key] = data[key];
-                    changed = true;
-                }
-            }
-        }
-        
-        if (changed || !params[hash].timestamp) {
+        if (changed || !params[hash].timestamp || forceSave) {
             params[hash].timestamp = Date.now();
-            var isCritical = (data.percent && data.percent > 90);
+            var isCritical = (data.percent && data.percent > 90) || forceSave;
             setParams(params, isCritical);
             
             // Обновляем индекс
             updateContentIndex(hash, params[hash]);
+            
+            return true;
         }
+        return false;
+    }
+
+    // Новая функция для немедленного сохранения позиции при старте воспроизведения
+    function saveInitialPosition(hash, timeline) {
+        if (!timeline || STATE.initial_position_saved.has(hash)) return false;
+        
+        var params = getParams();
+        if (!params[hash]) return false;
+        
+        // Если у нас есть позиция в timeline, сохраняем ее
+        if (timeline.time > 0 || timeline.percent > 0) {
+            params[hash].time = timeline.time;
+            params[hash].percent = timeline.percent;
+            params[hash].duration = timeline.duration;
+            params[hash].timestamp = Date.now();
+            
+            setParams(params, true);
+            STATE.initial_position_saved.add(hash);
+            
+            console.log("[ContinueWatch] Сохранена начальная позиция для", hash, timeline.time);
+            return true;
+        }
+        
+        return false;
     }
 
     function getTorrServerUrl() {
@@ -284,6 +315,7 @@
                     if (params[hash].timestamp && now - params[hash].timestamp > max_age) {
                         delete params[hash];
                         changed = true;
+                        STATE.initial_position_saved.delete(hash);
                     }
                 });
                 
@@ -332,7 +364,15 @@
                 if (params[hash]) {
                     // Обновляем только timestamp в нашем хранилище
                     params[hash].timestamp = Date.now();
-                    setParams(params, road.percent > 90);
+                    // И сохраняем позицию, если она изменилась
+                    if (params[hash].time !== road.time || params[hash].percent !== road.percent) {
+                        params[hash].time = road.time;
+                        params[hash].percent = road.percent;
+                        params[hash].duration = road.duration;
+                        setParams(params, road.percent > 90);
+                    } else {
+                        setParams(params, false);
+                    }
                 }
             }
         });
@@ -344,13 +384,16 @@
         
         var originalHandler = timeline.handler;
         var lastUpdate = 0;
+        var lastSavedPercent = timeline.percent || 0;
 
         timeline.handler = function (percent, time, duration) {
             if (originalHandler) originalHandler(percent, time, duration);
             
             var now = Date.now();
-            if (now - lastUpdate > 1000) {
+            if (now - lastUpdate > 1000 || Math.abs(percent - lastSavedPercent) > 1) {
                 lastUpdate = now;
+                lastSavedPercent = percent;
+                
                 updateContinueWatchParams(timeline.hash, {
                     file_name: params.file_name,
                     torrent_link: params.torrent_link,
@@ -365,6 +408,14 @@
                 });
             }
         };
+        
+        // Сразу сохраняем начальную позицию
+        if (timeline.time > 0 || timeline.percent > 0) {
+            setTimeout(function() {
+                saveInitialPosition(timeline.hash, timeline);
+            }, 500);
+        }
+        
         timeline._wrapped_continue = true;
         return timeline;
     }
@@ -457,7 +508,7 @@
                                     season: episodeInfo.season,
                                     episode: episodeInfo.episode,
                                     percent: 0, time: 0, duration: 0
-                                });
+                                }, true); // forceSave при создании новой записи
                             }
 
                             var isCurrent = (episodeInfo.season === currentParams.season && episodeInfo.episode === currentParams.episode);
@@ -524,7 +575,7 @@
     }
 
     // ========================================================================
-    // 7. ЛОГИКА ПЛЕЕРА И ХУКИ
+    // 7. ЛОГИКА ПЛЕЕРА И ХУКИ С ФИКСОМ СОХРАНЕНИЯ ПОЗИЦИИ
     // ========================================================================
     
     function launchPlayer(movie, params) {  
@@ -532,30 +583,54 @@
         if (!url) return;  
         
         var currentHash = generateHash(movie, params.season, params.episode);
+        
+        // Сначала получаем текущий timeline
         var timeline = Lampa.Timeline.view(currentHash);  
         
-        // Получаем дополнительные данные из нашего хранилища
-        var storedParams = getParams()[currentHash] || {};
-        
-        // Используем данные из Timeline для восстановления позиции
-        if (timeline && timeline.time > 0) {
-            // Уже есть прогресс в Timeline
-        } else if (storedParams.time) {
-            // Восстанавливаем из нашего хранилища
-            timeline = timeline || { hash: currentHash };
-            timeline.time = storedParams.time || 0;  
-            timeline.percent = storedParams.percent || 0;  
-            timeline.duration = storedParams.duration || 0;  
+        // Если timeline существует, но у него нет позиции, пробуем восстановить из params
+        if (timeline && (!timeline.time || timeline.time === 0) && params.time) {
+            timeline.time = params.time;
+            timeline.percent = params.percent;
+            timeline.duration = params.duration;
         }
         
-        if (timeline) {
-            wrapTimelineHandler(timeline, params);
-            updateContinueWatchParams(currentHash, { 
-                percent: timeline.percent, 
-                time: timeline.time, 
-                duration: timeline.duration 
+        // Если timeline не существует, создаем его из params
+        if (!timeline && (params.time || params.percent)) {
+            timeline = {
+                hash: currentHash,
+                time: params.time || 0,
+                percent: params.percent || 0,
+                duration: params.duration || 0
+            };
+            
+            // Сразу сохраняем в Timeline
+            Lampa.Timeline.update({
+                hash: currentHash,
+                percent: params.percent || 0,
+                time: params.time || 0,
+                duration: params.duration || 0
             });
         }
+        
+        // Если у нас все еще нет timeline, создаем пустой
+        timeline = timeline || { hash: currentHash, time: 0, percent: 0, duration: 0 };
+        
+        // Оборачиваем timeline для отслеживания
+        wrapTimelineHandler(timeline, params);
+        
+        // ВАЖНО: Принудительно сохраняем позицию при запуске, даже если она 0
+        updateContinueWatchParams(currentHash, {
+            file_name: params.file_name,
+            torrent_link: params.torrent_link,
+            file_index: params.file_index,
+            title: params.title,
+            season: params.season,
+            episode: params.episode,
+            episode_title: params.episode_title,
+            percent: timeline.percent,
+            time: timeline.time,
+            duration: timeline.duration
+        }, true); // forceSave при запуске
 
         var player_type = Lampa.Storage.field('player_torrent');
         var force_inner = (player_type === 'inner');
@@ -569,7 +644,7 @@
             timeline: timeline,  
             season: params.season, 
             episode: params.episode, 
-            position: timeline ? (timeline.time || -1) : -1  
+            position: timeline.time || -1  
         };
 
         if (force_inner) {
@@ -599,10 +674,21 @@
             if (movie.number_of_seasons) tempPlaylist.push({ title: 'Загрузка списка...', url: '', timeline: {} });
             playerData.playlist = tempPlaylist;
 
-            if (timeline && timeline.time > 0) Lampa.Noty.show('Восстанавливаем: ' + formatTime(timeline.time));
+            if (timeline.time > 0) {
+                Lampa.Noty.show('Восстанавливаем: ' + formatTime(timeline.time));
+            }
+            
             Lampa.Player.play(playerData);
             setupPlayerListeners();
             Lampa.Player.callback(function() { Lampa.Controller.toggle('content'); });
+
+            // Отложенное сохранение позиции через 1 секунду после старта
+            setTimeout(function() {
+                var currentTimeline = Lampa.Timeline.view(currentHash);
+                if (currentTimeline && (currentTimeline.time > 0 || currentTimeline.percent > 0)) {
+                    saveInitialPosition(currentHash, currentTimeline);
+                }
+            }, 1000);
 
             if (movie.number_of_seasons && params.season && params.episode) {
                 buildPlaylist(movie, params, url, true, function(playlist) {
@@ -617,20 +703,37 @@
 
     function setupPlayerListeners() {
         if (LISTENERS.initialized) cleanupPlayerListeners();
+        
         LISTENERS.player_start = function(data) {
             if (data.card) {
                 var hash = generateHash(data.card, data.season, data.episode);
                 var matchFile = data.url.match(/\/stream\/([^?]+)/);
                 if (matchFile) {
+                    // При старте воспроизведения сразу сохраняем метаданные
                     updateContinueWatchParams(hash, {
                         file_name: decodeURIComponent(matchFile[1]),
                         title: data.card.original_name || data.card.original_title || data.card.title,
-                        season: data.season, episode: data.episode
-                    });
+                        season: data.season, 
+                        episode: data.episode
+                    }, true);
+                    
+                    // Через 500мс проверяем и сохраняем позицию
+                    setTimeout(function() {
+                        var timeline = Lampa.Timeline.view(hash);
+                        if (timeline) {
+                            saveInitialPosition(hash, timeline);
+                        }
+                    }, 500);
                 }
             }
         };
-        LISTENERS.player_destroy = function() { cleanupPlayerListeners(); };
+        
+        LISTENERS.player_destroy = function() { 
+            cleanupPlayerListeners(); 
+            // Очищаем кэш сохраненных позиций при закрытии плеера
+            STATE.initial_position_saved.clear();
+        };
+        
         Lampa.Player.listener.follow('start', LISTENERS.player_start);
         Lampa.Player.listener.follow('destroy', LISTENERS.player_destroy);
         LISTENERS.initialized = true;
@@ -673,7 +776,15 @@
                                     season: params.season,
                                     episode: params.episode,
                                     episode_title: params.title || params.episode_title
-                                });
+                                }, true); // forceSave для новых сессий
+                                
+                                // Через 500мс сохраняем позицию, если она есть
+                                setTimeout(function() {
+                                    var currentTimeline = Lampa.Timeline.view(hash);
+                                    if (currentTimeline && currentTimeline.time > 0) {
+                                        saveInitialPosition(hash, currentTimeline);
+                                    }
+                                }, 500);
                             }
                         }
                     }
@@ -694,7 +805,10 @@
         
         // Используем кэшированный поиск
         var params = getCachedStreamParams(movieData);
-        if (!params) { Lampa.Noty.show('Нет истории'); return; }
+        if (!params) { 
+            Lampa.Noty.show('Нет истории'); 
+            return; 
+        }
         
         if(buttonElement) $(buttonElement).css('opacity', 0.5);
         TIMERS.debounce_click = setTimeout(function() { 
@@ -813,7 +927,7 @@
         setupContinueButton();
         setupTimelineSaving();
         
-        console.log("[ContinueWatch] v73 Loaded. Optimizations: Indexing, Timeline integration, Debounce, Profile support.");
+        console.log("[ContinueWatch] v74 Loaded. Fix: Immediate position saving on first launch.");
         console.log("[ContinueWatch] Storage key: " + getStorageKey());
         console.log("[ContinueWatch] Indexed items: " + (CONTENT_INDEX ? Object.keys(CONTENT_INDEX).length : 0));
     }
