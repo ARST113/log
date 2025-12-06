@@ -4,9 +4,10 @@
     // ========================================================================
     // КОНФИГУРАЦИЯ И КЭШ
     // ========================================================================
+    // Удаляем статический ключ, заменяем на функцию
     var MEMORY_CACHE = null;
     var TORRSERVER_CACHE = null;
-    var FILES_CACHE = {};
+    var FILES_CACHE = {}; 
     
     var TIMERS = {
         save: null,
@@ -16,77 +17,55 @@
     var LISTENERS = {
         player_start: null,
         player_destroy: null,
+        account: null,
         initialized: false
     };
 
     var STATE = {
-        building_playlist: false,
-        current_profile_key: null
+        building_playlist: false
     };
 
     // ========================================================================
-    // 1. ДИНАМИЧЕСКИЙ КЛЮЧ ДЛЯ ПРОФИЛЕЙ
+    // 1. ХРАНИЛИЩЕ С ПОДДЕРЖКОЙ ПРОФИЛЕЙ
     // ========================================================================
     
-    function getStorageKey() {
-        var profile_id = '';
-        if (window.Lampa && Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.sync) {
-            profile_id = Lampa.Account.Permit.account.profile.id || '';
-        }
-        return 'continue_watch_params' + (profile_id ? '_' + profile_id : '');
+    // Функция для получения динамического ключа хранилища
+    function getStorageKey() {  
+        return 'continue_watch_params' + (Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.sync ? '_' + Lampa.Account.Permit.account.profile.id : '');  
     }
 
-    function updateStorageKey() {
-        var new_key = getStorageKey();
-        if (STATE.current_profile_key !== new_key) {
-            STATE.current_profile_key = new_key;
-            MEMORY_CACHE = null;
-            return true;
-        }
-        return false;
-    }
+    // Инициализация синхронизации с динамическим ключом
+    Lampa.Storage.sync(getStorageKey(), 'object_object');
 
-    function syncStorage() {
-        var key = getStorageKey();
-        Lampa.Storage.sync(key, 'object_object');
-    }
-
+    // Слушатель изменений хранилища
     Lampa.Storage.listener.follow('change', function(e) {
-        var current_key = getStorageKey();
-        if (e.name === current_key) {
-            MEMORY_CACHE = null;
-        }
-        if (e.name === 'torrserver_url' || e.name === 'torrserver_url_two' || e.name === 'torrserver_use_link') {
-            TORRSERVER_CACHE = null;
-        }
-        if (e.name === 'account' && Lampa.Account && Lampa.Account.Listener) {
-            setTimeout(function() {
-                updateStorageKey();
-                MEMORY_CACHE = null;
-                FILES_CACHE = {};
-                syncStorage();
-            }, 100);
-        }
+        if (e.name === getStorageKey()) MEMORY_CACHE = null;
+        if (e.name === 'torrserver_url' || e.name === 'torrserver_url_two' || e.name === 'torrserver_use_link') TORRSERVER_CACHE = null;
     });
 
     // Слушатель смены профиля
-    if (Lampa.Account && Lampa.Account.Listener) {
-        Lampa.Account.Listener.follow('profile_select', function() {
-            setTimeout(function() {
-                updateStorageKey();
+    function setupAccountListener() {
+        if (LISTENERS.account) return;
+        
+        LISTENERS.account = function(e) {
+            if (e.type === 'profile') {
+                // Очищаем кэши при смене профиля
                 MEMORY_CACHE = null;
                 TORRSERVER_CACHE = null;
                 FILES_CACHE = {};
-                syncStorage();
-                console.log("[ContinueWatch] Профиль изменен, кэш очищен");
-            }, 100);
-        });
+                
+                // Переинициализируем синхронизацию для нового профиля
+                Lampa.Storage.sync(getStorageKey(), 'object_object');
+                
+                console.log("[ContinueWatch] Profile changed to:", Lampa.Account.Permit.account.profile.id);
+            }
+        };
+        
+        Lampa.Listener.follow('account', LISTENERS.account);
     }
 
     function getParams() {
-        if (!MEMORY_CACHE || updateStorageKey()) {
-            MEMORY_CACHE = Lampa.Storage.get(getStorageKey(), {});
-        }
+        if (!MEMORY_CACHE) MEMORY_CACHE = Lampa.Storage.get(getStorageKey(), {});
         return MEMORY_CACHE;
     }
 
@@ -99,7 +78,7 @@
         } else {
             TIMERS.save = setTimeout(function() {
                 Lampa.Storage.set(getStorageKey(), data);
-            }, 1000);
+            }, 1000); 
         }
     }
 
@@ -191,7 +170,7 @@
             });
             return latestEpisode;
         } else {
-            var hash = generateHash(movie);
+            var hash = Lampa.Utils.hash(title);
             return params[hash] || null;
         }
     }
@@ -213,7 +192,7 @@
 
     function generateHash(movie, season, episode) {
         var title = movie.original_name || movie.original_title || movie.name || movie.title;
-        if (movie.number_of_seasons && season !== undefined && episode !== undefined) {
+        if (movie.number_of_seasons && season && episode) {
             var separator = season > 10 ? ':' : '';
             return Lampa.Utils.hash([season, separator, episode, title].join(''));
         }
@@ -625,17 +604,12 @@
     }
 
     function add() {
-        // Инициализация ключа хранилища
-        updateStorageKey();
-        syncStorage();
-        
-        // Основная инициализация
+        setupAccountListener(); // Добавляем слушатель смены профиля
         patchPlayer();
         cleanupOldParams();
         setupContinueButton();
         setupTimelineSaving();
-        
-        console.log("[ContinueWatch] v72 Loaded. Profile Support Added. Key: " + getStorageKey());
+        console.log("[ContinueWatch] v72 Loaded. Profile support added.");
     }
 
     if (window.appready) add();
