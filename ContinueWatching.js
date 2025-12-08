@@ -5,6 +5,7 @@
     // КОНФИГУРАЦИЯ И КЭШ
     // ========================================================================
     var STORAGE_KEY = 'continue_watch_params';
+    var LEGACY_MIGRATED = false;
     var MEMORY_CACHE = null;
     var TORRSERVER_CACHE = null;
     var FILES_CACHE = {};
@@ -35,6 +36,27 @@
 
     Lampa.Storage.sync(getStorageKey(), 'object_object');
 
+    function migrateLegacyProfileStorage() {
+        if (LEGACY_MIGRATED) return;
+
+        var profileId = Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id;
+        if (!profileId) return;
+
+        var profileKey = getStorageKey();
+        var profileData = Lampa.Storage.get(profileKey);
+        var legacyData = Lampa.Storage.get(STORAGE_KEY);
+
+        if (!profileData && legacyData && typeof legacyData === 'object' && !Array.isArray(legacyData)) {
+            // копируем старые данные только если профильное хранилище пустое,
+            // чтобы временные сохранения без привязки к профилю не мешали
+            var clone = JSON.parse(JSON.stringify(legacyData));
+            Lampa.Storage.set(profileKey, clone);
+            MEMORY_CACHE = clone;
+        }
+
+        LEGACY_MIGRATED = true;
+    }
+
     Lampa.Storage.listener.follow('change', function(e) {
         if (e.name === getStorageKey()) MEMORY_CACHE = null;
         if (e.name === 'torrserver_url' || e.name === 'torrserver_url_two' || e.name === 'torrserver_use_link') TORRSERVER_CACHE = null;
@@ -50,6 +72,7 @@
                 FILES_CACHE = {};
 
                 Lampa.Storage.sync(getStorageKey(), 'object_object');
+                migrateLegacyProfileStorage();
             }
         };
 
@@ -675,6 +698,7 @@
         patchPlayer();
         cleanupOldParams();
         setupAccountListener();
+        migrateLegacyProfileStorage();
         setupContinueButton();
         setupTimelineSaving();
         console.log("[ContinueWatch] v71 Loaded. Sync Fix Applied.");
