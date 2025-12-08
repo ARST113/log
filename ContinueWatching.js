@@ -7,7 +7,7 @@
     var STORAGE_KEY = 'continue_watch_params';
     var MEMORY_CACHE = null;
     var TORRSERVER_CACHE = null;
-    var FILES_CACHE = {}; 
+    var FILES_CACHE = {};
     
     var TIMERS = {
         save: null,
@@ -17,6 +17,7 @@
     var LISTENERS = {
         player_start: null,
         player_destroy: null,
+        account: null,
         initialized: false
     };
 
@@ -28,15 +29,35 @@
     // 1. ХРАНИЛИЩЕ
     // ========================================================================
     
-    Lampa.Storage.sync(STORAGE_KEY, 'object_object');
+    function getStorageKey() {
+        return STORAGE_KEY + (Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.sync ? '_' + Lampa.Account.Permit.account.profile.id : '');
+    }
+
+    Lampa.Storage.sync(getStorageKey(), 'object_object');
 
     Lampa.Storage.listener.follow('change', function(e) {
-        if (e.name === STORAGE_KEY) MEMORY_CACHE = null;
+        if (e.name === getStorageKey()) MEMORY_CACHE = null;
         if (e.name === 'torrserver_url' || e.name === 'torrserver_url_two' || e.name === 'torrserver_use_link') TORRSERVER_CACHE = null;
     });
 
+    function setupAccountListener() {
+        if (LISTENERS.account) return;
+
+        LISTENERS.account = function(e) {
+            if (e.type === 'profile') {
+                MEMORY_CACHE = null;
+                TORRSERVER_CACHE = null;
+                FILES_CACHE = {};
+
+                Lampa.Storage.sync(getStorageKey(), 'object_object');
+            }
+        };
+
+        Lampa.Listener.follow('account', LISTENERS.account);
+    }
+
     function getParams() {
-        if (!MEMORY_CACHE) MEMORY_CACHE = Lampa.Storage.get(STORAGE_KEY, {});
+        if (!MEMORY_CACHE) MEMORY_CACHE = Lampa.Storage.get(getStorageKey(), {});
         return MEMORY_CACHE;
     }
 
@@ -45,11 +66,11 @@
         clearTimeout(TIMERS.save);
 
         if (force) {
-            Lampa.Storage.set(STORAGE_KEY, data);
+            Lampa.Storage.set(getStorageKey(), data);
         } else {
             TIMERS.save = setTimeout(function() {
-                Lampa.Storage.set(STORAGE_KEY, data);
-            }, 1000); 
+                Lampa.Storage.set(getStorageKey(), data);
+            }, 1000);
         }
     }
 
@@ -98,6 +119,62 @@
         var m = Math.floor((seconds % 3600) / 60);
         var s = Math.floor(seconds % 60);
         return h > 0 ? h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s : m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function isTraksEnabled() {
+        var flags = ['traks', 'online_traks', 'parser_traks', 'torrserver_traks'];
+        for (var i = 0; i < flags.length; i++) {
+            if (Lampa.Storage.field && Lampa.Storage.field(flags[i])) return true;
+            if (Lampa.Storage.get && Lampa.Storage.get(flags[i])) return true;
+        }
+        return !!(Lampa.Traks || window.Traks);
+    }
+
+    function extractEpisodeTitles(movie, season, episode) {
+        var titles = [];
+        if (!movie || !season || !episode) return titles;
+
+        var episodes = movie.episodes || [];
+        if (!Array.isArray(episodes) && movie.seasons) {
+            movie.seasons.forEach(function(seasonInfo) {
+                if (seasonInfo && Array.isArray(seasonInfo.episodes)) {
+                    episodes = episodes.concat(seasonInfo.episodes);
+                }
+            });
+        }
+
+        if (Array.isArray(episodes)) {
+            episodes.forEach(function(ep) {
+                var epSeason = ep.season_number || ep.season || ep.season_id;
+                var epNumber = ep.episode_number || ep.episode || ep.number;
+                if (epSeason == season && epNumber == episode) {
+                    var rusNames = [ep.name_ru, ep.rus_name, ep.name];
+                    rusNames.forEach(function(name) { if (name && titles.indexOf(name) === -1) titles.push(name); });
+                }
+            });
+        }
+
+        return titles;
+    }
+
+    function collectAudioTracks(params) {
+        var tracks = [];
+        if (!params) return tracks;
+
+        var candidates = [params.audio_tracks, params.tracks, params.audio];
+        if (params.card && Array.isArray(params.card.tracks)) candidates.push(params.card.tracks);
+        if (params.card && params.card.extra && Array.isArray(params.card.extra.tracks)) candidates.push(params.card.extra.tracks);
+
+        candidates.forEach(function(list) {
+            if (Array.isArray(list)) {
+                list.forEach(function(track) {
+                    var label = track && (track.title || track.label || track.name || track.lang);
+                    if (label && tracks.indexOf(label) === -1) tracks.push(label);
+                });
+            }
+        });
+
+        return tracks;
     }
 
     function cleanupOldParams() {
@@ -447,11 +524,20 @@
                 var hash = generateHash(data.card, data.season, data.episode);
                 var matchFile = data.url.match(/\/stream\/([^?]+)/);
                 if (matchFile) {
-                    updateContinueWatchParams(hash, {
+                    var payload = {
                         file_name: decodeURIComponent(matchFile[1]),
                         title: data.card.original_name || data.card.original_title || data.card.title,
                         season: data.season, episode: data.episode
-                    });
+                    };
+
+                    if (isTraksEnabled()) {
+                        var episodeTitles = extractEpisodeTitles(data.card, data.season, data.episode);
+                        var audioTracks = collectAudioTracks(data);
+                        if (episodeTitles.length) payload.episode_titles_ru = episodeTitles;
+                        if (audioTracks.length) payload.audio_tracks = audioTracks;
+                    }
+
+                    updateContinueWatchParams(hash, payload);
                 }
             }
         };
@@ -486,18 +572,24 @@
                             var matchFile = params.url && params.url.match(/\/stream\/([^?]+)/);
                             var matchLink = params.url && params.url.match(/[?&]link=([^&]+)/);
                             var matchIndex = params.url && params.url.match(/[?&]index=(\d+)/);
-                            
-                            if (matchFile && matchLink) {
-                                updateContinueWatchParams(hash, {
-                                    file_name: decodeURIComponent(matchFile[1]),
-                                    torrent_link: matchLink[1],
-                                    file_index: matchIndex ? parseInt(matchIndex[1]) : 0,
-                                    title: movie.original_name || movie.original_title || movie.title,
-                                    season: params.season,
-                                    episode: params.episode,
-                                    episode_title: params.title || params.episode_title
-                                });
+
+                            var payload = {
+                                file_name: matchFile ? decodeURIComponent(matchFile[1]) : undefined,
+                                torrent_link: matchLink ? matchLink[1] : undefined,
+                                file_index: matchIndex ? parseInt(matchIndex[1]) : 0,
+                                title: movie.original_name || movie.original_title || movie.title,
+                                season: params.season,
+                                episode: params.episode,
+                                episode_title: params.title || params.episode_title
+                            };
+
+                            if (isTraksEnabled()) {
+                                var episodeTitles = extractEpisodeTitles(movie, params.season, params.episode);
+                                var audioTracks = collectAudioTracks(params);
+                                if (episodeTitles.length) payload.episode_titles_ru = episodeTitles;
+                                if (audioTracks.length) payload.audio_tracks = audioTracks;
                             }
+                            if (payload.file_name && payload.torrent_link) updateContinueWatchParams(hash, payload);
                         }
                     }
                 }
@@ -582,6 +674,7 @@
     function add() {
         patchPlayer();
         cleanupOldParams();
+        setupAccountListener();
         setupContinueButton();
         setupTimelineSaving();
         console.log("[ContinueWatch] v71 Loaded. Sync Fix Applied.");
