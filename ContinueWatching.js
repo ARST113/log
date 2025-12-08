@@ -494,8 +494,10 @@
             timeline.percent = params.percent;
         }
         
-        wrapTimelineHandler(timeline, params);  
+        wrapTimelineHandler(timeline, params);
         updateContinueWatchParams(currentHash, { percent: timeline.percent, time: timeline.time, duration: timeline.duration });
+
+        ensurePlayerListeners();
 
         var player_type = Lampa.Storage.field('player_torrent');
         var force_inner = (player_type === 'inner');
@@ -529,7 +531,7 @@
 
             if (timeline.time > 0) Lampa.Noty.show('Восстанавливаем: ' + formatTime(timeline.time));
             Lampa.Player.play(playerData);
-            setupPlayerListeners();
+            ensurePlayerListeners();
             Lampa.Player.callback(function() { Lampa.Controller.toggle('content'); });
 
             if (movie.number_of_seasons && params.season && params.episode) {
@@ -540,8 +542,9 @@
         }
     }
 
-    function setupPlayerListeners() {
-        if (LISTENERS.initialized) cleanupPlayerListeners();
+    function ensurePlayerListeners() {
+        if (LISTENERS.initialized) return;
+
         LISTENERS.player_start = function(data) {
             if (data.card) {
                 var hash = generateHash(data.card, data.season, data.episode);
@@ -564,22 +567,23 @@
                 }
             }
         };
-        LISTENERS.player_destroy = function() { cleanupPlayerListeners(); };
+
+        LISTENERS.player_destroy = function() {
+            if (LISTENERS.player_start) { Lampa.Player.listener.remove('start', LISTENERS.player_start); LISTENERS.player_start = null; }
+            if (LISTENERS.player_destroy) { Lampa.Player.listener.remove('destroy', LISTENERS.player_destroy); LISTENERS.player_destroy = null; }
+            LISTENERS.initialized = false;
+        };
+
         Lampa.Player.listener.follow('start', LISTENERS.player_start);
         Lampa.Player.listener.follow('destroy', LISTENERS.player_destroy);
         LISTENERS.initialized = true;
-    }
-
-    function cleanupPlayerListeners() {
-        if (LISTENERS.player_start) { Lampa.Player.listener.remove('start', LISTENERS.player_start); LISTENERS.player_start = null; }
-        if (LISTENERS.player_destroy) { Lampa.Player.listener.remove('destroy', LISTENERS.player_destroy); LISTENERS.player_destroy = null; }
-        LISTENERS.initialized = false;
     }
 
     // ИСПРАВЛЕННАЯ ФУНКЦИЯ PATCHPLAYER
     function patchPlayer() {
         var originalPlay = Lampa.Player.play;
         Lampa.Player.play = function (params) {
+            ensurePlayerListeners();
             if (params && (params.torrent_hash || (params.url && params.url.includes('/stream/')))) {
                 var movie = params.card || params.movie || (Lampa.Activity.active() && Lampa.Activity.active().movie);
                 if (movie) {
@@ -695,6 +699,7 @@
     }
 
     function add() {
+        ensurePlayerListeners();
         patchPlayer();
         cleanupOldParams();
         setupAccountListener();
