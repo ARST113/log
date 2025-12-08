@@ -4,7 +4,7 @@
     // ========================================================================
     // КОНФИГУРАЦИЯ И КЭШ
     // ========================================================================
-    // Удаляем статический ключ, заменяем на функцию
+    var STORAGE_KEY = 'continue_watch_params';
     var MEMORY_CACHE = null;
     var TORRSERVER_CACHE = null;
     var FILES_CACHE = {}; 
@@ -17,7 +17,6 @@
     var LISTENERS = {
         player_start: null,
         player_destroy: null,
-        account: null,
         initialized: false
     };
 
@@ -26,46 +25,18 @@
     };
 
     // ========================================================================
-    // 1. ХРАНИЛИЩЕ С ПОДДЕРЖКОЙ ПРОФИЛЕЙ
+    // 1. ХРАНИЛИЩЕ
     // ========================================================================
     
-    // Функция для получения динамического ключа хранилища
-    function getStorageKey() {  
-        return 'continue_watch_params' + (Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.sync ? '_' + Lampa.Account.Permit.account.profile.id : '');  
-    }
+    Lampa.Storage.sync(STORAGE_KEY, 'object_object');
 
-    // Инициализация синхронизации с динамическим ключом
-    Lampa.Storage.sync(getStorageKey(), 'object_object');
-
-    // Слушатель изменений хранилища
     Lampa.Storage.listener.follow('change', function(e) {
-        if (e.name === getStorageKey()) MEMORY_CACHE = null;
+        if (e.name === STORAGE_KEY) MEMORY_CACHE = null;
         if (e.name === 'torrserver_url' || e.name === 'torrserver_url_two' || e.name === 'torrserver_use_link') TORRSERVER_CACHE = null;
     });
 
-    // Слушатель смены профиля
-    function setupAccountListener() {
-        if (LISTENERS.account) return;
-        
-        LISTENERS.account = function(e) {
-            if (e.type === 'profile') {
-                // Очищаем кэши при смене профиля
-                MEMORY_CACHE = null;
-                TORRSERVER_CACHE = null;
-                FILES_CACHE = {};
-                
-                // Переинициализируем синхронизацию для нового профиля
-                Lampa.Storage.sync(getStorageKey(), 'object_object');
-                
-                console.log("[ContinueWatch] Profile changed to:", Lampa.Account.Permit.account.profile.id);
-            }
-        };
-        
-        Lampa.Listener.follow('account', LISTENERS.account);
-    }
-
     function getParams() {
-        if (!MEMORY_CACHE) MEMORY_CACHE = Lampa.Storage.get(getStorageKey(), {});
+        if (!MEMORY_CACHE) MEMORY_CACHE = Lampa.Storage.get(STORAGE_KEY, {});
         return MEMORY_CACHE;
     }
 
@@ -74,10 +45,10 @@
         clearTimeout(TIMERS.save);
 
         if (force) {
-            Lampa.Storage.set(getStorageKey(), data);
+            Lampa.Storage.set(STORAGE_KEY, data);
         } else {
             TIMERS.save = setTimeout(function() {
-                Lampa.Storage.set(getStorageKey(), data);
+                Lampa.Storage.set(STORAGE_KEY, data);
             }, 1000); 
         }
     }
@@ -96,6 +67,7 @@
         
         if (changed || !params[hash].timestamp) {
             params[hash].timestamp = Date.now();
+            // Мгновенная синхронизация при завершении (>90%)
             var isCritical = (data.percent && data.percent > 90);
             setParams(params, isCritical);
         }
@@ -402,7 +374,7 @@
     }
 
     // ========================================================================
-    // 5. ЛОГИКА ПЛЕЕРА И ХУКИ
+    // 5. ЛОГИКА ПЛЕЕРА И ХУКИ (С ИСПРАВЛЕНИЕМ СИНХРОНИЗАЦИИ)
     // ========================================================================
     
     function launchPlayer(movie, params) {  
@@ -495,6 +467,7 @@
         LISTENERS.initialized = false;
     }
 
+    // ИСПРАВЛЕННАЯ ФУНКЦИЯ PATCHPLAYER
     function patchPlayer() {
         var originalPlay = Lampa.Player.play;
         Lampa.Player.play = function (params) {
@@ -503,7 +476,10 @@
                 if (movie) {
                     var hash = generateHash(movie, params.season, params.episode);
                     if (hash) {
+                        // FIX: Проверяем наличие прогресса в Timeline перед сохранением
                         var timeline = Lampa.Timeline.view(hash);
+                        // Если прогресса нет или он меньше 5% — сохраняем новые параметры (считаем это началом просмотра)
+                        // Если прогресс есть (>5%) — не трогаем, чтобы не затереть данные "нулями" при переключении плеера
                         var isNewSession = !timeline || !timeline.percent || timeline.percent < 5;
 
                         if (isNewSession) {
@@ -604,12 +580,11 @@
     }
 
     function add() {
-        setupAccountListener(); // Добавляем слушатель смены профиля
         patchPlayer();
         cleanupOldParams();
         setupContinueButton();
         setupTimelineSaving();
-        console.log("[ContinueWatch] v72 Loaded. Profile support added.");
+        console.log("[ContinueWatch] v71 Loaded. Sync Fix Applied.");
     }
 
     if (window.appready) add();
