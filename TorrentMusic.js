@@ -20,6 +20,13 @@
         original_platform: null
     };
 
+    var MUSIC_PLAYER_STATE = {
+        banner: null,
+        shuffle: Lampa.Storage.get('music_search_shuffle', false),
+        styles_injected: false,
+        pending_playlist_context: null
+    };
+
     function start(element, movie) {
       SERVER.object = element;
       if (movie) SERVER.movie = movie;
@@ -375,6 +382,292 @@
           img[0].onload = function () { img.addClass('loaded'); };
           img[0].src = img.attr('data-src');
         });
+    }
+
+    function injectMusicPlayerStyles() {
+        if (MUSIC_PLAYER_STATE.styles_injected) return;
+
+        var styles = document.createElement('style');
+        styles.id = 'music-search-player-styles';
+        styles.textContent = `
+              body.music-search-player--active .player-panel,
+              body.music-search-player--active .player-panel__body,
+              body.music-search-player--active .player__video-wrap,
+              body.music-search-player--active .player__video {
+                  background: radial-gradient(130% 130% at 30% 10%, rgba(255, 255, 255, 0.03), rgba(9, 17, 24, 0.92)),
+                      linear-gradient(135deg, rgba(100,198,255,0.12), rgba(124,92,255,0.18));
+              }
+
+              body.music-search-player--active .player__video-wrap {
+                  min-height: 240px;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  padding: 16px;
+              }
+
+              body.music-search-player--active .player__video {
+                  position: static;
+                  height: auto;
+                  min-height: 0;
+              }
+
+              body.music-search-player--active .player__video:before {
+                  content: '';
+                  position: absolute;
+                  inset: 0;
+                  background: linear-gradient(120deg, rgba(0,0,0,0.35) 30%, rgba(0,0,0,0.1) 70%);
+                  pointer-events: none;
+              }
+
+              body.music-search-player--active .player-panel__info,
+              body.music-search-player--active .player-panel__title {
+                  color: #f0f4ff !important;
+                  opacity: 0.85;
+              }
+
+              .music-search-player__banner {
+                  display: grid;
+                  grid-template-columns: 92px 1fr auto;
+                  gap: 14px;
+                  align-items: center;
+                  padding: 14px 16px;
+                  border-radius: 16px;
+                  background: rgba(8, 15, 24, 0.72);
+                  border: 1px solid rgba(255,255,255,0.08);
+                  box-shadow: 0 14px 40px rgba(0,0,0,0.35);
+                  overflow: hidden;
+                  position: relative;
+              }
+
+              .music-search-player__banner:before {
+                  content: '';
+                  position: absolute;
+                  inset: 0;
+                  background: linear-gradient(135deg, rgba(100,198,255,0.08), rgba(124,92,255,0.16));
+                  pointer-events: none;
+              }
+
+              .music-search-player__cover {
+                  width: 92px;
+                  height: 92px;
+                  border-radius: 14px;
+                  overflow: hidden;
+                  box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+                  position: relative;
+                  z-index: 1;
+              }
+
+              .music-search-player__cover img {
+                  width: 100%;
+                  height: 100%;
+                  object-fit: cover;
+                  display: block;
+              }
+
+              .music-search-player__body {
+                  display: grid;
+                  gap: 6px;
+                  color: #f9fbff;
+                  position: relative;
+                  z-index: 1;
+              }
+
+              .music-search-player__title {
+                  font-size: 16px;
+                  font-weight: 700;
+                  line-height: 1.35;
+                  margin: 0;
+              }
+
+              .music-search-player__subtitle {
+                  font-size: 13px;
+                  color: #c5d3ea;
+                  opacity: 0.9;
+                  margin: 0;
+              }
+
+              .music-search-player__pill {
+                  display: inline-flex;
+                  align-items: center;
+                  gap: 6px;
+                  border-radius: 999px;
+                  padding: 8px 12px;
+                  background: rgba(255,255,255,0.08);
+                  color: #e5ecff;
+                  font-size: 12px;
+                  letter-spacing: 0.02em;
+                  border: 1px solid rgba(255,255,255,0.07);
+                  width: fit-content;
+              }
+
+              .music-search-player__pill svg {
+                  width: 16px;
+                  height: 16px;
+              }
+
+              .music-search-player__actions {
+                  display: flex;
+                  align-items: center;
+                  gap: 10px;
+                  z-index: 1;
+              }
+
+              .music-search-player__shuffle {
+                  border: none;
+                  background: linear-gradient(135deg, #64c6ff, #7c5cff);
+                  color: #fff;
+                  padding: 10px 14px;
+                  border-radius: 12px;
+                  font-size: 13px;
+                  font-weight: 700;
+                  display: inline-flex;
+                  align-items: center;
+                  gap: 8px;
+                  cursor: pointer;
+                  transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+                  box-shadow: 0 12px 24px rgba(124,92,255,0.35);
+              }
+
+              .music-search-player__shuffle[aria-pressed="true"] {
+                  box-shadow: 0 12px 24px rgba(124,92,255,0.6);
+              }
+
+              .music-search-player__shuffle:active {
+                  transform: translateY(1px);
+                  opacity: 0.9;
+              }
+
+              .music-search-player__shuffle svg {
+                  width: 18px;
+                  height: 18px;
+              }
+          `;
+
+        document.head.appendChild(styles);
+        MUSIC_PLAYER_STATE.styles_injected = true;
+    }
+
+    function shufflePlaylist(list, current) {
+        if (!Array.isArray(list)) return list;
+        var copy = list.slice();
+        var currentUrl = current && current.url;
+
+        for (var i = copy.length - 1; i > 0; i--) {
+            var j = Math.floor(Math.random() * (i + 1));
+            var _ref = [copy[j], copy[i]];
+            copy[i] = _ref[0];
+            copy[j] = _ref[1];
+        }
+
+        if (currentUrl) {
+            var idx = copy.findIndex(function (item) { return item.url === currentUrl; });
+            if (idx > 0) {
+                var currentItem = copy.splice(idx, 1)[0];
+                copy.unshift(currentItem);
+            }
+        }
+
+        return copy;
+    }
+
+    function renderMusicBanner(object) {
+        injectMusicPlayerStyles();
+
+        var attempts = 0;
+
+        function mount() {
+            var playerPanel = document.querySelector('.player-panel__body') || document.querySelector('.player-panel') || document.querySelector('.player');
+            if (!playerPanel) {
+                if (attempts < 20) {
+                    attempts += 1;
+                    return setTimeout(mount, 100);
+                }
+                return;
+            }
+
+            if (MUSIC_PLAYER_STATE.banner && MUSIC_PLAYER_STATE.banner.parentNode) MUSIC_PLAYER_STATE.banner.parentNode.removeChild(MUSIC_PLAYER_STATE.banner);
+
+            var banner = document.createElement('div');
+            banner.className = 'music-search-player__banner';
+
+            var cover = document.createElement('div');
+            cover.className = 'music-search-player__cover';
+            var img = document.createElement('img');
+            img.src = object.img || './img/img_broken.svg';
+            cover.appendChild(img);
+
+            var body = document.createElement('div');
+            body.className = 'music-search-player__body';
+
+            var title = document.createElement('p');
+            title.className = 'music-search-player__title';
+            title.textContent = object.title || object.first_title || Lampa.Lang.translate('title_player');
+
+            var subtitle = document.createElement('p');
+            subtitle.className = 'music-search-player__subtitle';
+            subtitle.textContent = object.first_title || 'TorrentMusic.js';
+
+            var pill = document.createElement('span');
+            pill.className = 'music-search-player__pill';
+            pill.innerHTML = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 12a8 8 0 1016 0A8 8 0 004 12zm8-5a1 1 0 011 1v3.586l2.121 2.122a1 1 0 11-1.414 1.414l-2.414-2.414A1 1 0 0111 12V8a1 1 0 011-1z" fill="currentColor"/></svg>' + Lampa.Lang.translate('player_time_start');
+
+            var actions = document.createElement('div');
+            actions.className = 'music-search-player__actions';
+
+            var shuffleBtn = document.createElement('button');
+            shuffleBtn.type = 'button';
+            shuffleBtn.className = 'music-search-player__shuffle selector';
+            shuffleBtn.setAttribute('aria-pressed', MUSIC_PLAYER_STATE.shuffle);
+            shuffleBtn.innerHTML = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h3.5l3-4 5 6H20"/><path d="M4 4h3.5l8 12H20"/><path d="M18 4h3v3"/><path d="M18 4l3 3"/><path d="M18 20h3v-3"/><path d="M18 20l3-3"/></svg>' + Lampa.Lang.translate('player_random') + (MUSIC_PLAYER_STATE.shuffle ? ' ✓' : '');
+
+            var toggleShuffle = function toggleShuffle() {
+                MUSIC_PLAYER_STATE.shuffle = !MUSIC_PLAYER_STATE.shuffle;
+                Lampa.Storage.set('music_search_shuffle', MUSIC_PLAYER_STATE.shuffle);
+                shuffleBtn.setAttribute('aria-pressed', MUSIC_PLAYER_STATE.shuffle);
+                shuffleBtn.innerHTML = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h3.5l3-4 5 6H20"/><path d="M4 4h3.5l8 12H20"/><path d="M18 4h3v3"/><path d="M18 4l3 3"/><path d="M18 20h3v-3"/><path d="M18 20l3-3"/></svg>' + Lampa.Lang.translate('player_random') + (MUSIC_PLAYER_STATE.shuffle ? ' ✓' : '');
+
+                var ctx = MUSIC_PLAYER_STATE.pending_playlist_context;
+                if (ctx && ctx.list && ctx.object) {
+                    var base = ctx.original ? ctx.original.slice() : (ctx.list.slice ? ctx.list.slice() : ctx.list);
+                    var updatedList = MUSIC_PLAYER_STATE.shuffle ? shufflePlaylist(base, ctx.object) : base;
+                    ctx.skip_shuffle = true;
+                    ctx.list = updatedList;
+                    if (!ctx.original && base) ctx.original = base.slice();
+                    Lampa.Player.playlist(updatedList);
+                }
+            };
+
+            shuffleBtn.addEventListener('click', toggleShuffle);
+            $(shuffleBtn).on('hover:enter', toggleShuffle);
+            $(shuffleBtn).on('hover:focus', function () {
+                Lampa.Controller.collectionFocus($(this));
+            });
+
+            actions.appendChild(shuffleBtn);
+            body.appendChild(title);
+            body.appendChild(subtitle);
+            body.appendChild(actions);
+            body.appendChild(pill);
+
+            banner.appendChild(cover);
+            banner.appendChild(body);
+
+            playerPanel.insertBefore(banner, playerPanel.firstChild || null);
+
+            document.body.classList.add('music-search-player--active');
+            MUSIC_PLAYER_STATE.banner = banner;
+        }
+
+        mount();
+    }
+
+    function clearMusicBanner() {
+        if (MUSIC_PLAYER_STATE.banner && MUSIC_PLAYER_STATE.banner.parentNode) {
+            MUSIC_PLAYER_STATE.banner.parentNode.removeChild(MUSIC_PLAYER_STATE.banner);
+        }
+        MUSIC_PLAYER_STATE.banner = null;
+        document.body.classList.remove('music-search-player--active');
     }
 
     function autostart(item) {
@@ -1329,9 +1622,10 @@
 
       function hookPlayer() {
          var original_play = Lampa.Player.play;
+         var original_playlist = Lampa.Player.playlist;
          var original_platform_is = Lampa.Platform.is;
 
-         // Слушаем уничтожение плеера, чтобы сбросить спуфинг
+         // Слушаем уничтожение плеера, чтобы сбросить спуфинг и UI
          Lampa.Player.listener.follow('destroy', function() {
              if (PLAYER_STATE.spoofed) {
                  console.log('MusicSearch: Player destroyed, restoring platform');
@@ -1339,35 +1633,60 @@
                  PLAYER_STATE.spoofed = false;
                  PLAYER_STATE.original_platform = null;
              }
+              MUSIC_PLAYER_STATE.pending_playlist_context = null;
+              clearMusicBanner();
          });
 
          Lampa.Player.play = function (object) {
              var player_mode = Lampa.Storage.field('player_music_torrent');
-             
-             // Если это наш файл (с меткой from_music_search)
+
              if (object && object.from_music_search) {
-                 
-                 // Если выбран встроенный плеер и мы на Андроиде (или уже заспуфлены)
+                 MUSIC_PLAYER_STATE.pending_playlist_context = {
+                     object: object,
+                     list: object.playlist || null,
+                     original: object.playlist && object.playlist.slice ? object.playlist.slice() : null,
+                     skip_shuffle: false
+                 };
+                  renderMusicBanner(object);
+
                  if (player_mode === 'inner' && (Lampa.Platform.is('android') || PLAYER_STATE.spoofed)) {
-                     
-                     // Если еще не заспуфили - делаем это
                      if (!PLAYER_STATE.spoofed) {
                          console.log('MusicSearch: Spooofing Android -> False');
                          PLAYER_STATE.original_platform = original_platform_is;
                          PLAYER_STATE.spoofed = true;
-                         
+
                          Lampa.Platform.is = function(what) {
-                             if (what === 'android') return false; 
+                             if (what === 'android') return false;
                              return PLAYER_STATE.original_platform(what);
                          };
                      }
 
-                     // Очищаем URL от intent (на всякий случай)
                      if (object.url) object.url = object.url.replace('intent:', 'http:');
                  }
+             } else {
+                  MUSIC_PLAYER_STATE.pending_playlist_context = null;
+                  clearMusicBanner();
              }
-             
+
              original_play(object);
+         };
+
+         Lampa.Player.playlist = function(list) {
+             var ctx = MUSIC_PLAYER_STATE.pending_playlist_context;
+             if (ctx && Array.isArray(list)) {
+                 if (!ctx.original) ctx.original = list.slice();
+
+                 if (!ctx.skip_shuffle && MUSIC_PLAYER_STATE.shuffle) {
+                     list = shufflePlaylist(list, ctx.object);
+                 }
+
+                 ctx.list = list;
+                 ctx.skip_shuffle = false;
+             } else {
+                 MUSIC_PLAYER_STATE.pending_playlist_context = null;
+             }
+
+             original_playlist(list);
          };
       }
 
@@ -1376,9 +1695,9 @@
       
       var manifest = {
         type: 'other',
-        version: '0.9',
+        version: '1.0',
         name: 'Music Search',
-        description: 'Fixed Player Switch + Audio + Covers',
+        description: 'Music-styled player with shuffle, covers and player switch',
         component: 'lmeMusicSearch'
       };
       Lampa.Manifest.plugins = manifest;
