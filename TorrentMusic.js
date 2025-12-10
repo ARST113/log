@@ -21,7 +21,7 @@
     };
 
     var MUSIC_PLAYER_STATE = {
-        overlay: null,
+        banner: null,
         shuffle: Lampa.Storage.get('music_search_shuffle', false),
         styles_injected: false,
         pending_playlist_context: null
@@ -390,138 +390,145 @@
         var styles = document.createElement('style');
         styles.id = 'music-search-player-styles';
         styles.textContent = `
-            body.music-search-player--active .player-panel__info,
-            body.music-search-player--active .player-panel__title {
-                color: #f0f4ff !important;
-            }
+              body.music-search-player--active .player-panel,
+              body.music-search-player--active .player-panel__body,
+              body.music-search-player--active .player__video-wrap,
+              body.music-search-player--active .player__video {
+                  background: radial-gradient(130% 130% at 30% 10%, rgba(255, 255, 255, 0.03), rgba(9, 17, 24, 0.92)),
+                      linear-gradient(135deg, rgba(100,198,255,0.12), rgba(124,92,255,0.18));
+              }
 
-            .music-search-player__overlay {
-                position: fixed;
-                bottom: 2.5vh;
-                right: 2vh;
-                z-index: 9999;
-                background: radial-gradient(120% 120% at 30% 10%, rgba(255,255,255,0.08), rgba(15,25,35,0.95));
-                border: 1px solid rgba(255,255,255,0.08);
-                box-shadow: 0 14px 40px rgba(0,0,0,0.4);
-                border-radius: 18px;
-                padding: 16px;
-                min-width: 320px;
-                display: flex;
-                gap: 14px;
-                backdrop-filter: blur(18px);
-                animation: music-search-fade-in 220ms ease-out;
-            }
+              body.music-search-player--active .player__video:before {
+                  content: '';
+                  position: absolute;
+                  inset: 0;
+                  background: linear-gradient(120deg, rgba(0,0,0,0.35) 30%, rgba(0,0,0,0.1) 70%);
+                  pointer-events: none;
+              }
 
-            .music-search-player__overlay:before {
-                content: '';
-                position: absolute;
-                inset: 0;
-                border-radius: inherit;
-                background: linear-gradient(135deg, rgba(100,198,255,0.08), rgba(124,92,255,0.12));
-                pointer-events: none;
-            }
+              body.music-search-player--active .player-panel__info,
+              body.music-search-player--active .player-panel__title {
+                  color: #f0f4ff !important;
+                  opacity: 0.85;
+              }
 
-            .music-search-player__cover {
-                width: 86px;
-                height: 86px;
-                border-radius: 14px;
-                overflow: hidden;
-                flex-shrink: 0;
-                position: relative;
-                box-shadow: 0 10px 24px rgba(0,0,0,0.35);
-            }
+              .music-search-player__banner {
+                  display: grid;
+                  grid-template-columns: 92px 1fr auto;
+                  gap: 14px;
+                  align-items: center;
+                  padding: 14px 16px;
+                  border-radius: 16px;
+                  background: rgba(8, 15, 24, 0.72);
+                  border: 1px solid rgba(255,255,255,0.08);
+                  box-shadow: 0 14px 40px rgba(0,0,0,0.35);
+                  overflow: hidden;
+                  position: relative;
+              }
 
-            .music-search-player__cover img {
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
-                display: block;
-            }
+              .music-search-player__banner:before {
+                  content: '';
+                  position: absolute;
+                  inset: 0;
+                  background: linear-gradient(135deg, rgba(100,198,255,0.08), rgba(124,92,255,0.16));
+                  pointer-events: none;
+              }
 
-            .music-search-player__body {
-                position: relative;
-                z-index: 1;
-                display: grid;
-                gap: 6px;
-                align-content: center;
-                color: #f9fbff;
-                max-width: 360px;
-            }
+              .music-search-player__cover {
+                  width: 92px;
+                  height: 92px;
+                  border-radius: 14px;
+                  overflow: hidden;
+                  box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+                  position: relative;
+                  z-index: 1;
+              }
 
-            .music-search-player__title {
-                font-size: 16px;
-                font-weight: 700;
-                line-height: 1.3;
-                margin: 0;
-            }
+              .music-search-player__cover img {
+                  width: 100%;
+                  height: 100%;
+                  object-fit: cover;
+                  display: block;
+              }
 
-            .music-search-player__subtitle {
-                font-size: 13px;
-                color: #c5d3ea;
-                opacity: 0.9;
-                margin: 0;
-            }
+              .music-search-player__body {
+                  display: grid;
+                  gap: 6px;
+                  color: #f9fbff;
+                  position: relative;
+                  z-index: 1;
+              }
 
-            .music-search-player__actions {
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                margin-top: 4px;
-            }
+              .music-search-player__title {
+                  font-size: 16px;
+                  font-weight: 700;
+                  line-height: 1.35;
+                  margin: 0;
+              }
 
-            .music-search-player__pill {
-                display: inline-flex;
-                align-items: center;
-                gap: 6px;
-                border-radius: 999px;
-                padding: 8px 12px;
-                background: rgba(255,255,255,0.08);
-                color: #e5ecff;
-                font-size: 12px;
-                letter-spacing: 0.02em;
-                border: 1px solid rgba(255,255,255,0.07);
-            }
+              .music-search-player__subtitle {
+                  font-size: 13px;
+                  color: #c5d3ea;
+                  opacity: 0.9;
+                  margin: 0;
+              }
 
-            .music-search-player__pill svg {
-                width: 16px;
-                height: 16px;
-            }
+              .music-search-player__pill {
+                  display: inline-flex;
+                  align-items: center;
+                  gap: 6px;
+                  border-radius: 999px;
+                  padding: 8px 12px;
+                  background: rgba(255,255,255,0.08);
+                  color: #e5ecff;
+                  font-size: 12px;
+                  letter-spacing: 0.02em;
+                  border: 1px solid rgba(255,255,255,0.07);
+                  width: fit-content;
+              }
 
-            .music-search-player__shuffle {
-                border: none;
-                background: linear-gradient(135deg, #64c6ff, #7c5cff);
-                color: #fff;
-                padding: 10px 14px;
-                border-radius: 12px;
-                font-size: 13px;
-                font-weight: 700;
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                cursor: pointer;
-                transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
-                box-shadow: 0 12px 24px rgba(124,92,255,0.35);
-            }
+              .music-search-player__pill svg {
+                  width: 16px;
+                  height: 16px;
+              }
 
-            .music-search-player__shuffle[aria-pressed="true"] {
-                box-shadow: 0 12px 24px rgba(124,92,255,0.6);
-            }
+              .music-search-player__actions {
+                  display: flex;
+                  align-items: center;
+                  gap: 10px;
+                  z-index: 1;
+              }
 
-            .music-search-player__shuffle:active {
-                transform: translateY(1px);
-                opacity: 0.9;
-            }
+              .music-search-player__shuffle {
+                  border: none;
+                  background: linear-gradient(135deg, #64c6ff, #7c5cff);
+                  color: #fff;
+                  padding: 10px 14px;
+                  border-radius: 12px;
+                  font-size: 13px;
+                  font-weight: 700;
+                  display: inline-flex;
+                  align-items: center;
+                  gap: 8px;
+                  cursor: pointer;
+                  transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+                  box-shadow: 0 12px 24px rgba(124,92,255,0.35);
+              }
 
-            .music-search-player__shuffle svg {
-                width: 18px;
-                height: 18px;
-            }
+              .music-search-player__shuffle[aria-pressed="true"] {
+                  box-shadow: 0 12px 24px rgba(124,92,255,0.6);
+              }
 
-            @keyframes music-search-fade-in {
-                from { opacity: 0; transform: translateY(10px); }
-                to   { opacity: 1; transform: translateY(0); }
-            }
-        `;
+              .music-search-player__shuffle:active {
+                  transform: translateY(1px);
+                  opacity: 0.9;
+              }
+
+              .music-search-player__shuffle svg {
+                  width: 18px;
+                  height: 18px;
+              }
+          `;
 
         document.head.appendChild(styles);
         MUSIC_PLAYER_STATE.styles_injected = true;
@@ -550,81 +557,96 @@
         return copy;
     }
 
-    function renderMusicOverlay(object) {
+    function renderMusicBanner(object) {
         injectMusicPlayerStyles();
 
-        if (MUSIC_PLAYER_STATE.overlay) MUSIC_PLAYER_STATE.overlay.remove();
+        var attempts = 0;
 
-        var overlay = document.createElement('div');
-        overlay.className = 'music-search-player__overlay';
+        function mount() {
+            var playerPanel = document.querySelector('.player-panel__body') || document.querySelector('.player-panel') || document.querySelector('.player');
+            if (!playerPanel) {
+                if (attempts < 20) {
+                    attempts += 1;
+                    return setTimeout(mount, 100);
+                }
+                return;
+            }
 
-        var cover = document.createElement('div');
-        cover.className = 'music-search-player__cover';
-        var img = document.createElement('img');
-        img.src = object.img || './img/img_broken.svg';
-        cover.appendChild(img);
+            if (MUSIC_PLAYER_STATE.banner && MUSIC_PLAYER_STATE.banner.parentNode) MUSIC_PLAYER_STATE.banner.parentNode.removeChild(MUSIC_PLAYER_STATE.banner);
 
-        var body = document.createElement('div');
-        body.className = 'music-search-player__body';
+            var banner = document.createElement('div');
+            banner.className = 'music-search-player__banner';
 
-        var title = document.createElement('p');
-        title.className = 'music-search-player__title';
-        title.textContent = object.title || object.first_title || Lampa.Lang.translate('title_player');
+            var cover = document.createElement('div');
+            cover.className = 'music-search-player__cover';
+            var img = document.createElement('img');
+            img.src = object.img || './img/img_broken.svg';
+            cover.appendChild(img);
 
-        var subtitle = document.createElement('p');
-        subtitle.className = 'music-search-player__subtitle';
-        subtitle.textContent = object.first_title || 'TorrentMusic.js';
+            var body = document.createElement('div');
+            body.className = 'music-search-player__body';
 
-        var pill = document.createElement('span');
-        pill.className = 'music-search-player__pill';
-        pill.innerHTML = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 12a8 8 0 1016 0A8 8 0 004 12zm8-5a1 1 0 011 1v3.586l2.121 2.122a1 1 0 11-1.414 1.414l-2.414-2.414A1 1 0 0111 12V8a1 1 0 011-1z" fill="currentColor"/></svg>' + Lampa.Lang.translate('player_time_start');
+            var title = document.createElement('p');
+            title.className = 'music-search-player__title';
+            title.textContent = object.title || object.first_title || Lampa.Lang.translate('title_player');
 
-        var actions = document.createElement('div');
-        actions.className = 'music-search-player__actions';
+            var subtitle = document.createElement('p');
+            subtitle.className = 'music-search-player__subtitle';
+            subtitle.textContent = object.first_title || 'TorrentMusic.js';
 
-        var shuffleBtn = document.createElement('button');
-        shuffleBtn.type = 'button';
-        shuffleBtn.className = 'music-search-player__shuffle';
-        shuffleBtn.setAttribute('aria-pressed', MUSIC_PLAYER_STATE.shuffle);
-        shuffleBtn.innerHTML = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h3.5l3-4 5 6H20"/><path d="M4 4h3.5l8 12H20"/><path d="M18 4h3v3"/><path d="M18 4l3 3"/><path d="M18 20h3v-3"/><path d="M18 20l3-3"/></svg>' + Lampa.Lang.translate('player_random') + (MUSIC_PLAYER_STATE.shuffle ? ' ✓' : '');
+            var pill = document.createElement('span');
+            pill.className = 'music-search-player__pill';
+            pill.innerHTML = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 12a8 8 0 1016 0A8 8 0 004 12zm8-5a1 1 0 011 1v3.586l2.121 2.122a1 1 0 11-1.414 1.414l-2.414-2.414A1 1 0 0111 12V8a1 1 0 011-1z" fill="currentColor"/></svg>' + Lampa.Lang.translate('player_time_start');
 
-        shuffleBtn.addEventListener('click', function () {
-            MUSIC_PLAYER_STATE.shuffle = !MUSIC_PLAYER_STATE.shuffle;
-            Lampa.Storage.set('music_search_shuffle', MUSIC_PLAYER_STATE.shuffle);
+            var actions = document.createElement('div');
+            actions.className = 'music-search-player__actions';
+
+            var shuffleBtn = document.createElement('button');
+            shuffleBtn.type = 'button';
+            shuffleBtn.className = 'music-search-player__shuffle selector';
             shuffleBtn.setAttribute('aria-pressed', MUSIC_PLAYER_STATE.shuffle);
             shuffleBtn.innerHTML = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h3.5l3-4 5 6H20"/><path d="M4 4h3.5l8 12H20"/><path d="M18 4h3v3"/><path d="M18 4l3 3"/><path d="M18 20h3v-3"/><path d="M18 20l3-3"/></svg>' + Lampa.Lang.translate('player_random') + (MUSIC_PLAYER_STATE.shuffle ? ' ✓' : '');
 
-            var ctx = MUSIC_PLAYER_STATE.pending_playlist_context;
-            if (ctx && ctx.list && ctx.object) {
-                var base = ctx.original ? ctx.original.slice() : (ctx.list.slice ? ctx.list.slice() : ctx.list);
-                var updatedList = MUSIC_PLAYER_STATE.shuffle ? shufflePlaylist(base, ctx.object) : base;
-                ctx.skip_shuffle = true;
-                ctx.list = updatedList;
-                if (!ctx.original && base) ctx.original = base.slice();
-                Lampa.Player.playlist(updatedList);
-            }
-        });
+            shuffleBtn.addEventListener('click', function () {
+                MUSIC_PLAYER_STATE.shuffle = !MUSIC_PLAYER_STATE.shuffle;
+                Lampa.Storage.set('music_search_shuffle', MUSIC_PLAYER_STATE.shuffle);
+                shuffleBtn.setAttribute('aria-pressed', MUSIC_PLAYER_STATE.shuffle);
+                shuffleBtn.innerHTML = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h3.5l3-4 5 6H20"/><path d="M4 4h3.5l8 12H20"/><path d="M18 4h3v3"/><path d="M18 4l3 3"/><path d="M18 20h3v-3"/><path d="M18 20l3-3"/></svg>' + Lampa.Lang.translate('player_random') + (MUSIC_PLAYER_STATE.shuffle ? ' ✓' : '');
 
-        actions.appendChild(shuffleBtn);
-        body.appendChild(title);
-        body.appendChild(subtitle);
-        body.appendChild(actions);
-        body.appendChild(pill);
+                var ctx = MUSIC_PLAYER_STATE.pending_playlist_context;
+                if (ctx && ctx.list && ctx.object) {
+                    var base = ctx.original ? ctx.original.slice() : (ctx.list.slice ? ctx.list.slice() : ctx.list);
+                    var updatedList = MUSIC_PLAYER_STATE.shuffle ? shufflePlaylist(base, ctx.object) : base;
+                    ctx.skip_shuffle = true;
+                    ctx.list = updatedList;
+                    if (!ctx.original && base) ctx.original = base.slice();
+                    Lampa.Player.playlist(updatedList);
+                }
+            });
 
-        overlay.appendChild(cover);
-        overlay.appendChild(body);
+            actions.appendChild(shuffleBtn);
+            body.appendChild(title);
+            body.appendChild(subtitle);
+            body.appendChild(actions);
+            body.appendChild(pill);
 
-        document.body.appendChild(overlay);
+            banner.appendChild(cover);
+            banner.appendChild(body);
 
-        document.body.classList.add('music-search-player--active');
-        MUSIC_PLAYER_STATE.overlay = overlay;
+            playerPanel.insertBefore(banner, playerPanel.firstChild || null);
+
+            document.body.classList.add('music-search-player--active');
+            MUSIC_PLAYER_STATE.banner = banner;
+        }
+
+        mount();
     }
 
-    function clearMusicOverlay() {
-        if (MUSIC_PLAYER_STATE.overlay && MUSIC_PLAYER_STATE.overlay.parentNode) {
-            MUSIC_PLAYER_STATE.overlay.parentNode.removeChild(MUSIC_PLAYER_STATE.overlay);
+    function clearMusicBanner() {
+        if (MUSIC_PLAYER_STATE.banner && MUSIC_PLAYER_STATE.banner.parentNode) {
+            MUSIC_PLAYER_STATE.banner.parentNode.removeChild(MUSIC_PLAYER_STATE.banner);
         }
-        MUSIC_PLAYER_STATE.overlay = null;
+        MUSIC_PLAYER_STATE.banner = null;
         document.body.classList.remove('music-search-player--active');
     }
 
@@ -1591,8 +1613,8 @@
                  PLAYER_STATE.spoofed = false;
                  PLAYER_STATE.original_platform = null;
              }
-             MUSIC_PLAYER_STATE.pending_playlist_context = null;
-             clearMusicOverlay();
+              MUSIC_PLAYER_STATE.pending_playlist_context = null;
+              clearMusicBanner();
          });
 
          Lampa.Player.play = function (object) {
@@ -1605,7 +1627,7 @@
                      original: object.playlist && object.playlist.slice ? object.playlist.slice() : null,
                      skip_shuffle: false
                  };
-                 renderMusicOverlay(object);
+                  renderMusicBanner(object);
 
                  if (player_mode === 'inner' && (Lampa.Platform.is('android') || PLAYER_STATE.spoofed)) {
                      if (!PLAYER_STATE.spoofed) {
@@ -1622,8 +1644,8 @@
                      if (object.url) object.url = object.url.replace('intent:', 'http:');
                  }
              } else {
-                 MUSIC_PLAYER_STATE.pending_playlist_context = null;
-                 clearMusicOverlay();
+                  MUSIC_PLAYER_STATE.pending_playlist_context = null;
+                  clearMusicBanner();
              }
 
              original_play(object);
