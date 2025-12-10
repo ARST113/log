@@ -398,6 +398,20 @@
                       linear-gradient(135deg, rgba(100,198,255,0.12), rgba(124,92,255,0.18));
               }
 
+              body.music-search-player--active .player__video-wrap {
+                  min-height: 240px;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  padding: 16px;
+              }
+
+              body.music-search-player--active .player__video {
+                  position: static;
+                  height: auto;
+                  min-height: 0;
+              }
+
               body.music-search-player--active .player__video:before {
                   content: '';
                   position: absolute;
@@ -607,7 +621,7 @@
             shuffleBtn.setAttribute('aria-pressed', MUSIC_PLAYER_STATE.shuffle);
             shuffleBtn.innerHTML = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h3.5l3-4 5 6H20"/><path d="M4 4h3.5l8 12H20"/><path d="M18 4h3v3"/><path d="M18 4l3 3"/><path d="M18 20h3v-3"/><path d="M18 20l3-3"/></svg>' + Lampa.Lang.translate('player_random') + (MUSIC_PLAYER_STATE.shuffle ? ' ✓' : '');
 
-            shuffleBtn.addEventListener('click', function () {
+            var toggleShuffle = function toggleShuffle() {
                 MUSIC_PLAYER_STATE.shuffle = !MUSIC_PLAYER_STATE.shuffle;
                 Lampa.Storage.set('music_search_shuffle', MUSIC_PLAYER_STATE.shuffle);
                 shuffleBtn.setAttribute('aria-pressed', MUSIC_PLAYER_STATE.shuffle);
@@ -622,6 +636,12 @@
                     if (!ctx.original && base) ctx.original = base.slice();
                     Lampa.Player.playlist(updatedList);
                 }
+            };
+
+            shuffleBtn.addEventListener('click', toggleShuffle);
+            $(shuffleBtn).on('hover:enter', toggleShuffle);
+            $(shuffleBtn).on('hover:focus', function () {
+                Lampa.Controller.collectionFocus($(this));
             });
 
             actions.appendChild(shuffleBtn);
