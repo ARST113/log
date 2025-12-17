@@ -114,24 +114,48 @@
         }
     }
 
-    function updateContinueWatchParams(hash, data) {
-        var params = getParams();
-        if (!params[hash]) params[hash] = {};
-
-        var changed = false;
-        for (var key in data) {
-            if (typeof data[key] === 'undefined') continue;
-            if (params[hash][key] !== data[key]) {
-                params[hash][key] = data[key];
-                changed = true;
-            }
-        }
-
-        if (changed || !params[hash].timestamp) {
-            params[hash].timestamp = Date.now();
-            var isCritical = (data.percent && data.percent > 90);
-            setParams(params, isCritical);
-        }
+    function updateContinueWatchParams(hash, data) {  
+        // Проверяем что есть в Timeline  
+        var timeline = Lampa.Timeline.view(hash);  
+        var hasTimelineData = timeline && (timeline.percent > 0 || timeline.time > 0);  
+          
+        // Если Timeline пустой, сохраняем базовые данные просмотра  
+        if (!hasTimelineData && (data.percent || data.time || data.duration)) {  
+            timeline.handler(data.percent || 0, data.time || 0, data.duration || 0);  
+        }  
+          
+        // Сохраняем только метаданные, которых нет в Timeline  
+        var metaToSave = {};  
+        if (data.file_name) metaToSave.file_name = data.file_name;  
+        if (data.torrent_link) metaToSave.torrent_link = data.torrent_link;  
+        if (data.file_index !== undefined) metaToSave.file_index = data.file_index;  
+        if (data.episode_title) metaToSave.episode_title = data.episode_title;  
+        if (data.episode_titles_ru) metaToSave.episode_titles_ru = data.episode_titles_ru;  
+        if (data.title) metaToSave.title = data.title;  
+        if (data.season !== undefined) metaToSave.season = data.season;  
+        if (data.episode !== undefined) metaToSave.episode = data.episode;  
+        if (data.last_opened) metaToSave.last_opened = data.last_opened;  
+        if (data.audio_tracks) metaToSave.audio_tracks = data.audio_tracks;  
+          
+        // Сохраняем метаданные только если они изменились  
+        if (Object.keys(metaToSave).length > 0) {  
+            var params = getParams();  
+            if (!params[hash]) params[hash] = {};  
+              
+            var changed = false;  
+            for (var key in metaToSave) {  
+                if (params[hash][key] !== metaToSave[key]) {  
+                    params[hash][key] = metaToSave[key];  
+                    changed = true;  
+                }  
+            }  
+              
+            if (changed) {  
+                params[hash].timestamp = Date.now();  
+                var isCritical = (data.percent && data.percent > 90);
+                setParams(params, isCritical);  
+            }  
+        }  
     }
 
     function getTorrServerUrl() {
