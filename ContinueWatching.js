@@ -355,6 +355,18 @@
 
             return latestEpisode;
         } else {
+            // Для фильмов проверяем прогресс через Timeline
+            var timelineData = Lampa.Timeline.watched(movie, true);
+            if (timelineData && timelineData.percent > 0) {
+                return {
+                    title: getSeriesTitle(movie),
+                    time: timelineData.time,
+                    percent: timelineData.percent,
+                    duration: timelineData.duration
+                };
+            }
+            
+            // Fallback - проверяем по старому методу через storage
             var hash2 = Lampa.Utils.hash(title);
             return params[hash2] || null;
         }
@@ -1120,11 +1132,22 @@
 
                     var percent = 0;
                     var timeStr = "";
-                    var hash = generateHash(e.data.movie, params.season, params.episode);
-                    var view = Lampa.Timeline.view(hash);
-
-                    if (view && view.percent > 0) { percent = view.percent; timeStr = formatTime(view.time); }
-                    else if (params.time) { percent = params.percent || 0; timeStr = formatTime(params.time); }
+                    
+                    if (e.data.movie.number_of_seasons) {
+                        // Для сериалов
+                        var hash = generateHash(e.data.movie, params.season, params.episode);
+                        var view = Lampa.Timeline.view(hash);
+                        if (view && view.percent > 0) { percent = view.percent; timeStr = formatTime(view.time); }
+                        else if (params.time) { percent = params.percent || 0; timeStr = formatTime(params.time); }
+                    } else {
+                        // Для фильмов
+                        var timelineData = Lampa.Timeline.watched(e.data.movie, true);
+                        if (timelineData && timelineData.percent > 0) { 
+                            percent = timelineData.percent; 
+                            timeStr = formatTime(timelineData.time); 
+                        }
+                        else if (params.time) { percent = params.percent || 0; timeStr = formatTime(params.time); }
+                    }
 
                     var labelText = 'Продолжить';
                     if (params.season && params.episode) labelText += ' S' + params.season + ' E' + params.episode;
