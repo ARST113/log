@@ -121,7 +121,9 @@
           
         // Если Timeline пустой, сохраняем базовые данные просмотра  
         if (!hasTimelineData && (data.percent || data.time || data.duration)) {  
-            timeline.handler(data.percent || 0, data.time || 0, data.duration || 0);  
+            if (timeline && timeline.handler) {
+                timeline.handler(data.percent || 0, data.time || 0, data.duration || 0);  
+            }
         }  
           
         // Сохраняем только метаданные, которых нет в Timeline  
@@ -355,20 +357,9 @@
 
             return latestEpisode;
         } else {
-            // Для фильмов проверяем прогресс через Timeline
-            var timelineData = Lampa.Timeline.watched(movie, true);
-            if (timelineData && timelineData.percent > 0) {
-                return {
-                    title: getSeriesTitle(movie),
-                    time: timelineData.time,
-                    percent: timelineData.percent,
-                    duration: timelineData.duration
-                };
-            }
-            
-            // Fallback - проверяем по старому методу через storage
-            var hash2 = Lampa.Utils.hash(title);
-            return params[hash2] || null;
+            // Для фильмов - простой подход из первой версии
+            var hash = Lampa.Utils.hash(title);
+            return params[hash] || null;
         }
     }
 
@@ -683,14 +674,17 @@
         }
 
         timeline.hash = currentHash;
-        var norm = normalizeEpisodeTitle(movie, params.season, params.episode, params);
+        
+        // Для фильмов не нужно normalizeEpisodeTitle
+        var episodeTitle = params.episode_title || params.title || getSeriesTitle(movie);
+        var episodeTitlesRu = params.episode_titles_ru;
 
         updateContinueWatchParams(currentHash, {
             title: getSeriesTitle(movie),
             season: params.season,
             episode: params.episode,
-            episode_title: norm.title,
-            episode_titles_ru: norm.episode_titles_ru,
+            episode_title: episodeTitle,
+            episode_titles_ru: episodeTitlesRu,
             last_opened: Date.now()
         });
 
@@ -701,8 +695,8 @@
             title: getSeriesTitle(movie),
             season: params.season,
             episode: params.episode,
-            episode_title: norm.title,
-            episode_titles_ru: norm.episode_titles_ru
+            episode_title: episodeTitle,
+            episode_titles_ru: episodeTitlesRu
         });
 
         ensurePlayerListeners();
@@ -713,9 +707,9 @@
 
         var playerData = {
             url: url,
-            title: norm.title,
-            episode_title: norm.title,
-            episode_titles_ru: norm.episode_titles_ru,
+            title: episodeTitle,
+            episode_title: episodeTitle,
+            episode_titles_ru: episodeTitlesRu,
             card: movie,
             torrent_hash: params.torrent_link,
             timeline: timeline,
@@ -743,9 +737,9 @@
             // Формируем временный плейлист из одного элемента, чтобы запустить сразу
             var tempPlaylist = [{
                 url: url,
-                title: norm.title,
-                episode_title: norm.title,
-                episode_titles_ru: norm.episode_titles_ru,
+                title: episodeTitle,
+                episode_title: episodeTitle,
+                episode_titles_ru: episodeTitlesRu,
                 timeline: timeline,
                 season: params.season,
                 episode: params.episode,
@@ -783,18 +777,21 @@
         LISTENERS.player_start = function (data) {
             try {
                 var movie = data.card || data.movie;
-                if (!movie || !movie.number_of_seasons) return;
+                if (!movie) return;
 
                 var season = data.season;
                 var episode = data.episode;
 
-                if (!season || !episode) {
+                // Если это сериал, но season и episode не переданы, пробуем извлечь из названия
+                if (movie.number_of_seasons && (!season || !episode)) {
                     var se = parseSxEx(data.title || data.episode_title || '');
                     if (se) { season = se.season; episode = se.episode; }
                 }
 
-                if (!season || !episode) return;
+                // Если это сериал и season и episode не определены, то выходим
+                if (movie.number_of_seasons && (!season || !episode)) return;
 
+                // Для фильмов season и episode могут быть undefined, это нормально
                 var hash = generateHash(movie, season, episode);
 
                 if (data.timeline && data.timeline.hash && data.timeline.hash !== hash) {
@@ -803,7 +800,10 @@
                 }
 
                 var meta = getStreamMetaFromUrl(data.url);
-                var norm = normalizeEpisodeTitle(movie, season, episode, data);
+                
+                // Для фильмов используем простой заголовок
+                var episodeTitle = data.episode_title || data.title || getSeriesTitle(movie);
+                var episodeTitlesRu = data.episode_titles_ru;
 
                 var payload = {
                     file_name: meta.file_name,
@@ -812,8 +812,8 @@
                     title: getSeriesTitle(movie),
                     season: season,
                     episode: episode,
-                    episode_title: norm.title,
-                    episode_titles_ru: norm.episode_titles_ru,
+                    episode_title: episodeTitle,
+                    episode_titles_ru: episodeTitlesRu,
                     last_opened: Date.now()
                 };
 
@@ -907,6 +907,19 @@
                             episode_titles_ru: norm.episode_titles_ru
                         });
                     }
+                } else {
+                    // Для фильмов
+                    var meta = getStreamMetaFromUrl(params.url);
+                    if (meta.file_name && meta.torrent_link) {
+                        var hash = generateHash(movie);
+                        updateContinueWatchParams(hash, {
+                            title: getSeriesTitle(movie),
+                            file_name: meta.file_name,
+                            torrent_link: meta.torrent_link || params.torrent_hash,
+                            file_index: meta.file_index,
+                            last_opened: Date.now()
+                        });
+                    }
                 }
             } catch (e) { }
 
@@ -990,7 +1003,7 @@
 
     function normalizeAndSaveCurrentFromContext(ctx) {
         var cur = getCurrentFromContext(ctx);
-        if (!cur || !cur.card || !cur.card.number_of_seasons) return;
+        if (!cur || !cur.card) return;
 
         if (!cur.season || !cur.episode) {
             var se = parseSxEx(cur.episode_title || cur.title || '');
@@ -1009,7 +1022,29 @@
             }
         }
 
-        if (!cur.season || !cur.episode) return;
+        if (!cur.season || !cur.episode) {
+            // Для фильмов
+            var hash = generateHash(cur.card);
+            var meta2 = getStreamMetaFromUrl(cur.url);
+            var episodeTitle = cur.episode_title || cur.title || getSeriesTitle(cur.card);
+            
+            if (meta2.file_name && meta2.torrent_link) {
+                var key = hash + '|' + (cur.url || '') + '|' + episodeTitle;
+                if (PLAYER_SWITCH.last_key === key) return;
+                PLAYER_SWITCH.last_key = key;
+                
+                updateContinueWatchParams(hash, {
+                    title: getSeriesTitle(cur.card),
+                    file_name: meta2.file_name,
+                    torrent_link: meta2.torrent_link || cur.torrent_hash,
+                    file_index: meta2.file_index,
+                    episode_title: episodeTitle,
+                    episode_titles_ru: cur.episode_titles_ru,
+                    last_opened: Date.now()
+                });
+            }
+            return;
+        }
 
         var episodeHash = generateHash(cur.card, cur.season, cur.episode);
         var norm = normalizeEpisodeTitle(cur.card, cur.season, cur.episode, {
@@ -1098,12 +1133,6 @@
         var params = getStreamParams(movieData);
         if (!params) { Lampa.Noty.show('Нет истории'); return; }
 
-        if (movieData && movieData.number_of_seasons && params.season && params.episode) {
-            var norm = normalizeEpisodeTitle(movieData, params.season, params.episode, params);
-            params.episode_title = norm.title;
-            params.episode_titles_ru = norm.episode_titles_ru;
-        }
-
         if (buttonElement) $(buttonElement).css('opacity', 0.5);
         TIMERS.debounce_click = setTimeout(function () {
             TIMERS.debounce_click = null;
@@ -1132,22 +1161,11 @@
 
                     var percent = 0;
                     var timeStr = "";
+                    var hash = generateHash(e.data.movie, params.season, params.episode);
+                    var view = Lampa.Timeline.view(hash);
                     
-                    if (e.data.movie.number_of_seasons) {
-                        // Для сериалов
-                        var hash = generateHash(e.data.movie, params.season, params.episode);
-                        var view = Lampa.Timeline.view(hash);
-                        if (view && view.percent > 0) { percent = view.percent; timeStr = formatTime(view.time); }
-                        else if (params.time) { percent = params.percent || 0; timeStr = formatTime(params.time); }
-                    } else {
-                        // Для фильмов
-                        var timelineData = Lampa.Timeline.watched(e.data.movie, true);
-                        if (timelineData && timelineData.percent > 0) { 
-                            percent = timelineData.percent; 
-                            timeStr = formatTime(timelineData.time); 
-                        }
-                        else if (params.time) { percent = params.percent || 0; timeStr = formatTime(params.time); }
-                    }
+                    if (view && view.percent > 0) { percent = view.percent; timeStr = formatTime(view.time); }
+                    else if (params.time) { percent = params.percent || 0; timeStr = formatTime(params.time); }
 
                     var labelText = 'Продолжить';
                     if (params.season && params.episode) labelText += ' S' + params.season + ' E' + params.episode;
@@ -1195,7 +1213,7 @@
         setupContinueButton();
         setupTimelineSaving();
 
-        console.log("[ContinueWatch] Loaded. Profile support + Timeout Fix applied.");
+        console.log("[ContinueWatch] Loaded. Profile support + Timeout Fix applied. Movies fixed.");
     }
 
     if (window.appready) add();
