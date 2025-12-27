@@ -541,7 +541,7 @@
     var oncomplite = arguments.length > 1 ? arguments[1] : undefined;
     var onerror = arguments.length > 2 ? arguments[2] : undefined;
     network.timeout(1000 * Lampa.Storage.field('parse_timeout'));
-    var u = url + '/api/v2.0/indexers/' + (Lampa.Storage.field('jackett_interview') === 'healthy' ? 'status:healthy' : 'all') + '/results?apikey=' + Lampa.Storage.field('jackett_key') + '&Category%5B%5D=3020&Category%5B%5D=3040&Category%5B%5D=100375&Query=' + encodeURIComponent(params.search);
+    var u = url + '/api/v2.0/indexers/' + (Lampa.Storage.field('jackett_interview') === 'healthy' ? 'status:healthy' : 'all') + '/results?apikey=' + Lampa.Storage.field('jackett_key') + '&Category%5B%5D=3000&Category%5B%5D=3010&Category%5B%5D=3020&Category%5B%5D=3030&Category%5B%5D=3040&Query=' + encodeURIComponent(params.search);
     if (!params.from_search) {
       var genres = params.movie.genres.map(function (a) {
         return a.name;
@@ -553,7 +553,7 @@
       u = Lampa.Utils.addUrlComponent(u, 'year=' + encodeURIComponent(((params.movie.release_date || params.movie.first_air_date || '0000') + '').slice(0, 4)));
       u = Lampa.Utils.addUrlComponent(u, 'is_serial=' + (params.movie.original_name ? '2' : params.other ? '0' : '1'));
       u = Lampa.Utils.addUrlComponent(u, 'genres=' + encodeURIComponent(genres.join(',')));
-      u = Lampa.Utils.addUrlComponent(u, 'Category[]=' + (params.movie.number_of_seasons > 0 ? 5000 : 2000) + (params.movie.original_language == 'ja' ? ',5070' : ''));
+      u = Lampa.Utils.addUrlComponent(u, 'Category[]=3000,3010,3020,3030,3040,3050');
     }
     network["native"](u, function (json) {
       if (json.Results) {
@@ -587,12 +587,10 @@
     });
     if (!params.from_search) {
       var isSerial = !!params.movie.original_name;
-      if (params.movie.number_of_seasons > 0) {
-        q.push({
-          name: 'categories',
-          value: '5000'
-        });
-      }
+      q.push({
+        name: 'categories',
+        value: '3000,3010,3020,3030,3040,3050'
+      });
       if (params.movie.original_language == 'ja') {
         q.push({
           name: 'categories',
@@ -601,7 +599,7 @@
       }
       q.push({
         name: 'type',
-        value: isSerial ? 'tvsearch' : 'search'
+        value: 'search'
       });
     }
     var u = Lampa.Utils.buildUrl(url, '/api/v1/search', q);
@@ -734,6 +732,7 @@
     this.parse = function () {
       var _this2 = this;
       filter = new Lampa.Filter(object);
+      this.activity.filter = filter;
       Parser.get(object, function (data) {
         results = data;
         _this2.build();
@@ -1281,7 +1280,6 @@
       var original_platform_is = Lampa.Platform.is;
 
       // Слушаем уничтожение плеера, чтобы сбросить спуфинг
-
       Lampa.Player.listener.follow('destroy', function () {
         if (PLAYER_STATE.spoofed) {
           console.log('MusicSearch: Player destroyed, restoring platform');
@@ -1294,13 +1292,10 @@
         var player_mode = Lampa.Storage.field('player_music_torrent');
 
         // Если это наш файл (с меткой from_music_search)
-
         if (object && object.from_music_search) {
           // Если выбран встроенный плеер и мы на Андроиде (или уже заспуфлены)
-
           if (player_mode === 'inner' && (Lampa.Platform.is('android') || PLAYER_STATE.spoofed)) {
             // Если еще не заспуфили - делаем это
-
             if (!PLAYER_STATE.spoofed) {
               console.log('MusicSearch: Spooofing Android -> False');
               PLAYER_STATE.original_platform = original_platform_is;
@@ -1312,7 +1307,6 @@
             }
 
             // Очищаем URL от intent (на всякий случай)
-
             if (object.url) object.url = object.url.replace('intent:', 'http:');
           }
         }
