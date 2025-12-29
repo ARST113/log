@@ -163,38 +163,10 @@
       files: filteredFiles
     });
   }
-  function preload(data, run) {
-    var need_preload = Lampa.Torserver.ip() && data.url.indexOf(Lampa.Torserver.ip()) > -1 && data.url.indexOf('&preload') > -1;
-    if (need_preload) {
-      var checkout;
-      var network = new Lampa.Reguest();
-      var first = true;
-      Lampa.Loading.start(function () {
-        clearInterval(checkout);
-        network.clear();
-        Lampa.Loading.stop();
-      });
-      var update = function update() {
-        network.timeout(2000);
-        network.silent(first ? data.url : data.url.replace('preload', 'stat'), function (res) {
-          var pb = res.preloaded_bytes || 0,
-            ps = res.preload_size || 0,
-            sp = res.download_speed ? Lampa.Utils.bytesToSize(res.download_speed * 8, true) : '0.0';
-          var progress = Math.min(100, pb * 100 / ps);
-          if (progress >= 95 || isNaN(progress)) {
-            Lampa.Loading.stop();
-            clearInterval(checkout);
-            run();
-          } else {
-            Lampa.Loading.setText(Math.round(progress) + '%' + ' - ' + sp);
-          }
-        });
-        first = false;
-      };
-      checkout = setInterval(update, 1000);
-      update();
-    } else run();
-  }
+function preload(data, run) {    
+    // Всегда игнорировать буфер предзагрузки и играть сразу    
+    run();    
+}
   function list(items, params) {
     var html = $('<div class="torrent-files"></div>');
     var playlist = [];
