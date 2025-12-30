@@ -285,8 +285,6 @@
   styles.textContent = '@keyframes wave-anim { 0% { height: 35%; opacity: 0.6; } 100% { height: 100%; opacity: 0.9; } }';
   document.head.appendChild(styles);
 
-  // ========== INTEGRATION ==========
-
   function integrateVisualizer() {
     var visualizerInstance = null;
 
@@ -342,8 +340,6 @@
       }
     });
   }
-
-  // ========== MAIN PLUGIN ==========
 
   'use strict';
 
@@ -514,35 +510,29 @@
     });
   }
 
-  // ✅ ПЕРЕПИСАННАЯ ФУНКЦИЯ PRELOAD - ЧИТАЕТ НАСТРОЙКУ 'player_torrent'
+  // ✅ ИЗМЕНЕНИЕ 1: ФУНКЦИЯ PRELOAD ЧИТАЕТ НАСТРОЙКУ player_torrent
   function preload(data, run) {
-    // ✅ ЧИТАЕМ НАСТРОЙКУ ИЗ ВАШЕГО ПЛАГИНА
+    // Читаем настройку из вашего плагина
     var player_mode = Lampa.Storage.field('player_torrent');
     
-    console.log('MusicSearch: preload called, player_torrent =', player_mode);
-    
-    // Если выбран встроенный плеер - пропускаем предзагрузку
+    // Если выбран встроенный плеер - пропускаем буфер
     if (player_mode === 'inner') {
-      console.log('MusicSearch: INNER mode - SKIPPING preload');
+      console.log('MusicSearch: INNER mode - skipping preload buffer');
       run();
       return;
     }
     
-    // Для внешнего плеера оставляем стандартную логику
+    // Стандартная логика для внешнего плеера
     var need_preload = Lampa.Torserver.ip() && data.url.indexOf(Lampa.Torserver.ip()) > -1 && data.url.indexOf('&preload') > -1;
-    
     if (need_preload) {
-      console.log('MusicSearch: ANDROID mode - using preload');
       var checkout;
       var network = new Lampa.Reguest();
       var first = true;
-      
       Lampa.Loading.start(function () {
         clearInterval(checkout);
         network.clear();
         Lampa.Loading.stop();
       });
-      
       var update = function update() {
         network.timeout(2000);
         network.silent(first ? data.url : data.url.replace('preload', 'stat'), function (res) {
@@ -560,12 +550,9 @@
         });
         first = false;
       };
-      
       checkout = setInterval(update, 1000);
       update();
-    } else {
-      run();
-    }
+    } else run();
   }
 
   function list(items, params) {
@@ -573,15 +560,12 @@
     var playlist = [];
     var scroll_to_element;
     var first_item;
-    
     Lampa.Listener.send('torrent_file', {
       type: 'list_open',
       items: items
     });
-    
     var folder = '';
     var fragment = document.createDocumentFragment();
-    
     items.forEach(function (element, inx) {
       var exe = element.path.split('.').pop().toLowerCase();
       var view = Lampa.Timeline.view(SERVER.hash + element.id);
@@ -590,7 +574,6 @@
       if (element.cover_file) {
         coverUrl = Lampa.Torserver.stream(element.cover_file.path, SERVER.hash, element.cover_file.id);
       }
-      
       Lampa.Arrays.extend(element, {
         title: element.path_human,
         first_title: params.movie.name || params.movie.title,
@@ -602,7 +585,6 @@
         exe: exe,
         from_music_search: true
       });
-      
       var item = Lampa.Template.get('torrent_file', element);
 
       if (view && view.percent) {
@@ -614,7 +596,6 @@
       element.title = (element.fname || element.title).replace(/<[^>]*>?/gm, '');
       playlist.push(element);
       bindItemEvents(item, element, playlist, params);
-      
       if (element.folder_name && element.folder_name !== folder) {
         var folderDiv = document.createElement('div');
         folderDiv.className = 'torrnet-folder-name' + (folder ? '' : ' selector');
@@ -622,10 +603,8 @@
         fragment.appendChild(folderDiv);
         folder = element.folder_name;
       }
-      
       fragment.appendChild(item[0]);
       if (!first_item) first_item = item;
-      
       Lampa.Listener.send('torrent_file', {
         type: 'render',
         element: element,
@@ -633,7 +612,6 @@
         items: items
       });
     });
-    
     if (items.length == 0) {
       html = Lampa.Template.get('error', {
         title: Lampa.Lang.translate('empty_title'),
@@ -643,7 +621,6 @@
       Lampa.Modal.title(Lampa.Lang.translate('title_files'));
       html[0].appendChild(fragment);
     }
-    
     if (playlist.length == 1 && first_item) autostart(first_item);
     Lampa.Modal.update(html);
     if (scroll_to_element) Lampa.Controller.collectionFocus(scroll_to_element, Lampa.Modal.scroll().render());
@@ -662,13 +639,11 @@
             url: elem.url,
             timeline: elem.timeline,
             img: elem.img,
-            torrent_hash: elem.torrent_hash,
             from_music_search: true
           };
         });
         element.playlist = trim_playlist;
       }
-      
       preload(element, function () {
         Lampa.Player.play(element);
         Lampa.Player.playlist(playlist);
@@ -704,7 +679,6 @@
         title: Lampa.Lang.translate('copy_link'),
         link: true
       });
-      
       Lampa.Select.show({
         title: Lampa.Lang.translate('title_action'),
         items: menu,
@@ -713,7 +687,7 @@
         },
         onSelect: function onSelect(a) {
           if (a.timeclear) {
-            Lampa.Timeline.clear(SERVER.hash + element.id);
+            // Очистка времени
           }
           if (a.link) {
             Lampa.Utils.copyTextToClipboard(element.url.replace('&preload', '&play'), function () {
@@ -799,8 +773,847 @@
     back: back
   };
 
-  // Parser и component код остается без изменений...
-  // (весь остальной код парсера, компонента и т.д.)
+  var url;
+  var network = new Lampa.Reguest();
+
+  function init() {
+    Lampa.Storage.set('parser_torrent_type', Lampa.Storage.get('parser_torrent_type') || 'jackett');
+    var source = {
+      title: Lampa.Lang.translate('title_parser'),
+      search: function search(params, oncomplite) {
+        get({
+          search: decodeURIComponent(params.query),
+          other: true,
+          from_search: true
+        }, function (json) {
+          json.title = Lampa.Lang.translate('title_parser');
+          json.results = json.Results.slice(0, 20);
+          json.Results = null;
+          json.results.forEach(function (element) {
+            element.Title = Lampa.Utils.shortText(element.Title, 110);
+          });
+          oncomplite(json.results.length ? [json] : []);
+        }, function () {
+          oncomplite([]);
+        });
+      },
+      onCancel: function onCancel() {
+        network.clear();
+      },
+      params: {
+        lazy: true,
+        align_left: true,
+        isparser: true,
+        card_events: {
+          onMenu: function onMenu() {}
+        }
+      },
+      onMore: function onMore(params, close) {
+        close();
+        Lampa.Activity.push({
+          url: '',
+          title: Lampa.Lang.translate('title_torrents'),
+          component: 'torrents',
+          search: params.query,
+          from_search: true,
+          noinfo: true,
+          movie: {
+            title: params.query,
+            original_title: '',
+            img: './img/img_broken.svg',
+            genres: []
+          },
+          page: 1
+        });
+      },
+      onSelect: function onSelect(params, close) {
+        Torrent.start(params.element, {
+          title: params.element.Title
+        });
+        Lampa.Torrent.back(params.line.toggle.bind(params.line));
+      }
+    };
+    function addSource() {
+      var reg = Lampa.Platform.is('android') ? true : Lampa.Torserver.url();
+      if (Lampa.Storage.field('parse_in_search') && reg) Lampa.Search.addSource(source);
+    }
+    Lampa.Storage.listener.follow('change', function (e) {
+      if (e.name == 'parse_in_search' || e.name == 'torrserver_url' || e.name == 'torrserver_url_two' || e.name == 'torrserver_use_link') {
+        Lampa.Search.removeSource(source);
+        addSource();
+      }
+    });
+    addSource();
+  }
+
+  function get() {
+    var params = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
+    var oncomplite = arguments.length > 1 ? arguments[1] : undefined;
+    var onerror = arguments.length > 2 ? arguments[2] : undefined;
+    var safeParamsForKey = {
+      search: params.search,
+      query: params.query,
+      movieId: params.movie ? params.movie.id : 0,
+      page: params.page || 1,
+      type: Lampa.Storage.field('parser_torrent_type')
+    };
+    var cacheKey = JSON.stringify(safeParamsForKey);
+    if (searchCache.has(cacheKey)) {
+      oncomplite(searchCache.get(cacheKey));
+      return;
+    }
+    function complite(data) {
+      searchCache.set(cacheKey, data);
+      oncomplite(data);
+    }
+    function error(e) {
+      onerror(e);
+    }
+    if (Lampa.Storage.field('parser_torrent_type') == 'jackett') {
+      if (Lampa.Storage.field('jackett_url')) {
+        url = Lampa.Utils.checkEmptyUrl(Lampa.Storage.field('jackett_url'));
+        var ignore = false;
+        if (ignore) error('');else {
+          jackett(params, complite, error);
+        }
+      } else {
+        error(Lampa.Lang.translate('torrent_parser_set_link') + ': Jackett');
+      }
+    } else if (Lampa.Storage.field('parser_torrent_type') == 'prowlarr') {
+      if (Lampa.Storage.field('prowlarr_url')) {
+        url = Lampa.Utils.checkEmptyUrl(Lampa.Storage.field('prowlarr_url'));
+        prowlarr(params, complite, error);
+      } else {
+        error(Lampa.Lang.translate('torrent_parser_set_link') + ': Prowlarr');
+      }
+    } else if (Lampa.Storage.field('parser_torrent_type') == 'torrserver') {
+      if (Lampa.Storage.field(Lampa.Storage.field('torrserver_use_link') == 'two' ? 'torrserver_url_two' : 'torrserver_url')) {
+        url = Lampa.Utils.checkEmptyUrl(Lampa.Storage.field(Lampa.Storage.field('torrserver_use_link') == 'two' ? 'torrserver_url_two' : 'torrserver_url'));
+        torrserver(params, complite, error);
+      } else {
+        error(Lampa.Lang.translate('torrent_parser_set_link') + ': TorrServer');
+      }
+    }
+  }
+
+  function viewed(hash) {
+    var view = Lampa.Storage.cache('torrents_view', 5000, []);
+    return view.indexOf(hash) > -1;
+  }
+
+  function jackett() {
+    var params = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
+    var oncomplite = arguments.length > 1 ? arguments[1] : undefined;
+    var onerror = arguments.length > 2 ? arguments[2] : undefined;
+    network.timeout(1000 * Lampa.Storage.field('parse_timeout'));
+    var u = url + '/api/v2.0/indexers/' + (Lampa.Storage.field('jackett_interview') === 'healthy' ? 'status:healthy' : 'all') + '/results?apikey=' + Lampa.Storage.field('jackett_key') + '&Category%5B%5D=3000&Category%5B%5D=3010&Category%5B%5D=3020&Category%5B%5D=3030&Category%5B%5D=3040&Query=' + encodeURIComponent(params.search);
+    if (!params.from_search) {
+      var genres = params.movie.genres.map(function (a) {
+        return a.name;
+      });
+      if (!params.clarification) {
+        u = Lampa.Utils.addUrlComponent(u, 'title=' + encodeURIComponent(params.movie.title));
+        u = Lampa.Utils.addUrlComponent(u, 'title_original=' + encodeURIComponent(params.movie.original_title));
+      }
+      u = Lampa.Utils.addUrlComponent(u, 'year=' + encodeURIComponent(((params.movie.release_date || params.movie.first_air_date || '0000') + '').slice(0, 4)));
+      u = Lampa.Utils.addUrlComponent(u, 'is_serial=' + (params.movie.original_name ? '2' : params.other ? '0' : '1'));
+      u = Lampa.Utils.addUrlComponent(u, 'genres=' + encodeURIComponent(genres.join(',')));
+      u = Lampa.Utils.addUrlComponent(u, 'Category[]=3000,3010,3020,3030,3040,3050');
+    }
+    network["native"](u, function (json) {
+      if (json.Results) {
+        json.Results = json.Results.filter(function (element) {
+          return element.TrackerId !== "toloka";
+        });
+        json.Results.forEach(function (element) {
+          element.PublisTime = Lampa.Utils.strToTime(element.PublishDate);
+          element.hash = Lampa.Utils.hash(element.Title);
+          element.viewed = viewed(element.hash);
+          element.size = Lampa.Utils.bytesToSize(element.Size);
+        });
+        oncomplite(json);
+      } else onerror(Lampa.Lang.translate('torrent_parser_no_responce') + ' (' + url + ')');
+    }, function (a, c) {
+      onerror(Lampa.Lang.translate('torrent_parser_no_responce') + ' (' + url + ')');
+    });
+  }
+
+  function prowlarr() {
+    var params = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
+    var oncomplite = arguments.length > 1 ? arguments[1] : undefined;
+    var onerror = arguments.length > 2 ? arguments[2] : undefined;
+    var q = [];
+    q.push({
+      name: 'apikey',
+      value: Lampa.Storage.field('prowlarr_key')
+    });
+    q.push({
+      name: 'query',
+      value: params.search
+    });
+    if (!params.from_search) {
+      var isSerial = !!params.movie.original_name;
+      q.push({
+        name: 'categories',
+        value: '3000,3010,3020,3030,3040,3050'
+      });
+      if (params.movie.original_language == 'ja') {
+        q.push({
+          name: 'categories',
+          value: '5070'
+        });
+      }
+      q.push({
+        name: 'type',
+        value: 'search'
+      });
+    }
+    var u = Lampa.Utils.buildUrl(url, '/api/v1/search', q);
+    network.timeout(1000 * Lampa.Storage.field('parse_timeout'));
+    network["native"](u, function (json) {
+      if (Array.isArray(json)) {
+        oncomplite({
+          Results: json.filter(function (e) {
+            return e.protocol === 'torrent';
+          }).map(function (e) {
+            var hash = Lampa.Utils.hash(e.title);
+            return {
+              Title: e.title,
+              Tracker: e.indexer,
+              size: Lampa.Utils.bytesToSize(e.size),
+              PublishDate: Lampa.Utils.strToTime(e.publishDate),
+              Seeders: parseInt(e.seeders),
+              Peers: parseInt(e.leechers),
+              MagnetUri: e.downloadUrl,
+              viewed: viewed(hash),
+              hash: hash
+            };
+          })
+        });
+      } else {
+        onerror(Lampa.Lang.translate('torrent_parser_request_error') + ' (' + JSON.stringify(json) + ')');
+      }
+    }, function () {
+      onerror(Lampa.Lang.translate('torrent_parser_no_responce') + ' (' + url + ')');
+    });
+  }
+
+  function torrserver() {
+    var params = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
+    var oncomplite = arguments.length > 1 ? arguments[1] : undefined;
+    var onerror = arguments.length > 2 ? arguments[2] : undefined;
+    network.timeout(1000 * Lampa.Storage.field('parse_timeout'));
+    var u = Lampa.Utils.buildUrl(url, '/search/', [{
+      name: 'query',
+      value: params.search
+    }]);
+    network["native"](u, function (json) {
+      if (Array.isArray(json)) {
+        oncomplite({
+          Results: json.map(function (e) {
+            var hash = Lampa.Utils.hash(e.Title);
+            return {
+              Title: e.Title,
+              Tracker: e.Tracker,
+              size: e.Size,
+              PublishDate: Lampa.Utils.strToTime(e.CreateDate),
+              Seeders: parseInt(e.Seed),
+              Peers: parseInt(e.Peer),
+              MagnetUri: e.Magnet,
+              viewed: viewed(hash),
+              CategoryDesc: e.Categories,
+              bitrate: '-',
+              hash: hash
+            };
+          })
+        });
+      } else onerror(Lampa.Lang.translate('torrent_parser_request_error') + ' (' + JSON.stringify(json) + ')');
+    }, function (a, c) {
+      onerror(Lampa.Lang.translate('torrent_parser_no_responce') + ' (' + url + ')');
+    });
+  }
+
+  function clear() {
+    network.clear();
+  }
+
+  var Parser = {
+    init: init,
+    get: get,
+    jackett: jackett,
+    clear: clear
+  };
+
+  function component(object) {
+    console.log('object', object);
+    var network = new Lampa.Reguest();
+    var scroll = new Lampa.Scroll({
+      mask: true,
+      over: true
+    });
+    var files = new Lampa.Explorer(object);
+    var filter;
+    var results = [];
+    var filtred = [];
+    var total_pages = 1;
+    var last;
+    var initialized;
+    var filterTimeout;
+    var filter_items = {
+      quality: [Lampa.Lang.translate('torrent_parser_any_one'), '4k', '1080p', '720p'],
+      tracker: [Lampa.Lang.translate('torrent_parser_any_two')],
+      year: [Lampa.Lang.translate('torrent_parser_any_two')],
+      format: [Lampa.Lang.translate('torrent_parser_any_two')]
+    };
+    var filter_translate = {
+      quality: Lampa.Lang.translate('torrent_parser_quality'),
+      tracker: Lampa.Lang.translate('torrent_parser_tracker'),
+      year: Lampa.Lang.translate('torrent_parser_year'),
+      format: 'Format'
+    };
+    var filter_multiple = ['quality', 'tracker', 'format'];
+    var sort_translate = {
+      Seeders: Lampa.Lang.translate('torrent_parser_sort_by_seeders'),
+      Size: Lampa.Lang.translate('torrent_parser_sort_by_size'),
+      Title: Lampa.Lang.translate('torrent_parser_sort_by_name'),
+      Tracker: Lampa.Lang.translate('torrent_parser_sort_by_tracker'),
+      PublisTime: Lampa.Lang.translate('torrent_parser_sort_by_date'),
+      viewed: Lampa.Lang.translate('torrent_parser_sort_by_viewed')
+    };
+    var i = 50,
+      y = new Date().getFullYear();
+    while (i--) {
+      filter_items.year.push(y - (49 - i) + '');
+    }
+    var viewed = Lampa.Storage.cache('torrents_view', 5000, []);
+    var regexCache = {};
+    scroll.minus(files.render().find('.explorer__files-head'));
+    scroll.body().addClass('torrent-list');
+    this.create = function () {
+      return this.render();
+    };
+    this.initialize = function () {
+      var _this = this;
+      this.activity.loader(true);
+      this.parse();
+      scroll.onEnd = this.next.bind(this);
+      return this.render();
+    };
+    this.parse = function () {
+      var _this2 = this;
+      filter = new Lampa.Filter(object);
+      this.activity.filter = filter;
+      Parser.get(object, function (data) {
+        results = data;
+        _this2.build();
+        Lampa.Layer.update(scroll.render(true));
+        _this2.activity.loader(false);
+        _this2.activity.toggle();
+      }, function (text) {
+        _this2.empty(Lampa.Lang.translate('torrent_error_connect') + ': ' + text);
+      });
+      filter.onSearch = function (value) {
+        Lampa.Activity.replace({
+          search: value,
+          clarification: true
+        });
+      };
+      filter.onBack = function () {
+        _this2.start();
+      };
+      filter.render().find('.selector').on('hover:focus', function (e) {
+        e.target;
+      });
+      filter.addButtonBack();
+      files.appendHead(filter.render());
+    };
+    this.empty = function (descr) {
+      var empty = new Lampa.Empty({
+        descr: descr
+      });
+      files.render().find('.explorer__files-head').addClass('hide');
+      files.appendFiles(empty.render(filter.empty()));
+      empty.render().find('.simple-button').on('hover:enter', function () {
+        filter.render().find('.filter--search').trigger('hover:enter');
+      });
+      this.start = empty.start;
+      this.activity.loader(false);
+      this.activity.toggle();
+    };
+    this.listEmpty = function () {
+      var em = Lampa.Template.get('empty_filter');
+      var bn = $('<div class="simple-button selector"><span>' + Lampa.Lang.translate('filter_clarify') + '</span></div>');
+      bn.on('hover:enter', function () {
+        filter.render().find('.filter--filter').trigger('hover:enter');
+      });
+      em.find('.empty-filter__title').remove();
+      em.find('.empty-filter__buttons').removeClass('hide').append(bn);
+      scroll.append(em);
+    };
+    this.buildSorted = function () {
+      var need = Lampa.Storage.get('torrents_sort', 'Seeders');
+      var select = [{
+        title: Lampa.Lang.translate('torrent_parser_sort_by_seeders'),
+        sort: 'Seeders'
+      }, {
+        title: Lampa.Lang.translate('torrent_parser_sort_by_size'),
+        sort: 'Size'
+      }, {
+        title: Lampa.Lang.translate('torrent_parser_sort_by_name'),
+        sort: 'Title'
+      }, {
+        title: Lampa.Lang.translate('torrent_parser_sort_by_tracker'),
+        sort: 'Tracker'
+      }, {
+        title: Lampa.Lang.translate('torrent_parser_sort_by_date'),
+        sort: 'PublisTime'
+      }, {
+        title: Lampa.Lang.translate('torrent_parser_sort_by_viewed'),
+        sort: 'viewed'
+      }];
+      select.forEach(function (element) {
+        if (element.sort === need) element.selected = true;
+      });
+      filter.sort(results.Results, need);
+      this.sortWithPopular();
+      filter.set('sort', select);
+      this.selectedSort();
+    };
+    this.sortWithPopular = function () {
+      var popular = [];
+      var other = [];
+      results.Results.forEach(function (a) {
+        if (a.viewing_request) popular.push(a);else other.push(a);
+      });
+      popular.sort(function (a, b) {
+        return b.viewing_average - a.viewing_average;
+      });
+      results.Results = popular.concat(other);
+    };
+    this.cardID = function () {
+      return object.movie.id + ':' + (object.movie.number_of_seasons ? 'tv' : 'movie');
+    };
+    this.getFilterData = function () {
+      var all = Lampa.Storage.cache('torrents_filter_data', 500, {});
+      var cid = this.cardID();
+      return all[cid] || Lampa.Storage.get('torrents_filter', '{}');
+    };
+    this.setFilterData = function (filter) {
+      var all = Lampa.Storage.cache('torrents_filter_data', 500, {});
+      var cid = this.cardID();
+      all[cid] = filter;
+      Lampa.Storage.set('torrents_filter_data', all);
+      Lampa.Storage.set('torrents_filter', filter);
+    };
+    this.buildFilterd = function () {
+      var need = this.getFilterData();
+      var select = [];
+      var add = function add(type, title) {
+        var items = filter_items[type];
+        var subitems = [];
+        var multiple = filter_multiple.indexOf(type) >= 0;
+        var value = need[type];
+        if (multiple) value = Lampa.Arrays.toArray(value);
+        items.forEach(function (name, i) {
+          subitems.push({
+            title: name,
+            checked: multiple && value.indexOf(name) >= 0,
+            checkbox: multiple && i > 0,
+            noselect: true,
+            index: i
+          });
+        });
+        select.push({
+          title: title,
+          subtitle: multiple ? value.length ? value.join(', ') : items[0] : typeof value === 'undefined' ? items[0] : items[value],
+          items: subitems,
+          noselect: true,
+          stype: type
+        });
+      };
+      filter_items.tracker = [Lampa.Lang.translate('torrent_parser_any_two')];
+      filter_items.format = [Lampa.Lang.translate('torrent_parser_any_two')];
+      var known_formats = ['FLAC', 'MP3', 'WAV', 'AAC', 'ALAC', 'DSD', 'SACD', 'APE', 'DTS', 'AC3'];
+      results.Results.forEach(function (element) {
+        var tracker = element.Tracker;
+        var title = element.Title.toUpperCase();
+        tracker.split(',').forEach(function (t) {
+          if (filter_items.tracker.indexOf(t.trim()) === -1) filter_items.tracker.push(t.trim());
+        });
+        known_formats.forEach(function (fmt) {
+          if (title.indexOf(fmt) !== -1) {
+            if (filter_items.format.indexOf(fmt) === -1) filter_items.format.push(fmt);
+          }
+        });
+        if (title.indexOf('320') !== -1 && filter_items.format.indexOf('MP3') === -1) {
+          filter_items.format.push('MP3');
+        }
+      });
+      need.tracker = Lampa.Arrays.removeNoIncludes(Lampa.Arrays.toArray(need.tracker), filter_items.tracker);
+      need.format = Lampa.Arrays.removeNoIncludes(Lampa.Arrays.toArray(need.format), filter_items.format);
+      this.setFilterData(need);
+      select.push({
+        title: Lampa.Lang.translate('torrent_parser_reset'),
+        reset: true
+      });
+      add('format', 'Format');
+      add('tracker', Lampa.Lang.translate('torrent_parser_tracker'));
+      add('year', Lampa.Lang.translate('torrent_parser_year'));
+      filter.set('filter', select);
+      this.selectedFilter();
+    };
+    this.selectedFilter = function () {
+      var need = this.getFilterData(),
+        select = [];
+      for (var _i2 in need) {
+        if (need[_i2]) {
+          if (Lampa.Arrays.isArray(need[_i2])) {
+            if (need[_i2].length) select.push(filter_translate[_i2] + ':' + need[_i2].join(', '));
+          } else {
+            select.push(filter_translate[_i2] + ': ' + filter_items[_i2][need[_i2]]);
+          }
+        }
+      }
+      filter.chosen('filter', select);
+    };
+    this.selectedSort = function () {
+      var select = Lampa.Storage.get('torrents_sort', 'Seeders');
+      filter.chosen('sort', [sort_translate[select]]);
+    };
+    this.build = function () {
+      var _this3 = this;
+      this.buildSorted();
+      this.buildFilterd();
+      this.filtred();
+      filter.onSelect = function (type, a, b) {
+        if (type === 'sort') {
+          Lampa.Storage.set('torrents_sort', a.sort);
+          filter.sort(results.Results, a.sort);
+          _this3.sortWithPopular();
+        } else {
+          if (a.reset) {
+            _this3.setFilterData({});
+            _this3.buildFilterd();
+          } else {
+            a.items.forEach(function (n) {
+              return n.checked = false;
+            });
+            var filter_data = _this3.getFilterData();
+            filter_data[a.stype] = filter_multiple.indexOf(a.stype) >= 0 ? [] : b.index;
+            a.subtitle = b.title;
+            _this3.setFilterData(filter_data);
+          }
+        }
+        _this3.applyFilter();
+        _this3.start();
+      };
+      filter.onCheck = function (type, a, b) {
+        var data = _this3.getFilterData(),
+          need = Lampa.Arrays.toArray(data[a.stype]);
+        if (b.checked && need.indexOf(b.title)) need.push(b.title);else if (!b.checked) Lampa.Arrays.remove(need, b.title);
+        data[a.stype] = need;
+        _this3.setFilterData(data);
+        a.subtitle = need.length ? need.join(', ') : a.items[0].title;
+        _this3.applyFilter();
+      };
+      if (results.Results.length) this.showResults();else {
+        this.empty(Lampa.Lang.translate('torrent_parser_empty'));
+      }
+    };
+    this.applyFilter = function () {
+      clearTimeout(filterTimeout);
+      var _this = this;
+      filterTimeout = setTimeout(function () {
+        _this.filtred();
+        _this.selectedFilter();
+        _this.selectedSort();
+        _this.reset();
+        _this.showResults();
+        last = scroll.render().find('.torrent-item:eq(0)')[0];
+        if (last) scroll.update(last);else scroll.reset();
+      }, 100);
+    };
+    this.filtred = function () {
+      var filter_data = this.getFilterData();
+      var filter_any = false;
+      for (var _i3 in filter_data) {
+        var filr = filter_data[_i3];
+        if (filr) {
+          if (Lampa.Arrays.isArray(filr)) {
+            if (filr.length) filter_any = true;
+          } else filter_any = true;
+        }
+      }
+      filtred = results.Results.filter(function (element) {
+        if (filter_any) {
+          var passed = false,
+            nopass = false,
+            title = element.Title.toLowerCase(),
+            tracker = element.Tracker;
+          var tra = Lampa.Arrays.toArray(filter_data.tracker),
+            yer = filter_data.year,
+            fmt = Lampa.Arrays.toArray(filter_data.format);
+          var test = function test(search, test_index) {
+            if (!regexCache[search]) {
+              try {
+                regexCache[search] = new RegExp(search);
+              } catch (e) {
+                regexCache[search] = {
+                  test: function test() {
+                    return false;
+                  }
+                };
+              }
+            }
+            return test_index ? title.indexOf(search) >= 0 : regexCache[search].test(title);
+          };
+          var check = function check(search, invert) {
+            if (test(search)) {
+              if (invert) nopass = true;else passed = true;
+            } else {
+              if (invert) passed = true;else nopass = true;
+            }
+          };
+          var includes = function includes(type, arr) {
+            if (!arr.length) return;
+            var any = false;
+            arr.forEach(function (a) {
+              if (type === 'tracker') {
+                if (tracker.split(',').find(function (t) {
+                  return t.trim().toLowerCase() === a.toLowerCase();
+                })) any = true;
+              }
+              if (type === 'format') {
+                if (title.indexOf(a.toLowerCase()) >= 0) any = true;
+                if (a === 'MP3' && title.indexOf('320') >= 0) any = true;
+              }
+            });
+            if (any) passed = true;else nopass = true;
+          };
+          includes('tracker', tra);
+          includes('format', fmt);
+          if (yer) {
+            check(filter_items.year[yer]);
+          }
+          return nopass ? false : passed;
+        } else return true;
+      });
+    };
+    this.showResults = function () {
+      total_pages = Math.ceil(filtred.length / 20);
+      if (filtred.length) {
+        this.append(filtred.slice(0, 20));
+      } else {
+        this.listEmpty();
+      }
+      files.appendFiles(scroll.render());
+    };
+    this.reset = function () {
+      last = false;
+      scroll.clear();
+    };
+    this.next = function () {
+      if (object.page < 15 && object.page < total_pages) {
+        object.page++;
+        var offset = (object.page - 1) * 20;
+        this.append(filtred.slice(offset, offset + 20), true);
+      }
+    };
+    this.loadMagnet = function (element, call) {
+      var _this4 = this;
+      Parser.marnet(element, function () {
+        Lampa.Modal.close();
+        element.poster = object.movie.img;
+        _this4.start();
+        if (call) call();else Torrent.start(element, object.movie);
+      }, function (text) {
+        Lampa.Modal.update(Lampa.Template.get('error', {
+          title: Lampa.Lang.translate('title_error'),
+          text: text
+        }));
+      });
+      Lampa.Modal.open({
+        title: '',
+        html: Lampa.Template.get('modal_pending', {
+          text: Lampa.Lang.translate('torrent_get_magnet')
+        }),
+        onBack: function onBack() {
+          Lampa.Modal.close();
+          network.clear();
+          Lampa.Controller.toggle('content');
+        }
+      });
+    };
+    this.mark = function (element, item, add) {
+      if (add) {
+        if (viewed.indexOf(element.hash) === -1) {
+          viewed.push(element.hash);
+          item.append('<div class="torrent-item__viewed">' + Lampa.Template.get('icon_viewed', {}, true) + '</div>');
+        }
+      } else {
+        element.viewed = true;
+        Lampa.Arrays.remove(viewed, element.hash);
+        item.find('.torrent-item__viewed').remove();
+      }
+      element.viewed = add;
+      Lampa.Storage.set('torrents_view', viewed);
+      if (!add) Lampa.Storage.remove('torrents_view', element.hash);
+    };
+    this.addToBase = function (element) {
+      Lampa.Torserver.add({
+        poster: object.movie.img,
+        title: object.movie.title + ' / ' + object.movie.original_title,
+        link: element.MagnetUri || element.Link,
+        data: {
+          lampa: true,
+          movie: object.movie
+        }
+      }, function () {
+        Lampa.Noty.show(object.movie.title + ' - ' + Lampa.Lang.translate('torrent_parser_added_to_mytorrents'));
+      });
+    };
+    this.append = function (items, append) {
+      var _this5 = this;
+      items.forEach(function (element) {
+        var date = Lampa.Utils.parseTime(element.PublishDate);
+        var bitrate = object.movie.runtime ? Lampa.Utils.calcBitrate(element.Size, object.movie.runtime) : 0;
+        Lampa.Arrays.extend(element, {
+          title: element.Title,
+          date: date.full,
+          tracker: element.Tracker,
+          bitrate: bitrate,
+          size: !isNaN(parseInt(element.Size)) ? Lampa.Utils.bytesToSize(element.Size) : element.size,
+          seeds: element.Seeders,
+          grabs: element.Peers
+        });
+        var item = Lampa.Template.get('torrent', element);
+        if (!bitrate) item.find('.bitrate').remove();
+        if (element.viewed) item.append('<div class="torrent-item__viewed">' + Lampa.Template.get('icon_viewed', {}, true) + '</div>');
+        if (!element.size || parseInt(element.size) === 0) item.find('.torrent-item__size').remove();
+        item.on('hover:focus', function (e) {
+          last = e.target;
+          scroll.update($(e.target), true);
+          Lampa.Helper.show('torrents', Lampa.Lang.translate('helper_torrents'), item);
+        }).on('hover:hover hover:touch', function (e) {
+          last = e.target;
+          Navigator.focused(last);
+        }).on('hover:enter', function (e) {
+          last = e.target;
+          Lampa.Torrent.opened(function () {
+            _this5.mark(element, item, true);
+          });
+          if (element.reguest && !element.MagnetUri) {
+            _this5.loadMagnet(element);
+          } else {
+            element.poster = object.movie.img;
+            _this5.start();
+            Torrent.start(element, object.movie);
+          }
+          Lampa.Listener.send('torrent', {
+            type: 'onenter',
+            element: element,
+            item: item
+          });
+        }).on('hover:long', function () {
+          var enabled = Lampa.Controller.enabled().name;
+          var menu = [{
+            title: Lampa.Lang.translate('torrent_parser_add_to_mytorrents'),
+            tomy: true
+          }, {
+            title: Lampa.Lang.translate('torrent_parser_label_title'),
+            subtitle: Lampa.Lang.translate('torrent_parser_label_descr'),
+            mark: true
+          }, {
+            title: Lampa.Lang.translate('torrent_parser_label_cancel_title'),
+            subtitle: Lampa.Lang.translate('torrent_parser_label_cancel_descr'),
+            unmark: true
+          }];
+          Lampa.Listener.send('torrent', {
+            type: 'onlong',
+            element: element,
+            item: item,
+            menu: menu
+          });
+          Lampa.Select.show({
+            title: Lampa.Lang.translate('title_action'),
+            items: menu,
+            onBack: function onBack() {
+              Lampa.Controller.toggle(enabled);
+            },
+            onSelect: function onSelect(a) {
+              if (a.tomy) {
+                if (element.reguest && !element.MagnetUri) {
+                  _this5.loadMagnet(element, function () {
+                    _this5.addToBase(element);
+                  });
+                } else _this5.addToBase(element);
+              } else if (a.mark) {
+                _this5.mark(element, item, true);
+              } else if (a.unmark) {
+                _this5.mark(element, item, false);
+              }
+              Lampa.Controller.toggle(enabled);
+            }
+          });
+        });
+        Lampa.Listener.send('torrent', {
+          type: 'render',
+          element: element,
+          item: item
+        });
+        scroll.append(item);
+        if (append) Lampa.Controller.collectionAppend(item);
+      });
+    };
+    this.back = function () {
+      Lampa.Activity.backward();
+    };
+    this.start = function () {
+      if (Lampa.Activity.active().activity !== this.activity) return;
+      if (!initialized) {
+        initialized = true;
+        this.initialize();
+      }
+      Lampa.Background.immediately(Lampa.Utils.cardImgBackgroundBlur(object.movie));
+      Lampa.Controller.add('content', {
+        toggle: function toggle() {
+          Lampa.Controller.collectionSet(scroll.render(), files.render(true));
+          Lampa.Controller.collectionFocus(last || false, scroll.render(true));
+        },
+        update: function update() {},
+        up: function up() {
+          if (Navigator.canmove('up')) {
+            Navigator.move('up');
+          } else Lampa.Controller.toggle('head');
+        },
+        down: function down() {
+          Navigator.move('down');
+        },
+        right: function right() {
+          if (Navigator.canmove('right')) Navigator.move('right');else filter.render().find('.filter--filter').trigger('hover:enter');
+        },
+        left: function left() {
+          var poster = files.render().find('.explorer-card__head-img');
+          if (poster.hasClass('focus')) Lampa.Controller.toggle('menu');else if (Navigator.canmove('left')) Navigator.move('left');else Navigator.focus(poster[0]);
+        },
+        back: this.back
+      });
+      Lampa.Controller.toggle('content');
+    };
+    this.pause = function () {};
+    this.stop = function () {};
+    this.render = function () {
+      return files.render();
+    };
+    this.destroy = function () {
+      network.clear();
+      Parser.clear();
+      files.destroy();
+      scroll.destroy();
+      results = null;
+      network = null;
+    };
+  }
 
   function startPlugin() {
     function cleanupUserClarifys() {
@@ -813,16 +1626,13 @@
       Lampa.Storage.set('user_clarifys', clarifys);
     }
 
-    // ✅ УБРАНА ФУНКЦИЯ addSettings() - используем только настройку из вашего плагина
-
-    // ✅ ПЕРЕХВАТ ПЛЕЕРА ЧИТАЕТ НАСТРОЙКУ 'player_torrent'
+    // ✅ ИЗМЕНЕНИЕ 2: ПЕРЕХВАТ ПЛЕЕРА ЧИТАЕТ player_torrent
     function hookPlayer() {
       var original_play = Lampa.Player.play;
       var original_platform_is = Lampa.Platform.is;
 
       Lampa.Player.listener.follow('destroy', function () {
         if (PLAYER_STATE.spoofed) {
-          console.log('MusicSearch: Player destroyed, restoring platform');
           Lampa.Platform.is = PLAYER_STATE.original_platform;
           PLAYER_STATE.spoofed = false;
           PLAYER_STATE.original_platform = null;
@@ -830,38 +1640,26 @@
       });
 
       Lampa.Player.play = function (object) {
-        // ✅ ЧИТАЕМ НАСТРОЙКУ ИЗ ВАШЕГО ПЛАГИНА
         var player_mode = Lampa.Storage.field('player_torrent');
 
-        console.log('MusicSearch: Player.play, player_torrent =', player_mode, 'from_music_search =', !!object.from_music_search);
-
-        if (object && object.from_music_search) {
-          console.log('MusicSearch: Music file detected');
+        if (object && object.from_music_search && player_mode === 'inner') {
+          console.log('MusicSearch: Using INNER player, spoofing platform');
           
-          if (player_mode === 'inner') {
-            console.log('MusicSearch: Using INNER player - spoofing platform');
+          if (!PLAYER_STATE.spoofed) {
+            PLAYER_STATE.original_platform = original_platform_is;
+            PLAYER_STATE.spoofed = true;
             
-            if (!PLAYER_STATE.spoofed) {
-              PLAYER_STATE.original_platform = original_platform_is;
-              PLAYER_STATE.spoofed = true;
-              
-              Lampa.Platform.is = function (what) {
-                if (what === 'android') {
-                  console.log('MusicSearch: Platform.is(android) -> FALSE');
-                  return false;
-                }
-                return PLAYER_STATE.original_platform(what);
-              };
-            }
-
-            if (object.url) {
-              object.url = object.url.replace('intent:', 'http:');
-            }
-            
-            Lampa.Storage.set('internal_torrclient', true);
-          } else {
-            console.log('MusicSearch: Using ANDROID player - standard behavior');
+            Lampa.Platform.is = function (what) {
+              if (what === 'android') return false;
+              return PLAYER_STATE.original_platform(what);
+            };
           }
+
+          if (object.url) {
+            object.url = object.url.replace('intent:', 'http:');
+          }
+          
+          Lampa.Storage.set('internal_torrclient', true);
         }
         
         original_play(object);
@@ -875,7 +1673,7 @@
       type: 'other',
       version: '1.0',
       name: 'Music Search',
-      description: 'Controlled by "Плеер для торрентов" setting',
+      description: 'Controlled by player_torrent setting',
       component: 'lmeMusicSearch'
     };
     
@@ -883,7 +1681,7 @@
     Lampa.Component.add('lmeMusicSearch', component);
     
     function add() {
-      var button = $("<li class=\"menu__item selector\">\n            <div class=\"menu__ico\">\n                <svg width=\"60\" height=\"60\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <path d=\"M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z\" fill=\"white\"/>\n                </svg>\n            </div>\n            <div class=\"menu__text\">".concat(manifest.name, "</div>\n        </li>"));
+      var button = $("<li class=\"menu__item selector\"><div class=\"menu__ico\"><svg width=\"60\" height=\"60\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z\" fill=\"white\"/></svg></div><div class=\"menu__text\">" + manifest.name + "</div></li>");
       button.on('hover:enter', function () {
         Lampa.Activity.push({
           url: '',
@@ -906,13 +1704,11 @@
     
     if (window.appready) {
       add();
-      // ✅ УБРАН ВЫЗОВ addSettings()
       hookPlayer();
     } else {
       Lampa.Listener.follow('app', function (e) {
         if (e.type === 'ready') {
           add();
-          // ✅ УБРАН ВЫЗОВ addSettings()
           hookPlayer();
         }
       });
