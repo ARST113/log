@@ -512,17 +512,14 @@
 
   // ✅ ИЗМЕНЕНИЕ 1: ФУНКЦИЯ PRELOAD ЧИТАЕТ НАСТРОЙКУ player_torrent
   function preload(data, run) {
-    // Читаем настройку из вашего плагина
     var player_mode = Lampa.Storage.field('player_torrent');
     
-    // Если выбран встроенный плеер - пропускаем буфер
     if (player_mode === 'inner') {
       console.log('MusicSearch: INNER mode - skipping preload buffer');
       run();
       return;
     }
     
-    // Стандартная логика для внешнего плеера
     var need_preload = Lampa.Torserver.ip() && data.url.indexOf(Lampa.Torserver.ip()) > -1 && data.url.indexOf('&preload') > -1;
     if (need_preload) {
       var checkout;
@@ -626,12 +623,14 @@
     if (scroll_to_element) Lampa.Controller.collectionFocus(scroll_to_element, Lampa.Modal.scroll().render());
   }
 
+  // ✅ ИЗМЕНЕНИЕ 2: РАСШИРЕННЫЙ ПЛЕЙЛИСТ С ВСЕМИ СВОЙСТВАМИ
   function bindItemEvents(item, element, playlist, params) {
     item.on('hover:enter', function () {
       stopAutostart();
 
       if (params.movie.id) Lampa.Favorite.add('history', params.movie, 100);
 
+      // Создаем расширенный плейлист со всеми необходимыми свойствами
       if (playlist.length > 1) {
         var trim_playlist = playlist.map(function (elem) {
           return {
@@ -639,11 +638,21 @@
             url: elem.url,
             timeline: elem.timeline,
             img: elem.img,
-            from_music_search: true
+            from_music_search: true,
+            // Добавляем все необходимые свойства для встроенного плеера
+            subtitle: elem.subtitle || '',
+            quality: elem.quality || {},
+            translate: elem.translate || [],
+            path: elem.path || elem.title,
+            torrent_hash: elem.torrent_hash,
+            exe: elem.exe,
+            size: elem.size,
+            first_title: elem.first_title
           };
         });
         element.playlist = trim_playlist;
       }
+
       preload(element, function () {
         Lampa.Player.play(element);
         Lampa.Player.playlist(playlist);
@@ -1626,19 +1635,42 @@
       Lampa.Storage.set('user_clarifys', clarifys);
     }
 
-    // ✅ ИЗМЕНЕНИЕ 2: ПЕРЕХВАТ ПЛЕЕРА ЧИТАЕТ player_torrent
+    // ✅ ИЗМЕНЕНИЕ 3: ПЕРЕХВАТ ПЛЕЕРА С ПОДДЕРЖКОЙ ПЕРЕКЛЮЧЕНИЯ ТРЕКОВ
     function hookPlayer() {
       var original_play = Lampa.Player.play;
       var original_platform_is = Lampa.Platform.is;
 
+      // Обработчик уничтожения плеера
       Lampa.Player.listener.follow('destroy', function () {
         if (PLAYER_STATE.spoofed) {
+          console.log('MusicSearch: Player destroyed, restoring platform');
           Lampa.Platform.is = PLAYER_STATE.original_platform;
           PLAYER_STATE.spoofed = false;
           PLAYER_STATE.original_platform = null;
         }
       });
 
+      // ✅ НОВЫЙ ОБРАБОТЧИК: Переключение треков в плейлисте
+      if (Lampa.Playlist && Lampa.Playlist.listener) {
+        Lampa.Playlist.listener.follow('select', function (e) {
+          if (e.item && e.item.from_music_search) {
+            var player_mode = Lampa.Storage.field('player_torrent');
+            
+            if (player_mode === 'inner' && !PLAYER_STATE.spoofed) {
+              console.log('MusicSearch: Playlist track switch - ensuring platform spoof');
+              PLAYER_STATE.original_platform = original_platform_is;
+              PLAYER_STATE.spoofed = true;
+              
+              Lampa.Platform.is = function (what) {
+                if (what === 'android') return false;
+                return PLAYER_STATE.original_platform(what);
+              };
+            }
+          }
+        });
+      }
+
+      // Перехват запуска плеера
       Lampa.Player.play = function (object) {
         var player_mode = Lampa.Storage.field('player_torrent');
 
@@ -1666,14 +1698,37 @@
       };
     }
 
+    // ✅ ИЗМЕНЕНИЕ 4: ДОБАВЛЕНИЕ НАСТРОЙКИ В ИНТЕРФЕЙС
+    function addSettings() {
+      Lampa.SettingsApi.addParam({
+        component: 'player',
+        param: {
+          name: 'player_torrent',
+          type: 'select',
+          values: {
+            'android': 'Android (Внешний)',
+            'inner': 'Lampa (Встроенный)'
+          },
+          "default": 'inner'
+        },
+        field: {
+          name: 'Плеер для музыки (Music Search)',
+          description: 'Выберите плеер для воспроизведения музыки из Music Search'
+        },
+        onChange: function(value) {
+          console.log('MusicSearch: Player mode changed to:', value);
+        }
+      });
+    }
+
     cleanupUserClarifys();
     window.lmeMusicSearch_ready = true;
     
     var manifest = {
       type: 'other',
-      version: '1.0',
+      version: '1.1',
       name: 'Music Search',
-      description: 'Controlled by player_torrent setting',
+      description: 'Music search with playlist support for internal player',
       component: 'lmeMusicSearch'
     };
     
@@ -1704,12 +1759,16 @@
     
     if (window.appready) {
       add();
+      addSettings();
       hookPlayer();
+      Parser.init();
     } else {
       Lampa.Listener.follow('app', function (e) {
         if (e.type === 'ready') {
           add();
+          addSettings();
           hookPlayer();
+          Parser.init();
         }
       });
     }
