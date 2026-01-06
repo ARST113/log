@@ -20,37 +20,53 @@ var AudioVisualizer = {
   visualizerWrapper: null,
 
   init: function (videoElement, container) {
-    try {
-      if (!videoElement) return false;
+  try {
+    // ✅ На webOS разрешаем запуск даже без video
+    var isWebOS = !!(window.Lampa && Lampa.Platform && Lampa.Platform.is('webos'));
 
-      // ✅ На webOS принудительно CSS (WebAudio-анализатор почти всегда пустой/запрещён)
-      if (window.Lampa && Lampa.Platform && Lampa.Platform.is('webos')) {
+    if (!videoElement && !isWebOS) return false;
+
+    // ✅ webOS => только CSS
+    if (isWebOS) this.useWebAudio = false;
+
+    this.isActive = true;
+    this.container = container;
+
+    this.createVisualizer(container);
+
+    // ✅ CSS-only режим (в т.ч. webOS)
+    if (!this.useWebAudio) {
+      this.initCSSWave();
+      // по умолчанию считаем что играет — запустим анимацию
+      this.toggle(true);
+      return true;
+    }
+
+    // WebAudio (на остальных платформах)
+    if (window.AudioContext || window.webkitAudioContext) {
+      try {
+        this.initWebAudio(videoElement);
+        return true;
+      } catch (e) {
+        console.error('[AudioVisualizer] WebAudio failed, fallback to CSS:', e);
         this.useWebAudio = false;
-      }
-
-      this.isActive = true;
-      this.container = container;
-
-      this.createVisualizer(container);
-
-      // ✅ CSS-only режим
-      if (!this.useWebAudio) {
         this.initCSSWave();
+        this.toggle(true);
         return true;
       }
+    }
 
-      // WebAudio (на остальных платформах)
-      if (window.AudioContext || window.webkitAudioContext) {
-        try {
-          this.initWebAudio(videoElement);
-          return true;
-        } catch (e) {
-          console.error('[AudioVisualizer] WebAudio failed, fallback to CSS:', e);
-          this.useWebAudio = false;
-          this.initCSSWave();
-          return true;
-        }
-      }
+    this.useWebAudio = false;
+    this.initCSSWave();
+    this.toggle(true);
+    return true;
+  } catch (e) {
+    console.error('[AudioVisualizer] Init error:', e);
+    this.isActive = false;
+    return false;
+  }
+},
+
 
       // Фолбэк если нет AudioContext
       this.useWebAudio = false;
@@ -65,7 +81,54 @@ var AudioVisualizer = {
 
   createVisualizer: function (container) {
     // Удаляем старое
-    var old = document.querySelectorAll('.player-audio-visualizer');
+    var old = document.querySeinit: function (videoElement, container) {
+  try {
+    // ✅ На webOS разрешаем запуск даже без video
+    var isWebOS = !!(window.Lampa && Lampa.Platform && Lampa.Platform.is('webos'));
+
+    if (!videoElement && !isWebOS) return false;
+
+    // ✅ webOS => только CSS
+    if (isWebOS) this.useWebAudio = false;
+
+    this.isActive = true;
+    this.container = container;
+
+    this.createVisualizer(container);
+
+    // ✅ CSS-only режим (в т.ч. webOS)
+    if (!this.useWebAudio) {
+      this.initCSSWave();
+      // по умолчанию считаем что играет — запустим анимацию
+      this.toggle(true);
+      return true;
+    }
+
+    // WebAudio (на остальных платформах)
+    if (window.AudioContext || window.webkitAudioContext) {
+      try {
+        this.initWebAudio(videoElement);
+        return true;
+      } catch (e) {
+        console.error('[AudioVisualizer] WebAudio failed, fallback to CSS:', e);
+        this.useWebAudio = false;
+        this.initCSSWave();
+        this.toggle(true);
+        return true;
+      }
+    }
+
+    this.useWebAudio = false;
+    this.initCSSWave();
+    this.toggle(true);
+    return true;
+  } catch (e) {
+    console.error('[AudioVisualizer] Init error:', e);
+    this.isActive = false;
+    return false;
+  }
+},
+lectorAll('.player-audio-visualizer');
     for (var i = 0; i < old.length; i++) old[i].remove();
 
     var wrapper = document.createElement('div');
@@ -289,63 +352,67 @@ var AudioVisualizer = {
 // ========== INTEGRATION (только для Music Search) ==========
 function integrateVisualizer() {
   var visualizerInstance = null;
-  var lastPlayWasMusic = false;
 
-  // ✅ Один раз хукаем Player.play, чтобы понимать: это музыка из твоего плагина или нет
-  (function hookPlayOnce() {
-    if (Lampa.Player.__music_visualizer_hooked) return;
-    Lampa.Player.__music_visualizer_hooked = true;
+  function isWebOS() {
+    return !!(window.Lampa && Lampa.Platform && Lampa.Platform.is('webos'));
+  }
 
-    var original_play = Lampa.Player.play;
-    Lampa.Player.play = function (obj) {
-      lastPlayWasMusic = !!(obj && obj.from_music_search);
-      return original_play.apply(this, arguments);
-    };
-  })();
+  function startVisualizer(forceCSSOnly) {
+    if (visualizerInstance) return;
 
-  function getVideoElement() {
+    visualizerInstance = Object.create(AudioVisualizer);
+
+    // ✅ если webOS — запускаем без videoElement вообще
+    var ok = visualizerInstance.init(forceCSSOnly ? null : getMediaElement(), document.body);
+
+    if (ok) {
+      // ✅ если есть media element — слушаем play/pause
+      var media = getMediaElement();
+      if (media) {
+        media.addEventListener('play', function () {
+          if (visualizerInstance) visualizerInstance.toggle(true);
+        });
+        media.addEventListener('pause', function () {
+          if (visualizerInstance) visualizerInstance.toggle(false);
+        });
+
+        if (!media.paused) visualizerInstance.toggle(true);
+      } else {
+        // ✅ на webOS без media считаем что играет
+        visualizerInstance.toggle(true);
+      }
+    }
+  }
+
+  function getMediaElement() {
     return (
       document.querySelector('.player video') ||
+      document.querySelector('.player audio') ||
       document.querySelector('video') ||
-      (document.getElementsByTagName('video')[0])
+      document.querySelector('audio') ||
+      (document.getElementsByTagName('video')[0]) ||
+      (document.getElementsByTagName('audio')[0])
     );
   }
 
-  function tryInitialize() {
-    var attempts = 0;
-
-    var checkInterval = setInterval(function () {
-      attempts++;
-
-      var video = getVideoElement();
-
-      // ✅ стартуем только если сейчас реально проигрывается Music Search
-      if (video && !visualizerInstance && lastPlayWasMusic) {
-        clearInterval(checkInterval);
-
-        visualizerInstance = Object.create(AudioVisualizer);
-        var ok = visualizerInstance.init(video, document.body);
-
-        if (ok) {
-          video.addEventListener('play', function () {
-            if (visualizerInstance) visualizerInstance.toggle(true);
-          });
-
-          video.addEventListener('pause', function () {
-            if (visualizerInstance) visualizerInstance.toggle(false);
-          });
-
-          if (!video.paused) visualizerInstance.toggle(true);
-        }
-      } else if (attempts >= 20) {
-        clearInterval(checkInterval);
-      }
-    }, 300);
-  }
-
-  // Старт/стоп вместе с жизненным циклом плеера
   Lampa.Player.listener.follow('start', function () {
-    setTimeout(tryInitialize, 300);
+    if (isWebOS()) {
+      // ✅ webOS: CSS-only, без привязки к video
+      setTimeout(function () { startVisualizer(true); }, 200);
+    } else {
+      // ✅ не webOS: пробуем как обычно через media element
+      var attempts = 0;
+      var t = setInterval(function () {
+        attempts++;
+        var media = getMediaElement();
+        if (media) {
+          clearInterval(t);
+          startVisualizer(false);
+        } else if (attempts > 20) {
+          clearInterval(t);
+        }
+      }, 300);
+    }
   });
 
   Lampa.Player.listener.follow('destroy', function () {
@@ -355,6 +422,7 @@ function integrateVisualizer() {
     }
   });
 }
+
 
   'use strict';
 
