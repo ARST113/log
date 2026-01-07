@@ -225,18 +225,27 @@ function integrateWebOSCanvasVisualizer() {
     }
   });
 }
-
-// ВАЖНО: правильный вызов (у тебя было integrateVisualizer())
-if (window.appready) {
-  integrateWebOSCanvasVisualizer();
-} else {
-  Lampa.Listener.follow('app', function (e) {
-    if (e.type === 'ready') integrateWebOSCanvasVisualizer();
-  });
-}
 // ========== END VISUALIZER ==========
 //Конец блока визуализатора
+(function startWebOSVizOnce() {
+  if (window.__webos_canvas_viz_inited) return;
+  window.__webos_canvas_viz_inited = true;
 
+  function safeStart() {
+    if (!window.Lampa || !Lampa.Platform || !Lampa.Platform.is) return;
+    if (!Lampa.Platform.is('webos')) return;
+
+    integrateWebOSCanvasVisualizer();
+  }
+
+  if (window.appready) {
+    safeStart();
+  } else {
+    Lampa.Listener.follow('app', function (e) {
+      if (e.type === 'ready') safeStart();
+    });
+  }
+})();
 
   'use strict';
 
@@ -1596,15 +1605,5 @@ if (window.appready) {
       });
     }
   }
-  if (!window.lmeMusicSearch_ready) startPlugin();
-
-
-  if (window.appready) {
-    integrateVisualizer();
-  } else {
-    Lampa.Listener.follow('app', function (e) {
-      if (e.type === 'ready') integrateVisualizer();
-    });
-  }
-
+ if (!window.lmeMusicSearch_ready) startPlugin();
 })();
