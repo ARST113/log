@@ -3,72 +3,42 @@
 (function () {
   'use strict';
 
-// ========== AUDIO VISUALIZER (webOS => CSS only) ==========
-var AudioVisualizer = {
-  context: null,
-  analyser: null,
-  source: null,
-  dataArray: null,
-  bufferLength: null,
-  animationId: null,
-  canvas: null,
-  canvasCtx: null,
+// ========== WEBOS CANVAS VISUALIZER (CSS removed) ==========
+var WebOSCanvasVisualizer = {
   isActive: false,
-  waveElement: null,
-  useWebAudio: true,
-  container: null,
-  visualizerWrapper: null,
+  isPlaying: false,
 
-  init: function (videoElement, container) {
+  wrapper: null,
+  canvas: null,
+  ctx: null,
+  animationId: null,
+
+  // тип визуализации: 'bars' | 'wave' | 'particles'
+  type: 'bars',
+  color: 'rgba(160, 180, 255, 0.85)',
+
+  init: function (container, opts) {
     try {
-      var isWebOS = !!(window.Lampa && Lampa.Platform && Lampa.Platform.is('webos'));
-
-      // ✅ На webOS разрешаем запуск даже без video/audio
-      if (!videoElement && !isWebOS) return false;
-
-      // ✅ webOS => только CSS
-      if (isWebOS) this.useWebAudio = false;
+      opts = opts || {};
+      this.type = opts.type || 'bars';
+      this.color = opts.color || 'rgba(160, 180, 255, 0.85)';
 
       this.isActive = true;
-      this.container = container;
+      this.isPlaying = true;
 
-      this.createVisualizer(container);
+      this.createDOM(container || document.body);
+      this.startLoop();
 
-      // ✅ CSS-only режим
-      if (!this.useWebAudio) {
-        this.initCSSWave();
-        this.toggle(true);
-        return true;
-      }
-
-      // WebAudio (на остальных платформах)
-      if (window.AudioContext || window.webkitAudioContext) {
-        try {
-          this.initWebAudio(videoElement);
-          return true;
-        } catch (e) {
-          console.error('[AudioVisualizer] WebAudio failed, fallback to CSS:', e);
-          this.useWebAudio = false;
-          this.initCSSWave();
-          this.toggle(true);
-          return true;
-        }
-      }
-
-      // если нет AudioContext
-      this.useWebAudio = false;
-      this.initCSSWave();
-      this.toggle(true);
       return true;
     } catch (e) {
-      console.error('[AudioVisualizer] Init error:', e);
+      console.error('[WebOSCanvasVisualizer] Init error:', e);
       this.isActive = false;
       return false;
     }
   },
 
-  createVisualizer: function () {
-    // Удаляем старое
+  createDOM: function (container) {
+    // удалить старое
     var old = document.querySelectorAll('.player-audio-visualizer');
     for (var i = 0; i < old.length; i++) old[i].remove();
 
@@ -82,6 +52,7 @@ var AudioVisualizer = {
         'transform: translateX(-50%) !important; ' +
         'width: 90% !important; ' +
         'max-width: 1000px !important; ' +
+        'height: 220px !important; ' +
         'z-index: 2147483647 !important; ' +
         'pointer-events: none !important; ' +
         'display: block !important; ' +
@@ -89,210 +60,147 @@ var AudioVisualizer = {
         'opacity: 1 !important;'
     );
 
-    var waveDiv = document.createElement('div');
-    waveDiv.className = 'audio-wave';
-    waveDiv.setAttribute(
-      'style',
-      'display: none; ' +
-        'justify-content: space-around; ' +
-        'align-items: flex-end; ' +
-        'height: 180px; ' +
-        'padding: 0; ' +
-        'background: transparent !important; ' +
-        'border: none !important;'
-    );
-
     var canvas = document.createElement('canvas');
     canvas.className = 'audio-canvas';
-    canvas.width = 1000;
+    canvas.width = 1000;   // внутренняя сетка (логические пиксели)
     canvas.height = 220;
     canvas.setAttribute(
       'style',
       'width: 100% !important; ' +
         'height: 220px !important; ' +
-        'display: none !important; ' +
+        'display: block !important; ' +
         'background: transparent !important; ' +
         'border: none !important;'
     );
 
-    wrapper.appendChild(waveDiv);
     wrapper.appendChild(canvas);
-    document.body.appendChild(wrapper);
+    container.appendChild(wrapper);
 
-    this.visualizerWrapper = wrapper;
-    this.waveElement = waveDiv;
+    this.wrapper = wrapper;
     this.canvas = canvas;
-    this.canvasCtx = canvas.getContext('2d');
+    this.ctx = canvas.getContext('2d');
   },
 
-  initWebAudio: function (videoElement) {
-    this.context = new (window.AudioContext || window.webkitAudioContext)();
-    this.analyser = this.context.createAnalyser();
-    this.analyser.fftSize = 256;
-    this.analyser.smoothingTimeConstant = 0.85;
-
-    this.bufferLength = this.analyser.frequencyBinCount;
-    this.dataArray = new Uint8Array(this.bufferLength);
-
-    if (!this.source) {
-      this.source = this.context.createMediaElementSource(videoElement);
-      this.source.connect(this.analyser);
-      this.analyser.connect(this.context.destination);
-    }
-
-    this.canvas.style.display = 'block';
-    this.waveElement.style.display = 'none';
-
-    this.startWebAudioVisualization();
+  toggle: function (playing) {
+    if (!this.isActive) return;
+    this.isPlaying = !!playing;
   },
 
-  startWebAudioVisualization: function () {
+  startLoop: function () {
     var self = this;
 
     function draw() {
-      if (!self.isActive || !self.analyser || !self.canvasCtx) return;
-
+      if (!self.isActive || !self.ctx || !self.canvas) return;
       self.animationId = requestAnimationFrame(draw);
-      self.analyser.getByteFrequencyData(self.dataArray);
 
-      self.canvasCtx.clearRect(0, 0, self.canvas.width, self.canvas.height);
+      // если "пауза" — можно либо просто не рисовать,
+      // либо рисовать “замороженный” кадр. Тут: не обновляем.
+      if (!self.isPlaying) return;
 
-      var barWidth = (self.canvas.width / self.bufferLength) * 2.5;
-      var x = 0;
+      var ctx = self.ctx;
+      var w = self.canvas.width;
+      var h = self.canvas.height;
+      var t = Date.now();
 
-      for (var i = 0; i < self.bufferLength; i++) {
-        var barHeight = (self.dataArray[i] / 255) * self.canvas.height * 0.95;
+      ctx.clearRect(0, 0, w, h);
 
-        var gradient = self.canvasCtx.createLinearGradient(
-          0,
-          self.canvas.height - barHeight,
-          0,
-          self.canvas.height
-        );
-        gradient.addColorStop(0, 'rgba(100, 180, 255, 0.7)');
-        gradient.addColorStop(0.3, 'rgba(150, 120, 255, 0.7)');
-        gradient.addColorStop(0.6, 'rgba(255, 100, 180, 0.7)');
-        gradient.addColorStop(1, 'rgba(255, 140, 80, 0.7)');
+      if (self.type === 'bars') {
+        // 32 полосы (оптимально для webOS)
+        var bars = 32;
+        var gap = 6;
+        var barW = (w - gap * (bars - 1)) / bars;
 
-        self.canvasCtx.fillStyle = gradient;
-        self.canvasCtx.fillRect(x, self.canvas.height - barHeight, barWidth - 2, barHeight);
+        for (var i = 0; i < bars; i++) {
+          // “математика ритма” как в AudioAddict
+          var speed = (i % 2 === 0) ? 0.006 : 0.009;
+          var offset = i * 220;
 
-        x += barWidth;
+          // базовая высота
+          var amp = Math.abs(Math.sin((t + offset) * speed));
+          var hh = amp * h * 0.85 + (h * 0.08);
+
+          // дрожание (чуть-чуть, чтобы не шумело)
+          hh += (Math.random() * 6);
+
+          // градиент как у твоего canvas-эквалайзера
+          var grad = ctx.createLinearGradient(0, h - hh, 0, h);
+          grad.addColorStop(0, 'rgba(100, 180, 255, 0.65)');
+          grad.addColorStop(0.35, 'rgba(150, 120, 255, 0.65)');
+          grad.addColorStop(0.7, 'rgba(255, 100, 180, 0.65)');
+          grad.addColorStop(1, 'rgba(255, 140, 80, 0.65)');
+
+          ctx.fillStyle = grad;
+          ctx.fillRect(i * (barW + gap), h - hh, barW, hh);
+        }
+      }
+      else if (self.type === 'wave') {
+        ctx.beginPath();
+        ctx.moveTo(0, h / 2);
+
+        for (var x = 0; x < w; x++) {
+          var y = Math.sin(x * 0.03 + t * 0.004) * (h * 0.22) + h / 2;
+          ctx.lineTo(x, y);
+        }
+
+        ctx.strokeStyle = self.color;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+      else if (self.type === 'particles') {
+        ctx.fillStyle = self.color;
+
+        for (var j = 0; j < 7; j++) {
+          var px = (Math.sin(t * 0.002 + j) + 1) / 2 * w;
+          var py = (Math.cos(t * 0.0026 + j * 1.7) + 1) / 2 * h;
+          var r = Math.abs(Math.sin(t * 0.004 + j)) * 6 + 2;
+
+          ctx.beginPath();
+          ctx.arc(px, py, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
 
     draw();
   },
 
-  initCSSWave: function () {
-    if (!this.waveElement) return;
-
-    this.waveElement.style.display = 'flex';
-    if (this.canvas) this.canvas.style.display = 'none';
-
-    this.waveElement.innerHTML = '';
-
-    var barsCount = 32; // ✅ для webOS легче, чем 40
-    for (var i = 0; i < barsCount; i++) {
-      var bar = document.createElement('div');
-      var hue = Math.floor(Math.random() * 360);
-
-      bar.style.width = '10px';
-      bar.style.minHeight = '20px';
-      bar.style.background =
-        'linear-gradient(to top, hsla(' + hue + ',70%,60%,0.7), hsla(' + ((hue + 60) % 360) + ',70%,60%,0.7))';
-
-      // ✅ ВАЖНО: webOS иногда “гасит” height% в flex — делаем transform: scaleY
-      bar.style.transformOrigin = '50% 100%';
-      bar.style.animation = 'wave-scale ' + (240 + Math.random() * 260) + 'ms linear infinite alternate';
-      bar.style.animationDelay = Math.floor(Math.random() * 150) + 'ms';
-
-      this.waveElement.appendChild(bar);
-    }
-  },
-
-  toggle: function (isPlaying) {
-    if (!this.isActive) return;
-
-    if (!this.useWebAudio && this.waveElement) {
-      var bars = this.waveElement.querySelectorAll('div');
-      for (var i = 0; i < bars.length; i++) {
-        bars[i].style.animationPlayState = isPlaying ? 'running' : 'paused';
-      }
-      return;
-    }
-
-    if (this.useWebAudio && this.context) {
-      if (isPlaying) {
-        if (this.context.state === 'suspended') this.context.resume();
-      } else {
-        if (this.context.state === 'running') this.context.suspend();
-      }
-    }
-  },
-
   destroy: function () {
     this.isActive = false;
+    this.isPlaying = false;
 
     if (this.animationId) cancelAnimationFrame(this.animationId);
-
-    if (this.source) { try { this.source.disconnect(); } catch (e) {} }
-    if (this.context) { try { this.context.close(); } catch (e) {} }
-
-    if (this.visualizerWrapper) this.visualizerWrapper.remove();
-
-    this.context = null;
-    this.analyser = null;
-    this.source = null;
-    this.dataArray = null;
-    this.bufferLength = null;
     this.animationId = null;
+
+    if (this.wrapper) this.wrapper.remove();
+
+    this.wrapper = null;
     this.canvas = null;
-    this.canvasCtx = null;
-    this.waveElement = null;
-    this.visualizerWrapper = null;
+    this.ctx = null;
   }
 };
 
-// CSS keyframes (scaleY вместо height%)
-(function injectWaveCSS() {
-  var styles = document.createElement('style');
-  styles.textContent =
-    '@keyframes wave-scale {' +
-      '0% { transform: scaleY(0.25); opacity: 0.55; }' +
-      '100% { transform: scaleY(1.0); opacity: 0.95; }' +
-    '}';
-  document.head.appendChild(styles);
-})();
-
-// ========== INTEGRATION ==========
-function integrateVisualizer() {
+// ========== INTEGRATION (webOS only) ==========
+function integrateWebOSCanvasVisualizer() {
   var visualizerInstance = null;
 
   function isWebOS() {
     return !!(window.Lampa && Lampa.Platform && Lampa.Platform.is('webos'));
   }
 
-  function getMediaElement() {
-    return (
+  function start() {
+    if (visualizerInstance) return;
+    visualizerInstance = Object.create(WebOSCanvasVisualizer);
+
+    // можешь выбрать type: 'bars' / 'wave' / 'particles'
+    visualizerInstance.init(document.body, { type: 'bars' });
+
+    // Подписки на play/pause — чтобы паузить анимацию
+    var media =
       document.querySelector('.player video') ||
       document.querySelector('.player audio') ||
       document.querySelector('video') ||
-      document.querySelector('audio') ||
-      (document.getElementsByTagName('video')[0]) ||
-      (document.getElementsByTagName('audio')[0])
-    );
-  }
+      document.querySelector('audio');
 
-  function startVisualizer(forceCSSOnly) {
-    if (visualizerInstance) return;
-
-    visualizerInstance = Object.create(AudioVisualizer);
-
-    var ok = visualizerInstance.init(forceCSSOnly ? null : getMediaElement(), document.body);
-    if (!ok) return;
-
-    var media = getMediaElement();
     if (media) {
       media.addEventListener('play', function () {
         if (visualizerInstance) visualizerInstance.toggle(true);
@@ -301,28 +209,15 @@ function integrateVisualizer() {
         if (visualizerInstance) visualizerInstance.toggle(false);
       });
 
-      if (!media.paused) visualizerInstance.toggle(true);
+      visualizerInstance.toggle(!media.paused);
     } else {
       visualizerInstance.toggle(true);
     }
   }
 
   Lampa.Player.listener.follow('start', function () {
-    if (isWebOS()) {
-      setTimeout(function () { startVisualizer(true); }, 200);
-    } else {
-      var attempts = 0;
-      var t = setInterval(function () {
-        attempts++;
-        var media = getMediaElement();
-        if (media) {
-          clearInterval(t);
-          startVisualizer(false);
-        } else if (attempts > 20) {
-          clearInterval(t);
-        }
-      }, 300);
-    }
+    if (!isWebOS()) return;
+    setTimeout(start, 200);
   });
 
   Lampa.Player.listener.follow('destroy', function () {
@@ -331,7 +226,6 @@ function integrateVisualizer() {
       visualizerInstance = null;
     }
   });
-  
 }
 //Конец блока визуализатора
 
