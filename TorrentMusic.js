@@ -331,6 +331,7 @@ function integrateVisualizer() {
       visualizerInstance = null;
     }
   });
+  
 }
 
 
