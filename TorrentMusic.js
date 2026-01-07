@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-// ========== WEBOS CANVAS VISUALIZER (CSS removed) ==========
+// ========== WEBOS CANVAS VISUALIZER (Canvas only, no CSS file) ==========
 var WebOSCanvasVisualizer = {
   isActive: false,
   isPlaying: false,
@@ -13,7 +13,7 @@ var WebOSCanvasVisualizer = {
   ctx: null,
   animationId: null,
 
-  // тип визуализации: 'bars' | 'wave' | 'particles'
+  // 'bars' | 'wave' | 'particles'
   type: 'bars',
   color: 'rgba(160, 180, 255, 0.85)',
 
@@ -46,30 +46,30 @@ var WebOSCanvasVisualizer = {
     wrapper.className = 'player-audio-visualizer';
     wrapper.setAttribute(
       'style',
-      'position: fixed !important; ' +
-        'bottom: 180px !important; ' +
-        'left: 50% !important; ' +
-        'transform: translateX(-50%) !important; ' +
-        'width: 90% !important; ' +
-        'max-width: 1000px !important; ' +
-        'height: 220px !important; ' +
-        'z-index: 2147483647 !important; ' +
-        'pointer-events: none !important; ' +
-        'display: block !important; ' +
-        'visibility: visible !important; ' +
+      'position: fixed !important;' +
+        'bottom: 180px !important;' +
+        'left: 50% !important;' +
+        'transform: translateX(-50%) !important;' +
+        'width: 90% !important;' +
+        'max-width: 1000px !important;' +
+        'height: 220px !important;' +
+        'z-index: 2147483647 !important;' +
+        'pointer-events: none !important;' +
+        'display: block !important;' +
+        'visibility: visible !important;' +
         'opacity: 1 !important;'
     );
 
     var canvas = document.createElement('canvas');
     canvas.className = 'audio-canvas';
-    canvas.width = 1000;   // внутренняя сетка (логические пиксели)
+    canvas.width = 1000; // логические пиксели
     canvas.height = 220;
     canvas.setAttribute(
       'style',
-      'width: 100% !important; ' +
-        'height: 220px !important; ' +
-        'display: block !important; ' +
-        'background: transparent !important; ' +
+      'width: 100% !important;' +
+        'height: 220px !important;' +
+        'display: block !important;' +
+        'background: transparent !important;' +
         'border: none !important;'
     );
 
@@ -93,8 +93,7 @@ var WebOSCanvasVisualizer = {
       if (!self.isActive || !self.ctx || !self.canvas) return;
       self.animationId = requestAnimationFrame(draw);
 
-      // если "пауза" — можно либо просто не рисовать,
-      // либо рисовать “замороженный” кадр. Тут: не обновляем.
+      // пауза = “заморозка”
       if (!self.isPlaying) return;
 
       var ctx = self.ctx;
@@ -105,24 +104,21 @@ var WebOSCanvasVisualizer = {
       ctx.clearRect(0, 0, w, h);
 
       if (self.type === 'bars') {
-        // 32 полосы (оптимально для webOS)
+        // 32 полосы — норм для webOS
         var bars = 32;
         var gap = 6;
         var barW = (w - gap * (bars - 1)) / bars;
 
         for (var i = 0; i < bars; i++) {
-          // “математика ритма” как в AudioAddict
           var speed = (i % 2 === 0) ? 0.006 : 0.009;
           var offset = i * 220;
 
-          // базовая высота
           var amp = Math.abs(Math.sin((t + offset) * speed));
           var hh = amp * h * 0.85 + (h * 0.08);
 
-          // дрожание (чуть-чуть, чтобы не шумело)
+          // лёгкое дрожание
           hh += (Math.random() * 6);
 
-          // градиент как у твоего canvas-эквалайзера
           var grad = ctx.createLinearGradient(0, h - hh, 0, h);
           grad.addColorStop(0, 'rgba(100, 180, 255, 0.65)');
           grad.addColorStop(0.35, 'rgba(150, 120, 255, 0.65)');
@@ -132,8 +128,7 @@ var WebOSCanvasVisualizer = {
           ctx.fillStyle = grad;
           ctx.fillRect(i * (barW + gap), h - hh, barW, hh);
         }
-      }
-      else if (self.type === 'wave') {
+      } else if (self.type === 'wave') {
         ctx.beginPath();
         ctx.moveTo(0, h / 2);
 
@@ -145,8 +140,7 @@ var WebOSCanvasVisualizer = {
         ctx.strokeStyle = self.color;
         ctx.lineWidth = 3;
         ctx.stroke();
-      }
-      else if (self.type === 'particles') {
+      } else if (self.type === 'particles') {
         ctx.fillStyle = self.color;
 
         for (var j = 0; j < 7; j++) {
@@ -189,12 +183,13 @@ function integrateWebOSCanvasVisualizer() {
 
   function start() {
     if (visualizerInstance) return;
+
     visualizerInstance = Object.create(WebOSCanvasVisualizer);
 
-    // можешь выбрать type: 'bars' / 'wave' / 'particles'
+    // выбери type: 'bars' / 'wave' / 'particles'
     visualizerInstance.init(document.body, { type: 'bars' });
 
-    // Подписки на play/pause — чтобы паузить анимацию
+    // привязка к play/pause
     var media =
       document.querySelector('.player video') ||
       document.querySelector('.player audio') ||
@@ -205,6 +200,7 @@ function integrateWebOSCanvasVisualizer() {
       media.addEventListener('play', function () {
         if (visualizerInstance) visualizerInstance.toggle(true);
       });
+
       media.addEventListener('pause', function () {
         if (visualizerInstance) visualizerInstance.toggle(false);
       });
@@ -215,11 +211,13 @@ function integrateWebOSCanvasVisualizer() {
     }
   }
 
+  // стартуем при запуске плеера
   Lampa.Player.listener.follow('start', function () {
     if (!isWebOS()) return;
     setTimeout(start, 200);
   });
 
+  // чистим при закрытии
   Lampa.Player.listener.follow('destroy', function () {
     if (visualizerInstance) {
       visualizerInstance.destroy();
@@ -227,6 +225,16 @@ function integrateWebOSCanvasVisualizer() {
     }
   });
 }
+
+// ВАЖНО: правильный вызов (у тебя было integrateVisualizer())
+if (window.appready) {
+  integrateWebOSCanvasVisualizer();
+} else {
+  Lampa.Listener.follow('app', function (e) {
+    if (e.type === 'ready') integrateWebOSCanvasVisualizer();
+  });
+}
+// ========== END VISUALIZER ==========
 //Конец блока визуализатора
 
 
