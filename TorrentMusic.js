@@ -20,57 +20,45 @@ var AudioVisualizer = {
   visualizerWrapper: null,
 
   init: function (videoElement, container) {
-  try {
-    // ✅ На webOS разрешаем запуск даже без video
-    var isWebOS = !!(window.Lampa && Lampa.Platform && Lampa.Platform.is('webos'));
+    try {
+      var isWebOS = !!(window.Lampa && Lampa.Platform && Lampa.Platform.is('webos'));
 
-    if (!videoElement && !isWebOS) return false;
+      // ✅ На webOS разрешаем запуск даже без video/audio
+      if (!videoElement && !isWebOS) return false;
 
-    // ✅ webOS => только CSS
-    if (isWebOS) this.useWebAudio = false;
+      // ✅ webOS => только CSS
+      if (isWebOS) this.useWebAudio = false;
 
-    this.isActive = true;
-    this.container = container;
+      this.isActive = true;
+      this.container = container;
 
-    this.createVisualizer(container);
+      this.createVisualizer(container);
 
-    // ✅ CSS-only режим (в т.ч. webOS)
-    if (!this.useWebAudio) {
-      this.initCSSWave();
-      // по умолчанию считаем что играет — запустим анимацию
-      this.toggle(true);
-      return true;
-    }
-
-    // WebAudio (на остальных платформах)
-    if (window.AudioContext || window.webkitAudioContext) {
-      try {
-        this.initWebAudio(videoElement);
-        return true;
-      } catch (e) {
-        console.error('[AudioVisualizer] WebAudio failed, fallback to CSS:', e);
-        this.useWebAudio = false;
+      // ✅ CSS-only режим
+      if (!this.useWebAudio) {
         this.initCSSWave();
         this.toggle(true);
         return true;
       }
-    }
 
-    this.useWebAudio = false;
-    this.initCSSWave();
-    this.toggle(true);
-    return true;
-  } catch (e) {
-    console.error('[AudioVisualizer] Init error:', e);
-    this.isActive = false;
-    return false;
-  }
-},
+      // WebAudio (на остальных платформах)
+      if (window.AudioContext || window.webkitAudioContext) {
+        try {
+          this.initWebAudio(videoElement);
+          return true;
+        } catch (e) {
+          console.error('[AudioVisualizer] WebAudio failed, fallback to CSS:', e);
+          this.useWebAudio = false;
+          this.initCSSWave();
+          this.toggle(true);
+          return true;
+        }
+      }
 
-
-      // Фолбэк если нет AudioContext
+      // если нет AudioContext
       this.useWebAudio = false;
       this.initCSSWave();
+      this.toggle(true);
       return true;
     } catch (e) {
       console.error('[AudioVisualizer] Init error:', e);
@@ -79,56 +67,9 @@ var AudioVisualizer = {
     }
   },
 
-  createVisualizer: function (container) {
+  createVisualizer: function () {
     // Удаляем старое
-    var old = document.querySeinit: function (videoElement, container) {
-  try {
-    // ✅ На webOS разрешаем запуск даже без video
-    var isWebOS = !!(window.Lampa && Lampa.Platform && Lampa.Platform.is('webos'));
-
-    if (!videoElement && !isWebOS) return false;
-
-    // ✅ webOS => только CSS
-    if (isWebOS) this.useWebAudio = false;
-
-    this.isActive = true;
-    this.container = container;
-
-    this.createVisualizer(container);
-
-    // ✅ CSS-only режим (в т.ч. webOS)
-    if (!this.useWebAudio) {
-      this.initCSSWave();
-      // по умолчанию считаем что играет — запустим анимацию
-      this.toggle(true);
-      return true;
-    }
-
-    // WebAudio (на остальных платформах)
-    if (window.AudioContext || window.webkitAudioContext) {
-      try {
-        this.initWebAudio(videoElement);
-        return true;
-      } catch (e) {
-        console.error('[AudioVisualizer] WebAudio failed, fallback to CSS:', e);
-        this.useWebAudio = false;
-        this.initCSSWave();
-        this.toggle(true);
-        return true;
-      }
-    }
-
-    this.useWebAudio = false;
-    this.initCSSWave();
-    this.toggle(true);
-    return true;
-  } catch (e) {
-    console.error('[AudioVisualizer] Init error:', e);
-    this.isActive = false;
-    return false;
-  }
-},
-lectorAll('.player-audio-visualizer');
+    var old = document.querySelectorAll('.player-audio-visualizer');
     for (var i = 0; i < old.length; i++) old[i].remove();
 
     var wrapper = document.createElement('div');
@@ -141,7 +82,7 @@ lectorAll('.player-audio-visualizer');
         'transform: translateX(-50%) !important; ' +
         'width: 90% !important; ' +
         'max-width: 1000px !important; ' +
-        'z-index: 99999 !important; ' +
+        'z-index: 2147483647 !important; ' +
         'pointer-events: none !important; ' +
         'display: block !important; ' +
         'visibility: visible !important; ' +
@@ -158,9 +99,6 @@ lectorAll('.player-audio-visualizer');
         'height: 180px; ' +
         'padding: 0; ' +
         'background: transparent !important; ' +
-        'backdrop-filter: none !important; ' +
-        'border-radius: 0; ' +
-        'box-shadow: none !important; ' +
         'border: none !important;'
     );
 
@@ -172,13 +110,9 @@ lectorAll('.player-audio-visualizer');
       'style',
       'width: 100% !important; ' +
         'height: 220px !important; ' +
-        'display: none !important; ' + // по умолчанию скрыт
-        'border-radius: 0 !important; ' +
+        'display: none !important; ' +
         'background: transparent !important; ' +
-        'backdrop-filter: none !important; ' +
-        'box-shadow: none !important; ' +
-        'border: none !important; ' +
-        'visibility: visible !important;'
+        'border: none !important;'
     );
 
     wrapper.appendChild(waveDiv);
@@ -235,20 +169,13 @@ lectorAll('.player-audio-visualizer');
           0,
           self.canvas.height
         );
-
         gradient.addColorStop(0, 'rgba(100, 180, 255, 0.7)');
         gradient.addColorStop(0.3, 'rgba(150, 120, 255, 0.7)');
         gradient.addColorStop(0.6, 'rgba(255, 100, 180, 0.7)');
         gradient.addColorStop(1, 'rgba(255, 140, 80, 0.7)');
 
         self.canvasCtx.fillStyle = gradient;
-
-        self.canvasCtx.fillRect(
-          x,
-          self.canvas.height - barHeight,
-          barWidth - 2,
-          barHeight
-        );
+        self.canvasCtx.fillRect(x, self.canvas.height - barHeight, barWidth - 2, barHeight);
 
         x += barWidth;
       }
@@ -265,24 +192,20 @@ lectorAll('.player-audio-visualizer');
 
     this.waveElement.innerHTML = '';
 
-    // Можно снизить до 28 на слабых webOS
-    var barsCount = 40;
-
+    var barsCount = 32; // ✅ для webOS легче, чем 40
     for (var i = 0; i < barsCount; i++) {
       var bar = document.createElement('div');
       var hue = Math.floor(Math.random() * 360);
 
-      bar.setAttribute(
-        'style',
-        'width: 8px; ' +
-          'min-height: 30px; ' +
-          'border-radius: 0; ' +
-          'background: linear-gradient(to top, ' +
-          'hsla(' + hue + ', 70%, 60%, 0.7), ' +
-          'hsla(' + ((hue + 60) % 360) + ', 70%, 60%, 0.7)); ' +
-          'animation: wave-anim ' + (200 + Math.random() * 300) + 'ms ease-in-out infinite alternate; ' +
-          'animation-delay: ' + (Math.random() * 150) + 'ms;'
-      );
+      bar.style.width = '10px';
+      bar.style.minHeight = '20px';
+      bar.style.background =
+        'linear-gradient(to top, hsla(' + hue + ',70%,60%,0.7), hsla(' + ((hue + 60) % 360) + ',70%,60%,0.7))';
+
+      // ✅ ВАЖНО: webOS иногда “гасит” height% в flex — делаем transform: scaleY
+      bar.style.transformOrigin = '50% 100%';
+      bar.style.animation = 'wave-scale ' + (240 + Math.random() * 260) + 'ms linear infinite alternate';
+      bar.style.animationDelay = Math.floor(Math.random() * 150) + 'ms';
 
       this.waveElement.appendChild(bar);
     }
@@ -291,7 +214,6 @@ lectorAll('.player-audio-visualizer');
   toggle: function (isPlaying) {
     if (!this.isActive) return;
 
-    // CSS wave
     if (!this.useWebAudio && this.waveElement) {
       var bars = this.waveElement.querySelectorAll('div');
       for (var i = 0; i < bars.length; i++) {
@@ -300,7 +222,6 @@ lectorAll('.player-audio-visualizer');
       return;
     }
 
-    // WebAudio
     if (this.useWebAudio && this.context) {
       if (isPlaying) {
         if (this.context.state === 'suspended') this.context.resume();
@@ -315,15 +236,10 @@ lectorAll('.player-audio-visualizer');
 
     if (this.animationId) cancelAnimationFrame(this.animationId);
 
-    if (this.source) {
-      try { this.source.disconnect(); } catch (e) {}
-    }
-    if (this.context) {
-      try { this.context.close(); } catch (e) {}
-    }
-    if (this.visualizerWrapper) {
-      this.visualizerWrapper.remove();
-    }
+    if (this.source) { try { this.source.disconnect(); } catch (e) {} }
+    if (this.context) { try { this.context.close(); } catch (e) {} }
+
+    if (this.visualizerWrapper) this.visualizerWrapper.remove();
 
     this.context = null;
     this.analyser = null;
@@ -338,50 +254,23 @@ lectorAll('.player-audio-visualizer');
   }
 };
 
-// CSS keyframes
+// CSS keyframes (scaleY вместо height%)
 (function injectWaveCSS() {
   var styles = document.createElement('style');
   styles.textContent =
-    '@keyframes wave-anim {' +
-    '0% { height: 35%; opacity: 0.6; }' +
-    '100% { height: 100%; opacity: 0.9; }' +
+    '@keyframes wave-scale {' +
+      '0% { transform: scaleY(0.25); opacity: 0.55; }' +
+      '100% { transform: scaleY(1.0); opacity: 0.95; }' +
     '}';
   document.head.appendChild(styles);
 })();
 
-// ========== INTEGRATION (только для Music Search) ==========
+// ========== INTEGRATION ==========
 function integrateVisualizer() {
   var visualizerInstance = null;
 
   function isWebOS() {
     return !!(window.Lampa && Lampa.Platform && Lampa.Platform.is('webos'));
-  }
-
-  function startVisualizer(forceCSSOnly) {
-    if (visualizerInstance) return;
-
-    visualizerInstance = Object.create(AudioVisualizer);
-
-    // ✅ если webOS — запускаем без videoElement вообще
-    var ok = visualizerInstance.init(forceCSSOnly ? null : getMediaElement(), document.body);
-
-    if (ok) {
-      // ✅ если есть media element — слушаем play/pause
-      var media = getMediaElement();
-      if (media) {
-        media.addEventListener('play', function () {
-          if (visualizerInstance) visualizerInstance.toggle(true);
-        });
-        media.addEventListener('pause', function () {
-          if (visualizerInstance) visualizerInstance.toggle(false);
-        });
-
-        if (!media.paused) visualizerInstance.toggle(true);
-      } else {
-        // ✅ на webOS без media считаем что играет
-        visualizerInstance.toggle(true);
-      }
-    }
   }
 
   function getMediaElement() {
@@ -395,12 +284,33 @@ function integrateVisualizer() {
     );
   }
 
+  function startVisualizer(forceCSSOnly) {
+    if (visualizerInstance) return;
+
+    visualizerInstance = Object.create(AudioVisualizer);
+
+    var ok = visualizerInstance.init(forceCSSOnly ? null : getMediaElement(), document.body);
+    if (!ok) return;
+
+    var media = getMediaElement();
+    if (media) {
+      media.addEventListener('play', function () {
+        if (visualizerInstance) visualizerInstance.toggle(true);
+      });
+      media.addEventListener('pause', function () {
+        if (visualizerInstance) visualizerInstance.toggle(false);
+      });
+
+      if (!media.paused) visualizerInstance.toggle(true);
+    } else {
+      visualizerInstance.toggle(true);
+    }
+  }
+
   Lampa.Player.listener.follow('start', function () {
     if (isWebOS()) {
-      // ✅ webOS: CSS-only, без привязки к video
       setTimeout(function () { startVisualizer(true); }, 200);
     } else {
-      // ✅ не webOS: пробуем как обычно через media element
       var attempts = 0;
       var t = setInterval(function () {
         attempts++;
@@ -422,6 +332,7 @@ function integrateVisualizer() {
     }
   });
 }
+
 
 
   'use strict';
