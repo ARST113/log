@@ -4,7 +4,6 @@
     // ========================================================================
     // КОНФИГУРАЦИЯ И КЭШ
     // ========================================================================
-    // УБРАЛИ: var STORAGE_KEY = 'continue_watch_params';
     var MEMORY_CACHE = null;
     var TORRSERVER_CACHE = null;
     var FILES_CACHE = {};
@@ -16,7 +15,6 @@
     // чтобы гарантировать, что sync зарегистрирован именно для текущего ключа
     var SYNCED_STORAGE_KEY = null;
 
-    // миграция старого общего ключа -> профильный (однократно)
     var MIGRATION_FLAG_KEY = 'continue_watch_params__migrated_to_profiles';
 
     var TIMERS = {
@@ -58,7 +56,7 @@
         var key = getStorageKey();
         if (ACTIVE_STORAGE_KEY !== key) {
             ACTIVE_STORAGE_KEY = key;
-            MEMORY_CACHE = null; // не смешиваем данные разных профилей
+            MEMORY_CACHE = null;
         }
         return key;
     }
@@ -73,24 +71,22 @@
         }
     }
 
+    ensureStorageSync();
+
     // ========================================================================
     // 1. ХРАНИЛИЩЕ
     // ========================================================================
 
-    // регистрируем sync хотя бы для базового ключа сразу
-    ensureStorageSync();
-
     Lampa.Storage.listener.follow('change', function (e) {
-        // если изменился любой continue_watch ключ — сбрасываем кэш
         if (e.name && typeof e.name === 'string' && e.name.indexOf('continue_watch_params') === 0) {
             MEMORY_CACHE = null;
         }
 
-        // при смене аккаунта/подгрузке permit — пересобираем ключ, sync и миграцию
         if (e.name === 'account') {
             MEMORY_CACHE = null;
             ensureStorageSync();
             migrateOldData();
+            stripLegacyProgressFields(); // чистим старые percent/time/duration
         }
 
         if (e.name === 'torrserver_url' || e.name === 'torrserver_url_two' || e.name === 'torrserver_use_link') {
@@ -120,24 +116,52 @@
         }
     }
 
+    // ========================================================================
+    // УДАЛЕНИЕ ДУБЛИРУЕМОГО ПРОГРЕССА: percent/time/duration НЕ ХРАНИМ
+    // ========================================================================
     function updateContinueWatchParams(hash, data) {
         var params = getParams();
         if (!params[hash]) params[hash] = {};
 
         var changed = false;
         for (var key in data) {
+            // исключаем дублируемые параметры прогресса
+            if (key === 'percent' || key === 'time' || key === 'duration' || key === '_touch') continue;
+
             if (params[hash][key] !== data[key]) {
                 params[hash][key] = data[key];
                 changed = true;
             }
         }
 
-        if (changed || !params[hash].timestamp) {
+        var touch = !!(data && data._touch);
+
+        // timestamp используем как "актуальность записи", без хранения прогресса
+        if (changed || touch || !params[hash].timestamp) {
             params[hash].timestamp = Date.now();
-            // Мгновенная синхронизация при завершении (>90%)
-            var isCritical = (data.percent && data.percent > 90);
-            setParams(params, isCritical);
+            setParams(params, false);
         }
+    }
+
+    function stripLegacyProgressFields() {
+        try {
+            var params = getParams();
+            var changed = false;
+
+            Object.keys(params).forEach(function (hash) {
+                var p = params[hash];
+                if (!p) return;
+
+                if ('percent' in p || 'time' in p || 'duration' in p) {
+                    delete p.percent;
+                    delete p.time;
+                    delete p.duration;
+                    changed = true;
+                }
+            });
+
+            if (changed) setParams(params, true);
+        } catch (e) {}
     }
 
     function getTorrServerUrl() {
@@ -239,39 +263,43 @@
     }
 
     // ========================================================================
-    // 3. ОТСЛЕЖИВАНИЕ И TIMELINE
+    // 3. TIMELINE WRAP (ТОЛЬКО МЕТАДАННЫЕ + touch timestamp)
     // ========================================================================
-
-    function setupTimelineSaving() {
-        Lampa.Timeline.listener.follow('update', function (e) {
-            var hash = e.data.hash;
-            var road = e.data.road;
-            if (hash && road && typeof road.percent !== 'undefined') {
-                var params = getParams();
-                if (params[hash]) {
-                    updateContinueWatchParams(hash, {
-                        percent: road.percent,
-                        time: road.time,
-                        duration: road.duration
-                    });
-                }
-            }
-        });
-    }
 
     function wrapTimelineHandler(timeline, params) {
         if (!timeline) return timeline;
         if (timeline._wrapped_continue) return timeline;
 
         var originalHandler = timeline.handler;
-        var lastUpdate = 0;
+
+        var savedMeta = false;
+        var lastTouch = 0;
+        var TOUCH_INTERVAL = 60000; // 1 минута
 
         timeline.handler = function (percent, time, duration) {
             if (originalHandler) originalHandler(percent, time, duration);
 
             var now = Date.now();
-            if (now - lastUpdate > 1000) {
-                lastUpdate = now;
+
+            // первый вызов — гарантируем запись метаданных
+            if (!savedMeta) {
+                savedMeta = true;
+                lastTouch = now;
+                updateContinueWatchParams(timeline.hash, {
+                    file_name: params.file_name,
+                    torrent_link: params.torrent_link,
+                    file_index: params.file_index,
+                    title: params.title,
+                    season: params.season,
+                    episode: params.episode,
+                    episode_title: params.episode_title
+                });
+                return;
+            }
+
+            // дальше — только "touch" раз в минуту (без прогресса)
+            if (now - lastTouch > TOUCH_INTERVAL) {
+                lastTouch = now;
                 updateContinueWatchParams(timeline.hash, {
                     file_name: params.file_name,
                     torrent_link: params.torrent_link,
@@ -280,12 +308,11 @@
                     season: params.season,
                     episode: params.episode,
                     episode_title: params.episode_title,
-                    percent: percent,
-                    time: time,
-                    duration: duration
+                    _touch: true
                 });
             }
         };
+
         timeline._wrapped_continue = true;
         return timeline;
     }
@@ -366,14 +393,14 @@
                             if (!timeline) timeline = { hash: episodeHash, percent: 0, time: 0, duration: 0 };
 
                             if (!allParams[episodeHash]) {
+                                // сохраняем только метаданные (без percent/time/duration)
                                 updateContinueWatchParams(episodeHash, {
                                     file_name: file.path,
                                     torrent_link: currentParams.torrent_link,
                                     file_index: file.id || 0,
                                     title: title,
                                     season: episodeInfo.season,
-                                    episode: episodeInfo.episode,
-                                    percent: 0, time: 0, duration: 0
+                                    episode: episodeInfo.episode
                                 });
                             }
 
@@ -441,7 +468,7 @@
     }
 
     // ========================================================================
-    // 5. ЛОГИКА ПЛЕЕРА И ХУКИ (С ИСПРАВЛЕНИЕМ СИНХРОНИЗАЦИИ)
+    // 5. ЛОГИКА ПЛЕЕРА И ХУКИ
     // ========================================================================
 
     function launchPlayer(movie, params) {
@@ -451,6 +478,8 @@
         var currentHash = generateHash(movie, params.season, params.episode);
         var timeline = Lampa.Timeline.view(currentHash);
 
+        // прогресс — только из Timeline.
+        // (оставил легаси-fallback на params.time/percent/duration: если в старых данных они были)
         if (!timeline || (!timeline.time && !timeline.percent)) {
             timeline = timeline || { hash: currentHash };
             timeline.time = params.time || 0;
@@ -462,7 +491,7 @@
         }
 
         wrapTimelineHandler(timeline, params);
-        updateContinueWatchParams(currentHash, { percent: timeline.percent, time: timeline.time, duration: timeline.duration });
+        // УБРАНО: updateContinueWatchParams(currentHash, { percent, time, duration });
 
         var player_type = Lampa.Storage.field('player_torrent');
         var force_inner = (player_type === 'inner');
@@ -534,7 +563,6 @@
         LISTENERS.initialized = false;
     }
 
-    // ИСПРАВЛЕННАЯ ФУНКЦИЯ PATCHPLAYER
     function patchPlayer() {
         var originalPlay = Lampa.Player.play;
         Lampa.Player.play = function (params) {
@@ -543,7 +571,6 @@
                 if (movie) {
                     var hash = generateHash(movie, params.season, params.episode);
                     if (hash) {
-                        // FIX: Проверяем наличие прогресса в Timeline перед сохранением
                         var timeline = Lampa.Timeline.view(hash);
                         var isNewSession = !timeline || !timeline.percent || timeline.percent < 5;
 
@@ -572,7 +599,7 @@
     }
 
     // ========================================================================
-    // 6. UI: КНОПКА
+    // 6. UI: КНОПКА (ТОЛЬКО Timeline)
     // ========================================================================
 
     function handleContinueClick(movieData, buttonElement) {
@@ -606,13 +633,16 @@
                         });
                     }
 
+                    // Прогресс — строго из Timeline
                     var percent = 0;
                     var timeStr = "";
                     var hash = generateHash(e.data.movie, params.season, params.episode);
                     var view = Lampa.Timeline.view(hash);
 
-                    if (view && view.percent > 0) { percent = view.percent; timeStr = formatTime(view.time); }
-                    else if (params.time) { percent = params.percent || 0; timeStr = formatTime(params.time); }
+                    if (view && view.percent > 0) {
+                        percent = view.percent;
+                        timeStr = formatTime(view.time);
+                    }
 
                     var labelText = 'Продолжить';
                     if (params.season && params.episode) labelText += ' S' + params.season + ' E' + params.episode;
@@ -654,9 +684,9 @@
             TORRSERVER_CACHE = null;
             FILES_CACHE = {};
 
-            // ключ мог поменяться -> регистрируем sync на новый ключ
             ensureStorageSync();
             migrateOldData();
+            stripLegacyProgressFields();
 
             console.log('[ContinueWatch] Profile changed, caches cleared');
         });
@@ -664,10 +694,8 @@
 
     function migrateOldData() {
         try {
-            // мигрируем только когда реально есть профили и sync включен
             if (!(ACCOUNT_READY && Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.sync)) return;
 
-            // миграция один раз, чтобы не копировать общий ключ в каждый профиль
             if (Lampa.Storage.get(MIGRATION_FLAG_KEY, false)) return;
 
             var oldKey = 'continue_watch_params';
@@ -680,7 +708,6 @@
                 Lampa.Storage.set(MIGRATION_FLAG_KEY, true);
                 console.log('[ContinueWatch] Migrated old data to profile key:', newKey);
             } else {
-                // даже если мигрировать нечего — ставим флаг, чтобы не гонять это каждый раз
                 if (Object.keys(oldData).length === 0) Lampa.Storage.set(MIGRATION_FLAG_KEY, true);
             }
         } catch (e) { }
@@ -695,18 +722,18 @@
         patchPlayer();
         cleanupOldParams();
         setupContinueButton();
-        setupTimelineSaving();
         setupProfileListener();
         migrateOldData();
-        console.log("[ContinueWatch] v71 Loaded. Sync Fix Applied. Profile support enabled.");
+        stripLegacyProgressFields();
+        console.log("[ContinueWatch] v72 Loaded. Removed duplicate progress tracking.");
     }
 
-    // готовность приложения (страховка)
     Lampa.Listener.follow('app', function (e) {
         if (e.type === 'ready') {
             ACCOUNT_READY = true;
             ensureStorageSync();
             migrateOldData();
+            stripLegacyProgressFields();
         }
     });
 
