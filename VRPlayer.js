@@ -2,31 +2,15 @@
   'use strict';
 
   /**
-   * VR3D Overlay Player v6.1 (Android-friendly fullscreen + seek bar)
-   * ----------------------------------------------------------------
-   * Главное отличие от v6:
-   * 1) FULL теперь пытается включать fullscreen "как в Lampa" (через методы/клик по кнопке),
-   *    НЕ через browser Fullscreen API (который на Android пересоздаёт video и сбрасывает overlay).
-   * 2) В HUD добавлен таймбар (seek) — мотание работает независимо от нативных контролов.
-   *
-   * Детект 3D:
-   * - meta-only из Lampa.Player.play(data): в первую очередь по filename из data.url/play/stream
-   *
-   * Режимы:
-   * - 2d / sbs / tab(ou)
-   *
-   * FIT:
-   * - contain / cover / height
-   *
-   * Fixes:
-   * - TAB halfOU fix: виртуально удваиваем высоту половинки (auto/on/off)
-   * - SBS 3840x1078 fix: виртуально нормализуем высоту к 1080 (auto/on/off)
-   *
-   * Hotkeys (если есть клавиатура):
-   * - BACK/ESC: выключить overlay
-   * - LEFT/RIGHT: ipd -/+
-   * - UP/DOWN: zoom +/-
-   * - ENTER: cycle mode 2d->sbs->tab
+   * VR3D Overlay Player v6.3
+   * --------------------------------------------------------
+   * - UI как сейчас (наш HUD), но:
+   *   1) Только Ч/Б + стекло (no white dropdowns)
+   *   2) НЕТ <select> (заменено на кнопки-группы)
+   *   3) HUD auto-hide (по умолчанию 3.5s)
+   * - FULL: Android-friendly (Lampa method/button), без requestFullscreen()
+   * - Seek bar встроен, мотание работает
+   * - Detected 3D по filename в url (meta-only)
    */
 
   // =========================
@@ -69,16 +53,9 @@
       else _log(fmt('WARN ', msg));
     }
 
-    function error(msg, obj) {
-      if (!enabled) return;
-      if (obj !== undefined) _log(fmt('ERROR', msg), obj);
-      else _log(fmt('ERROR', msg));
-    }
-
     return {
       info: info,
       warn: warn,
-      error: error,
       setEnabled: function (v) { enabled = !!v; },
       setVerbose: function (v) { verbose = !!v; },
       getState: function () { return { enabled: enabled, verbose: verbose }; }
@@ -89,7 +66,7 @@
   // Storage
   // =========================
   var Storage = (function () {
-    var STORE_KEY = 'vr3d_overlay_settings_v61';
+    var STORE_KEY = 'vr3d_overlay_settings_v63';
 
     function safeParse(json, def) {
       try { return JSON.parse(json); } catch (e) { return def; }
@@ -114,8 +91,13 @@
       var s = safeParse(getRaw(), {}) || {};
 
       if (typeof s.auto !== 'boolean') s.auto = true;
+
       if (typeof s.hud !== 'boolean') s.hud = true;
       if (typeof s.hud_fullscreen !== 'boolean') s.hud_fullscreen = true;
+
+      // auto-hide HUD
+      if (typeof s.hud_autohide !== 'boolean') s.hud_autohide = true;
+      if (typeof s.hud_autohide_ms !== 'number') s.hud_autohide_ms = 3500;
 
       if (typeof s.fit !== 'string') s.fit = 'contain'; // contain|cover|height
       if (typeof s.mode !== 'string') s.mode = 'sbs';   // 2d|sbs|tab
@@ -216,11 +198,7 @@
     }
 
     function get() { return s; }
-
-    function save() {
-      Storage.save(s);
-      applyLogger();
-    }
+    function save() { Storage.save(s); applyLogger(); }
 
     function set(partial) {
       if (!partial) return;
@@ -233,7 +211,96 @@
   })();
 
   // =========================
-  // Meta
+  // CSS (mono glass, no white)
+  // =========================
+  function injectCSS() {
+    if (document.getElementById('vr3d_css_v63')) return;
+
+    var css = `
+      .vr3d-ui{
+        position:fixed; left:16px; right:16px; bottom:16px;
+        z-index:1000000;
+        font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+        transition:opacity .25s ease, transform .25s ease;
+      }
+      .vr3d-ui.vr3d-hidden{ opacity:0; transform:translateY(10px); pointer-events:none; }
+      .vr3d-panel{
+        background: rgba(0,0,0,.55);
+        border:1px solid rgba(255,255,255,.10);
+        border-radius: 16px;
+        padding: 10px 12px;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        box-shadow: 0 10px 28px rgba(0,0,0,.45);
+        color:#fff;
+      }
+      .vr3d-row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+      .vr3d-badge{
+        font-weight:700;
+        font-size:13px;
+        padding:6px 10px;
+        border-radius:12px;
+        background: rgba(255,255,255,.08);
+        border:1px solid rgba(255,255,255,.10);
+      }
+
+      .vr3d-group{
+        display:flex;
+        gap:6px;
+        padding:4px;
+        border-radius:14px;
+        background: rgba(255,255,255,.06);
+        border:1px solid rgba(255,255,255,.10);
+      }
+      .vr3d-chip{
+        height:30px;
+        padding:0 10px;
+        border-radius:12px;
+        border:1px solid rgba(255,255,255,.12);
+        background: rgba(0,0,0,.25);
+        color:#fff;
+        font-size:12px;
+        cursor:pointer;
+        user-select:none;
+      }
+      .vr3d-chip.vr3d-active{
+        background: rgba(255,255,255,.14);
+        border-color: rgba(255,255,255,.18);
+      }
+
+      .vr3d-btn{
+        height:34px;
+        padding:0 12px;
+        border-radius:12px;
+        border:1px solid rgba(255,255,255,.12);
+        background: rgba(255,255,255,.06);
+        color:#fff;
+        font-size:13px;
+        cursor:pointer;
+        user-select:none;
+      }
+      .vr3d-btn:active{ transform:scale(.98); }
+
+      .vr3d-lbl{ display:flex; gap:8px; align-items:center; font-size:12px; opacity:.9; }
+      .vr3d-range{ width:160px; accent-color:#ffffff; } /* Ч/Б */
+
+      .vr3d-seek-row{ margin-top:10px; display:flex; gap:12px; align-items:center; }
+      .vr3d-time{ font-size:12px; opacity:.85; min-width:120px; }
+      .vr3d-seek{ flex:1; accent-color:#ffffff; }
+
+      .vr3d-status{ margin-top:8px; font-size:11px; opacity:.65; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+      /* никакой "белой простыни" от селектов — их нет */
+    `;
+
+    var style = document.createElement('style');
+    style.id = 'vr3d_css_v63';
+    style.textContent = css;
+    document.head.appendChild(style);
+  }
+
+  // =========================
+  // Meta / Detector
   // =========================
   var Meta = (function () {
     function collectCandidates(data) {
@@ -242,28 +309,19 @@
 
       var arr = [];
       if (filename) arr.push({ src: 'url.filename', text: filename });
-
       if (data && data.quality_title) arr.push({ src: 'data.quality_title', text: data.quality_title });
       if (data && data.name) arr.push({ src: 'data.name', text: data.name });
       if (data && data.title) arr.push({ src: 'data.title', text: data.title });
-
       return arr;
     }
-
     return { collectCandidates: collectCandidates };
   })();
 
-  // =========================
-  // Detector
-  // =========================
   var Detector = (function () {
     function detect3DFromText(text) {
       text = String(text || '').toLowerCase();
-
       var has3D = /\b3d\b/.test(text);
-
       var isSBS = /(^|[^a-z0-9])(sbs|hsbs|h[-\s]?sbs|half[-\s]?sbs|side[-\s]?by[-\s]?side)([^a-z0-9]|$)/i.test(text);
-
       var isTAB = /(^|[^a-z0-9])(ou|hou|halfou|half[-\s]?ou|h[-\s]?ou|tab|top[-\s]?and[-\s]?bottom|over[-\s]?under)([^a-z0-9]|$)/i.test(text);
 
       if (!has3D && !isSBS && !isTAB) return null;
@@ -290,21 +348,13 @@
   // =========================
   var Fullscreen = (function () {
     function toggle() {
-      // 1) методы Lampa (если есть)
       try {
         if (window.Lampa && Lampa.Player) {
-          if (typeof Lampa.Player.fullscreen === 'function') {
-            Logger.info('Fullscreen: Lampa.Player.fullscreen()');
-            return Lampa.Player.fullscreen();
-          }
-          if (typeof Lampa.Player.toggle_fullscreen === 'function') {
-            Logger.info('Fullscreen: Lampa.Player.toggle_fullscreen()');
-            return Lampa.Player.toggle_fullscreen();
-          }
+          if (typeof Lampa.Player.fullscreen === 'function') return Lampa.Player.fullscreen();
+          if (typeof Lampa.Player.toggle_fullscreen === 'function') return Lampa.Player.toggle_fullscreen();
         }
       } catch (e) {}
 
-      // 2) клик по кнопке fullscreen в интерфейсе Lampa
       var btn =
         document.querySelector('.player-panel__fullscreen') ||
         document.querySelector('.player-panel [data-action="fullscreen"]') ||
@@ -313,13 +363,8 @@
         document.querySelector('.player-panel__button.fullscreen') ||
         document.querySelector('.player-panel__right .icon-fullscreen');
 
-      if (btn) {
-        Logger.info('Fullscreen: click UI button');
-        btn.click();
-        return;
-      }
+      if (btn) return btn.click();
 
-      // 3) fallback: НЕ делаем browser fullscreen (на Android это ломает video/overlay)
       Logger.warn('Fullscreen: no Lampa method/button found, skip to avoid Android reset');
     }
 
@@ -334,22 +379,15 @@
       var start = Date.now();
       var t = setInterval(function () {
         var v = document.querySelector('video');
-        if (v) {
-          clearInterval(t);
-          cb(v);
-          return;
-        }
-        if (Date.now() - start > (timeoutMs || 15000)) {
-          clearInterval(t);
-          cb(null);
-        }
+        if (v) { clearInterval(t); cb(v); return; }
+        if (Date.now() - start > (timeoutMs || 15000)) { clearInterval(t); cb(null); }
       }, 100);
     }
     return { findSoon: findSoon };
   })();
 
   // =========================
-  // Overlay
+  // Overlay (canvas + mono glass HUD)
   // =========================
   var Overlay = (function () {
     var state = {
@@ -359,19 +397,52 @@
       ctx: null,
       raf: 0,
       mo: null,
-      hud: null,
-      hud_seek: null,
-      hud_time: null,
+
+      ui: null,
+      ui_panel: null,
+      ui_seek: null,
+      ui_time: null,
+      ui_status: null,
+
       seeking: false,
-      lastMetaHint: '' // filename hint to help auto fixes
+      lastMetaHint: '',
+
+      hideTimer: 0
     };
 
+    function clearHideTimer() {
+      if (state.hideTimer) clearTimeout(state.hideTimer);
+      state.hideTimer = 0;
+    }
+
+    function showHUD(visible) {
+      if (!state.ui) return;
+      if (visible) state.ui.classList.remove('vr3d-hidden');
+      else state.ui.classList.add('vr3d-hidden');
+    }
+
+    function scheduleHide() {
+      var s = Settings.get();
+      if (!s.hud_autohide) return;
+
+      clearHideTimer();
+      state.hideTimer = setTimeout(function () {
+        if (state.seeking) return scheduleHide();
+        showHUD(false);
+      }, Math.max(800, s.hud_autohide_ms || 3500));
+    }
+
+    function activity() {
+      if (!state.active) return;
+      showHUD(true);
+      scheduleHide();
+    }
+
     function enable(videoEl, metaHint) {
-      if (!videoEl) {
-        Logger.warn('Overlay.enable: no videoEl');
-        return;
-      }
+      if (!videoEl) return;
       if (state.active) disable();
+
+      injectCSS();
 
       state.video = videoEl;
       state.lastMetaHint = metaHint || '';
@@ -389,29 +460,30 @@
 
       state.ctx = canvas.getContext('2d', { alpha: false });
       state.canvas = canvas;
-
       document.body.appendChild(canvas);
 
-      if (Settings.get().hud) createHUD();
+      if (Settings.get().hud) createUI();
 
       state.mo = new MutationObserver(function () {
-        if (!state.video || !document.contains(state.video)) {
-          Logger.warn('Overlay: video removed from DOM -> disable');
-          disable();
-        }
+        if (!state.video || !document.contains(state.video)) disable();
       });
       state.mo.observe(document.body, { childList: true, subtree: true });
 
+      document.addEventListener('pointermove', activity, { passive: true });
+      document.addEventListener('pointerdown', activity, { passive: true });
+      document.addEventListener('touchstart', activity, { passive: true });
       document.addEventListener('keydown', onKeyDown, true);
 
-      // Чтобы таймбар обновлялся корректно
       try {
         state.video.addEventListener('timeupdate', onTimeUpdate, { passive: true });
         state.video.addEventListener('durationchange', onTimeUpdate, { passive: true });
       } catch (e) {}
 
       state.active = true;
-      Logger.info('Overlay enabled', snapshotSettings());
+
+      showHUD(true);
+      scheduleHide();
+
       loop();
       onTimeUpdate();
     }
@@ -426,6 +498,11 @@
       if (state.mo) { try { state.mo.disconnect(); } catch (e) {} }
       state.mo = null;
 
+      clearHideTimer();
+
+      document.removeEventListener('pointermove', activity);
+      document.removeEventListener('pointerdown', activity);
+      document.removeEventListener('touchstart', activity);
       document.removeEventListener('keydown', onKeyDown, true);
 
       try {
@@ -435,30 +512,19 @@
         }
       } catch (e2) {}
 
-      if (state.hud && state.hud.parentNode) state.hud.parentNode.removeChild(state.hud);
-      state.hud = null;
-      state.hud_seek = null;
-      state.hud_time = null;
+      if (state.ui && state.ui.parentNode) state.ui.parentNode.removeChild(state.ui);
+      state.ui = null;
+      state.ui_panel = null;
+      state.ui_seek = null;
+      state.ui_time = null;
+      state.ui_status = null;
       state.seeking = false;
 
       if (state.canvas && state.canvas.parentNode) state.canvas.parentNode.removeChild(state.canvas);
       state.canvas = null;
       state.ctx = null;
       state.video = null;
-
-      Logger.info('Overlay disabled');
-    }
-
-    function snapshotSettings() {
-      var s = Settings.get();
-      return {
-        mode: s.mode,
-        fit: s.fit,
-        zoom: s.zoom,
-        ipd: s.ipd,
-        fix_half_ou: s.fix_half_ou,
-        fix_sbs_height: s.fix_sbs_height
-      };
+      state.lastMetaHint = '';
     }
 
     function resize() {
@@ -479,10 +545,7 @@
 
       var hint = String(state.lastMetaHint || '').toLowerCase();
       if (/(halfou|hou|half[-\s]?ou|h[-\s]?ou)/i.test(hint)) return true;
-
-      // half OU часто в контейнере 1080
       if (vh && vh <= 1100) return true;
-
       return false;
     }
 
@@ -534,7 +597,6 @@
         if (mode === 'tab') {
           if (shouldHalfOUFix(vh)) virtH = src.sh * 2;
         }
-
         if (mode === 'sbs') {
           virtH = normalizedSbsHeight(virtH);
         }
@@ -555,11 +617,11 @@
 
       var leftSrc, rightSrc;
       if (mode === 'sbs') {
-        leftSrc  = { sx: 0,     sy: 0, sw: vw / 2, sh: vh };
-        rightSrc = { sx: vw/2,  sy: 0, sw: vw / 2, sh: vh };
+        leftSrc  = { sx: 0,    sy: 0, sw: vw / 2, sh: vh };
+        rightSrc = { sx: vw/2, sy: 0, sw: vw / 2, sh: vh };
       } else if (mode === 'tab') {
-        leftSrc  = { sx: 0, sy: 0,     sw: vw, sh: vh / 2 };
-        rightSrc = { sx: 0, sy: vh/2,  sw: vw, sh: vh / 2 };
+        leftSrc  = { sx: 0, sy: 0,    sw: vw, sh: vh / 2 };
+        rightSrc = { sx: 0, sy: vh/2, sw: vw, sh: vh / 2 };
       } else {
         leftSrc = rightSrc = { sx: 0, sy: 0, sw: vw, sh: vh };
       }
@@ -571,209 +633,240 @@
       ctx.fillStyle = '#000';
       ctx.fillRect(cw / 2 - 1, 0, 2, ch);
 
-      updateHUD(vw, vh);
+      updateStatus(vw, vh);
 
       state.raf = requestAnimationFrame(loop);
     }
 
-    function createHUD() {
+    function setMode(mode) {
+      var cur = Settings.get();
+      cur.mode = mode;
+      Settings.save();
+      syncActiveChips();
+    }
+
+    function setFit(fit) {
+      var cur = Settings.get();
+      cur.fit = fit;
+      Settings.save();
+      syncActiveChips();
+    }
+
+    function syncActiveChips() {
+      if (!state.ui_panel) return;
       var s = Settings.get();
 
-      var hud = document.createElement('div');
-      hud.className = 'vr3d_overlay_hud';
-      hud.style.position = 'fixed';
-      hud.style.left = '10px';
-      hud.style.bottom = '10px';
-      hud.style.zIndex = '1000000';
-      hud.style.padding = '8px 10px';
-      hud.style.borderRadius = '10px';
-      hud.style.background = 'rgba(0,0,0,0.55)';
-      hud.style.color = '#fff';
-      hud.style.fontSize = '14px';
-      hud.style.pointerEvents = 'auto';
-      hud.style.userSelect = 'none';
-      hud.style.maxWidth = 'calc(100vw - 20px)';
-
-      var fsBtn = s.hud_fullscreen
-        ? '<button data-act="fs" style="background:#111;color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:6px 12px;cursor:pointer">FULL</button>'
-        : '';
-
-      hud.innerHTML =
-        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
-          '<strong>VR3D</strong>' +
-          '<select data-k="mode" style="background:#111;color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:6px 10px">' +
-            '<option value="2d">2D</option>' +
-            '<option value="sbs">SBS</option>' +
-            '<option value="tab">OU/TAB</option>' +
-          '</select>' +
-          '<select data-k="fit" style="background:#111;color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:6px 10px">' +
-            '<option value="contain">contain</option>' +
-            '<option value="cover">cover</option>' +
-            '<option value="height">height</option>' +
-          '</select>' +
-          '<label style="display:flex;gap:6px;align-items:center">zoom' +
-            '<input data-k="zoom" type="range" min="1" max="2" step="0.01" style="width:160px" />' +
-          '</label>' +
-          '<label style="display:flex;gap:6px;align-items:center">ipd' +
-            '<input data-k="ipd" type="range" min="-0.12" max="0.12" step="0.001" style="width:160px" />' +
-          '</label>' +
-          fsBtn +
-          '<button data-act="close" style="background:#111;color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:6px 12px;cursor:pointer">ВЫКЛ</button>' +
-        '</div>' +
-        '<div style="margin-top:8px;display:flex;gap:10px;align-items:center">' +
-          '<span data-time style="font-size:12px;opacity:.85;min-width:110px">00:00 / 00:00</span>' +
-          '<input data-k="seek" type="range" min="0" max="1000" step="1" value="0" style="flex:1" />' +
-        '</div>' +
-        '<div data-info style="margin-top:6px;opacity:.8;font-size:12px"></div>';
-
-      document.body.appendChild(hud);
-      state.hud = hud;
-
-      hud.querySelector('[data-k="mode"]').value = s.mode;
-      hud.querySelector('[data-k="fit"]').value = s.fit;
-      hud.querySelector('[data-k="zoom"]').value = String(s.zoom);
-      hud.querySelector('[data-k="ipd"]').value = String(s.ipd);
-
-      state.hud_seek = hud.querySelector('[data-k="seek"]');
-      state.hud_time = hud.querySelector('[data-time]');
-
-      // Seek handling (touch friendly)
-      if (state.hud_seek) {
-        state.hud_seek.addEventListener('pointerdown', function () { state.seeking = true; }, { passive: true });
-        state.hud_seek.addEventListener('pointerup', function () { state.seeking = false; }, { passive: true });
-        state.hud_seek.addEventListener('pointercancel', function () { state.seeking = false; }, { passive: true });
-
-        state.hud_seek.addEventListener('input', function () {
-          if (!state.video) return;
-          var v = state.video;
-          var dur = v.duration || 0;
-          if (!dur || !isFinite(dur)) return;
-
-          var val = parseFloat(state.hud_seek.value) || 0;
-          var nextTime = (val / 1000) * dur;
-          try { v.currentTime = nextTime; } catch (e) {}
-          onTimeUpdate(); // обновим текст сразу
-        });
+      // mode group
+      var modeBtns = state.ui_panel.querySelectorAll('[data-g="mode"]');
+      for (var i = 0; i < modeBtns.length; i++) {
+        var b = modeBtns[i];
+        var v = b.getAttribute('data-v');
+        if (v === s.mode) b.classList.add('vr3d-active');
+        else b.classList.remove('vr3d-active');
       }
 
-      hud.addEventListener('input', function (e) {
+      // fit group
+      var fitBtns = state.ui_panel.querySelectorAll('[data-g="fit"]');
+      for (var j = 0; j < fitBtns.length; j++) {
+        var f = fitBtns[j];
+        var fv = f.getAttribute('data-v');
+        if (fv === s.fit) f.classList.add('vr3d-active');
+        else f.classList.remove('vr3d-active');
+      }
+
+      // sliders
+      var z = state.ui_panel.querySelector('[data-k="zoom"]');
+      var p = state.ui_panel.querySelector('[data-k="ipd"]');
+      if (z) z.value = String(s.zoom);
+      if (p) p.value = String(s.ipd);
+    }
+
+    function createUI() {
+      var s = Settings.get();
+
+      var ui = document.createElement('div');
+      ui.className = 'vr3d-ui';
+      ui.innerHTML =
+        '<div class="vr3d-panel">' +
+          '<div class="vr3d-row">' +
+            '<span class="vr3d-badge">VR3D</span>' +
+
+            '<div class="vr3d-group" aria-label="mode">' +
+              '<button class="vr3d-chip" data-g="mode" data-v="2d">2D</button>' +
+              '<button class="vr3d-chip" data-g="mode" data-v="sbs">SBS</button>' +
+              '<button class="vr3d-chip" data-g="mode" data-v="tab">OU</button>' +
+            '</div>' +
+
+            '<div class="vr3d-group" aria-label="fit">' +
+              '<button class="vr3d-chip" data-g="fit" data-v="contain">contain</button>' +
+              '<button class="vr3d-chip" data-g="fit" data-v="cover">cover</button>' +
+              '<button class="vr3d-chip" data-g="fit" data-v="height">height</button>' +
+            '</div>' +
+
+            '<span class="vr3d-lbl">zoom <input class="vr3d-range" data-k="zoom" type="range" min="1" max="2" step="0.01"/></span>' +
+            '<span class="vr3d-lbl">ipd <input class="vr3d-range" data-k="ipd" type="range" min="-0.12" max="0.12" step="0.001"/></span>' +
+
+            (s.hud_fullscreen ? '<button class="vr3d-btn" data-act="fs">FULL</button>' : '') +
+            '<button class="vr3d-btn" data-act="close">ВЫКЛ</button>' +
+          '</div>' +
+
+          '<div class="vr3d-seek-row">' +
+            '<span class="vr3d-time" data-time>00:00 / 00:00</span>' +
+            '<input class="vr3d-seek" data-k="seek" type="range" min="0" max="1000" step="1" value="0"/>' +
+          '</div>' +
+
+          '<div class="vr3d-status" data-status></div>' +
+        '</div>';
+
+      document.body.appendChild(ui);
+
+      state.ui = ui;
+      state.ui_panel = ui.querySelector('.vr3d-panel');
+      state.ui_seek = ui.querySelector('[data-k="seek"]');
+      state.ui_time = ui.querySelector('[data-time]');
+      state.ui_status = ui.querySelector('[data-status]');
+
+      syncActiveChips();
+
+      // keep visible while touching panel
+      state.ui_panel.addEventListener('pointerdown', activity, { passive: true });
+      state.ui_panel.addEventListener('pointermove', activity, { passive: true });
+
+      // group buttons
+      state.ui_panel.addEventListener('click', function (e) {
+        activity();
+        var t = e.target;
+        if (!t || !t.getAttribute) return;
+
+        var g = t.getAttribute('data-g');
+        var v = t.getAttribute('data-v');
+        var act = t.getAttribute('data-act');
+
+        if (g === 'mode') setMode(v);
+        if (g === 'fit') setFit(v);
+
+        if (act === 'close') disable();
+        if (act === 'fs') Fullscreen.toggle();
+      });
+
+      // sliders
+      state.ui_panel.addEventListener('input', function (e) {
+        activity();
         var t = e.target;
         if (!t || !t.getAttribute) return;
         var k = t.getAttribute('data-k');
         if (!k) return;
 
         var cur = Settings.get();
-
-        if (k === 'mode') cur.mode = t.value;
-        if (k === 'fit') cur.fit = t.value;
         if (k === 'zoom') cur.zoom = Utils.clamp(parseFloat(t.value) || 1, 1, 2.0);
         if (k === 'ipd') cur.ipd = Utils.clamp(parseFloat(t.value) || 0, -0.12, 0.12);
-
         Settings.save();
-        Logger.info('HUD change', snapshotSettings());
       });
 
-      hud.addEventListener('click', function (e) {
-        var t = e.target;
-        if (!t || !t.getAttribute) return;
+      // seek handling
+      if (state.ui_seek) {
+        state.ui_seek.addEventListener('pointerdown', function () { state.seeking = true; activity(); }, { passive: true });
+        state.ui_seek.addEventListener('pointerup', function () { state.seeking = false; activity(); scheduleHide(); }, { passive: true });
+        state.ui_seek.addEventListener('pointercancel', function () { state.seeking = false; activity(); scheduleHide(); }, { passive: true });
 
-        var act = t.getAttribute('data-act');
-        if (act === 'close') disable();
+        state.ui_seek.addEventListener('input', function () {
+          activity();
+          if (!state.video) return;
+          var v = state.video;
+          var dur = v.duration || 0;
+          if (!dur || !isFinite(dur)) return;
 
-        if (act === 'fs') {
-          Fullscreen.toggle();
-        }
-      });
+          var val = parseFloat(state.ui_seek.value) || 0;
+          var nextTime = (val / 1000) * dur;
+          try { v.currentTime = nextTime; } catch (e) {}
+          onTimeUpdate();
+        });
+      }
     }
 
-    function updateHUD(vw, vh) {
-      if (!state.hud) return;
-      var info = state.hud.querySelector('[data-info]');
-      if (!info) return;
+    function updateStatus(vw, vh) {
+      if (!state.ui_status) return;
       var s = Settings.get();
-
-      info.textContent =
+      state.ui_status.textContent =
         'mode=' + s.mode +
         ' | fit=' + s.fit +
         ' | zoom=' + s.zoom.toFixed(2) +
         ' | ipd=' + s.ipd.toFixed(3) +
-        ' | src=' + vw + 'x' + vh +
-        ' | BACK/ESC=выкл, arrows=zoom/ipd, ENTER=mode';
+        ' | src=' + vw + 'x' + vh;
     }
 
     function onTimeUpdate() {
-      if (!state.video) return;
-      if (!state.hud_time || !state.hud_seek) return;
+      if (!state.video || !state.ui_time || !state.ui_seek) return;
 
       var v = state.video;
       var cur = v.currentTime || 0;
       var dur = v.duration || 0;
 
       if (!dur || !isFinite(dur)) {
-        state.hud_time.textContent = Utils.fmtTime(cur) + ' / --:--';
+        state.ui_time.textContent = Utils.fmtTime(cur) + ' / --:--';
         return;
       }
 
-      state.hud_time.textContent = Utils.fmtTime(cur) + ' / ' + Utils.fmtTime(dur);
+      state.ui_time.textContent = Utils.fmtTime(cur) + ' / ' + Utils.fmtTime(dur);
 
-      // если пользователь прямо двигает — не перетираем положение бегунка
       if (!state.seeking) {
         var p = dur ? (cur / dur) : 0;
         p = Math.max(0, Math.min(1, p));
-        state.hud_seek.value = String(Math.round(p * 1000));
-      }
-    }
-
-    function cycleMode() {
-      var s = Settings.get();
-      var order = ['2d', 'sbs', 'tab'];
-      var idx = order.indexOf(s.mode);
-      s.mode = order[(idx + 1) % order.length];
-      Settings.save();
-      Logger.info('Mode cycle -> ' + s.mode);
-
-      if (state.hud) {
-        var sel = state.hud.querySelector('[data-k="mode"]');
-        if (sel) sel.value = s.mode;
+        state.ui_seek.value = String(Math.round(p * 1000));
       }
     }
 
     function onKeyDown(e) {
       if (!state.active) return;
+      activity();
+
       var code = e.keyCode || e.which;
 
-      if (code === 27) { e.preventDefault(); disable(); return; } // ESC
-      if (code === 8 || code === 461 || code === 10009) { e.preventDefault(); disable(); return; } // BACK
-      if (code === 13) { e.preventDefault(); cycleMode(); return; } // ENTER
+      // ESC / BACK
+      if (code === 27) { e.preventDefault(); disable(); return; }
+      if (code === 8 || code === 461 || code === 10009) { e.preventDefault(); disable(); return; }
 
-      var s = Settings.get();
+      // ENTER cycle mode
+      if (code === 13) {
+        e.preventDefault();
+        var s = Settings.get();
+        var order = ['2d', 'sbs', 'tab'];
+        var idx = order.indexOf(s.mode);
+        s.mode = order[(idx + 1) % order.length];
+        Settings.save();
+        syncActiveChips();
+        return;
+      }
+
+      // arrows
+      var st = Settings.get();
 
       if (code === 37) { // LEFT ipd-
         e.preventDefault();
-        s.ipd = Utils.clamp(s.ipd - 0.002, -0.12, 0.12);
+        st.ipd = Utils.clamp(st.ipd - 0.002, -0.12, 0.12);
         Settings.save();
-        if (state.hud) state.hud.querySelector('[data-k="ipd"]').value = String(s.ipd);
+        syncActiveChips();
         return;
       }
       if (code === 39) { // RIGHT ipd+
         e.preventDefault();
-        s.ipd = Utils.clamp(s.ipd + 0.002, -0.12, 0.12);
+        st.ipd = Utils.clamp(st.ipd + 0.002, -0.12, 0.12);
         Settings.save();
-        if (state.hud) state.hud.querySelector('[data-k="ipd"]').value = String(s.ipd);
+        syncActiveChips();
         return;
       }
       if (code === 38) { // UP zoom+
         e.preventDefault();
-        s.zoom = Utils.clamp(s.zoom + 0.01, 1, 2.0);
+        st.zoom = Utils.clamp(st.zoom + 0.01, 1, 2.0);
         Settings.save();
-        if (state.hud) state.hud.querySelector('[data-k="zoom"]').value = String(s.zoom);
+        syncActiveChips();
         return;
       }
       if (code === 40) { // DOWN zoom-
         e.preventDefault();
-        s.zoom = Utils.clamp(s.zoom - 0.01, 1, 2.0);
+        st.zoom = Utils.clamp(st.zoom - 0.01, 1, 2.0);
         Settings.save();
-        if (state.hud) state.hud.querySelector('[data-k="zoom"]').value = String(s.zoom);
+        syncActiveChips();
         return;
       }
     }
@@ -797,110 +890,66 @@
       Lampa.Player.play = function (data) {
         var s = Settings.get();
 
-        Logger.info('Player.play intercepted', {
+        var detect = Detector.detectFromPlayData(data);
+
+        Logger.info('Player.play', {
           url: Utils.getPlayUrl(data),
           title: data && (data.title || data.name) || null,
-          auto: s.auto,
-          manualVR3D: !!(data && data.vr3d)
+          detect_mode: detect.mode,
+          detect_src: detect.source
         });
 
         var manual = !!(data && data.vr3d);
         var forcedMode = null;
 
-        // manual overrides
         if (manual) {
           if (typeof data.vr3d === 'string') forcedMode = data.vr3d;
           else if (data.vr3d && data.vr3d.mode) forcedMode = data.vr3d.mode;
 
           var patchSet = {};
+          if (forcedMode) patchSet.mode = forcedMode;
           if (data.vr3d && data.vr3d.fit) patchSet.fit = data.vr3d.fit;
           if (data.vr3d && typeof data.vr3d.zoom === 'number') patchSet.zoom = Utils.clamp(data.vr3d.zoom, 1, 2.0);
           if (data.vr3d && typeof data.vr3d.ipd === 'number') patchSet.ipd = Utils.clamp(data.vr3d.ipd, -0.12, 0.12);
-          if (data.vr3d && typeof data.vr3d.hud === 'boolean') patchSet.hud = data.vr3d.hud;
-          if (data.vr3d && typeof data.vr3d.hud_fullscreen === 'boolean') patchSet.hud_fullscreen = data.vr3d.hud_fullscreen;
-
-          if (data.vr3d && typeof data.vr3d.fix_half_ou === 'string') patchSet.fix_half_ou = data.vr3d.fix_half_ou;
-          if (data.vr3d && typeof data.vr3d.fix_sbs_height === 'string') patchSet.fix_sbs_height = data.vr3d.fix_sbs_height;
-
-          if (forcedMode) patchSet.mode = forcedMode;
 
           Settings.set(patchSet);
-          Logger.info('Manual vr3d applied', { forcedMode: forcedMode, patchSet: patchSet });
         }
-
-        // auto detect
-        var detect = Detector.detectFromPlayData(data);
-
-        Logger.info('Detect result (meta-only)', {
-          mode: detect.mode,
-          source: detect.source,
-          usedTextSample: detect.text ? String(detect.text).slice(0, 180) : null,
-          candidates: detect.all ? detect.all.map(function (x) { return x.src; }) : []
-        });
 
         var autoMode = null;
         if (!manual && s.auto && detect.mode) {
           autoMode = detect.mode;
           Settings.set({ mode: autoMode });
 
-          // мягкий дефолт: SBS часто лучше height
+          // мягкий дефолт
           var cur = Settings.get();
           if (autoMode === 'sbs' && cur.fit === 'contain') Settings.set({ fit: 'height' });
-
-          Logger.info('Auto mode applied', { mode: autoMode, source: detect.source, fit: Settings.get().fit });
         }
 
-        // call original
         var res = originalPlay.apply(this, arguments);
 
         var needOverlay = manual || !!autoMode;
 
-        Logger.info('Overlay decision', {
-          needOverlay: needOverlay,
-          manual: manual,
-          forcedMode: forcedMode,
-          autoMode: autoMode
-        });
-
-        // IMPORTANT: на Android/HLS иногда идёт второй play(main.m3u8),
-        // где детект.mode=null (filename уже нет). Мы сохраняем предыдущий mode в Settings,
-        // и если видео уже в 3D, можно включить overlay по текущему settings.mode,
-        // но только если manual был или autoMode был на прошлом шаге.
-        // Тут: если needOverlay=false, но settings.mode уже sbs/tab и auto включён — можно попытаться включить.
+        // fallback для HLS/transcoding второго play
         if (!needOverlay && Settings.get().auto) {
           var curS = Settings.get();
           if (curS.mode === 'sbs' || curS.mode === 'tab') {
-            // если текущий URL похож на транскодерный main.m3u8, то вероятно это продолжение того же запуска
             var u = Utils.getPlayUrl(data) || '';
-            if (/\/transcoding\//i.test(u) || /\.m3u8/i.test(u)) {
-              needOverlay = true;
-              Logger.warn('Overlay fallback: enabling by remembered mode for transcoded/HLS url', { url: u, mode: curS.mode });
-            }
+            if (/\/transcoding\//i.test(u) || /\.m3u8/i.test(u)) needOverlay = true;
           }
         }
 
         if (needOverlay) {
           Overlay.disable();
 
-          // meta hint для фиксов (halfOU/HOU)
           var hint = (detect && detect.text) ? String(detect.text) : (Utils.extractFilenameFromUrl(Utils.getPlayUrl(data)) || '');
 
           VideoFinder.findSoon(function (videoEl) {
-            if (!videoEl) {
-              Logger.warn('VideoFinder: no <video> found -> overlay not enabled');
-              return;
-            }
+            if (!videoEl) return;
 
             var cur = Settings.get();
             if (forcedMode) cur.mode = forcedMode;
             else if (autoMode) cur.mode = autoMode;
             Settings.save();
-
-            Logger.info('Enabling overlay now', {
-              mode: cur.mode, fit: cur.fit, zoom: cur.zoom, ipd: cur.ipd,
-              fix_half_ou: cur.fix_half_ou, fix_sbs_height: cur.fix_sbs_height,
-              hint: hint
-            });
 
             Overlay.enable(videoEl, hint);
           }, 15000);
@@ -911,14 +960,13 @@
 
       if (typeof originalStop === 'function') {
         Lampa.Player.stop = function () {
-          Logger.info('Player.stop intercepted -> disable overlay');
           try { Overlay.disable(); } catch (e) {}
           return originalStop.apply(this, arguments);
         };
       }
 
       patched = true;
-      Logger.info('Player patch applied', { auto: Settings.get().auto });
+      Logger.info('Patched Player.play', { auto: Settings.get().auto });
       return true;
     }
 
@@ -940,14 +988,7 @@
     window.vr3d_overlay_player = {
       settings: function () { return JSON.parse(JSON.stringify(Settings.get())); },
       set: function (obj) { Settings.set(obj); },
-      enable_now: function (mode) {
-        var v = document.querySelector('video');
-        if (!v) return Logger.warn('enable_now: no <video> found');
-        if (mode) Settings.set({ mode: mode });
-        Overlay.enable(v, '');
-      },
-      disable_now: function () { Overlay.disable(); },
-      full: function () { Fullscreen.toggle(); }
+      disable_now: function () { Overlay.disable(); }
     };
   }
 
