@@ -94,6 +94,7 @@
             else setTimeout(saveOperation, DEBOUNCE_DELAY);
         }
 
+        // ✅ плейлист для внешнего плеера: хранение "лёгкого" playlist в метаданных
         function saveStreamParams(hash, data) {
             if (!hash || !data) return false;
 
@@ -111,7 +112,7 @@
                 }
             }
 
-            // ✅ плейлист для внешнего плеера (сохраняется уже "лёгкий")
+            // ✅ плейлист для внешнего плеера
             if (data.playlist && Array.isArray(data.playlist)) {
                 try {
                     const oldJson = oldData.playlist ? JSON.stringify(oldData.playlist) : '';
@@ -290,6 +291,7 @@
         let lastSavedHash = null;
         let lastKnownMovie = null;
 
+        // ===== WebOS/автопереключение: глобальный кэш карточки + разбор URL из video.src =====
         const GLOBAL_MOVIE_KEY = '__continuewatch_last_movie_v1';
 
         function cacheMovie(movie) {
@@ -326,35 +328,15 @@
                 file_index: mi ? parseInt(mi[1]) : 0
             };
         }
+        // ======================================================================
 
-        // =====================================================================
+        // ======================================================================
         // ✅ плейлист для внешнего плеера: отдельный модуль (один)
-        // =====================================================================
-        const ExternalPlayerModule = (function () {
-
-            function getCurrentPlaylistSafe() {
-                try {
-                    if (!Lampa.Player || !Lampa.Player.playlist) return null;
-
-                    if (typeof Lampa.Player.playlist.get === 'function') {
-                        const pl = Lampa.Player.playlist.get();
-                        return Array.isArray(pl) ? pl : null;
-                    }
-
-                    if (typeof Lampa.Player.playlist === 'function') {
-                        const pl = Lampa.Player.playlist();
-                        return Array.isArray(pl) ? pl : null;
-                    }
-
-                    return null;
-                } catch (e) {
-                    console.log('[ContinueWatch] Не удалось получить плейлист:', e);
-                    return null;
-                }
-            }
-
-            // Лёгкий формат: {url,title,season,episode,timeline:{hash}}
-            function normalizePlaylist(list) {
+        // Ключевая идея: мы НЕ собираем плейлист сами.
+        // Мы кэшируем плейлист, который Lampa уже сформировала при обычном запуске.
+        // ======================================================================
+        const ExternalPlaylist = (function () {
+            function normalize(list) {
                 if (!Array.isArray(list)) return null;
 
                 const out = [];
@@ -362,11 +344,10 @@
                     const it = list[i];
                     if (!it || typeof it !== 'object') continue;
 
-                    const url = (typeof it.url === 'string') ? it.url : '';
-                    if (!url) continue; // Android сам потом фильтрует, но мы лучше сразу
+                    const url = typeof it.url === 'string' ? it.url : '';
+                    if (!url) continue;
 
-                    const title = (typeof it.title === 'string') ? it.title : '';
-
+                    const title = typeof it.title === 'string' ? it.title : '';
                     const season = (typeof it.season !== 'undefined') ? it.season : undefined;
                     const episode = (typeof it.episode !== 'undefined') ? it.episode : undefined;
 
@@ -375,62 +356,44 @@
                         if (typeof it.timeline.hash === 'string') hash = it.timeline.hash;
                         else if (typeof it.timeline.hash === 'number') hash = String(it.timeline.hash);
                     }
-                    if (!hash) {
-                        // иногда timeline лежит на верхнем уровне
-                        if (typeof it.hash === 'string') hash = it.hash;
-                        else if (typeof it.hash === 'number') hash = String(it.hash);
-                    }
 
-                    const normalized = {
-                        url: url,
-                        title: title
-                    };
+                    const n = { url: url, title: title };
+                    if (typeof season !== 'undefined') n.season = season;
+                    if (typeof episode !== 'undefined') n.episode = episode;
+                    if (hash) n.timeline = { hash: hash };
 
-                    if (typeof season !== 'undefined') normalized.season = season;
-                    if (typeof episode !== 'undefined') normalized.episode = episode;
-                    if (hash) normalized.timeline = { hash: hash };
-
-                    out.push(normalized);
+                    out.push(n);
                 }
 
                 return out.length ? out : null;
             }
 
-            // ✅ плейлист для внешнего плеера: что подать при запуске
-            function getPlaylistForLaunch(params) {
-                if (params && Array.isArray(params.playlist) && params.playlist.length) {
-                    // уже нормализованный из метаданных
-                    return normalizePlaylist(params.playlist) || null;
-                }
+            // сохраняем только если новый плейлист "лучше" (длиннее), чтобы не затирать хорошее мусором
+            function saveIfBetter(hash, newList) {
+                if (!hash || !Array.isArray(newList) || newList.length < 2) return false;
 
-                const current = getCurrentPlaylistSafe();
-                return normalizePlaylist(current) || null;
+                const params = StorageManager.getParams();
+                const old = params[hash] || {};
+                const oldLen = (old.playlist && Array.isArray(old.playlist)) ? old.playlist.length : 0;
+
+                if (newList.length <= oldLen) return false;
+
+                StorageManager.saveStreamParams(hash, { playlist: newList });
+                console.log('[ContinueWatch] ✅ External playlist saved, len=' + newList.length + ', hash=' + hash);
+                return true;
             }
 
-            // ✅ плейлист для внешнего плеера: что сохранить из события start
-            function getPlaylistForSaveFromEvent(data) {
-                if (data && Array.isArray(data.playlist) && data.playlist.length) {
-                    return normalizePlaylist(data.playlist) || undefined;
+            function getForLaunch(params) {
+                if (params && Array.isArray(params.playlist) && params.playlist.length > 1) {
+                    // на всякий случай нормализуем ещё раз
+                    return normalize(params.playlist) || null;
                 }
-                return undefined;
+                return null;
             }
 
-            // ✅ плейлист для внешнего плеера: что сохранить из Player.play(params)
-            function getPlaylistForSaveFromPlayParams(params) {
-                if (params && Array.isArray(params.playlist) && params.playlist.length) {
-                    return normalizePlaylist(params.playlist) || undefined;
-                }
-                return undefined;
-            }
-
-            return {
-                getPlaylistForLaunch,
-                getPlaylistForSaveFromEvent,
-                getPlaylistForSaveFromPlayParams,
-                normalizePlaylist
-            };
+            return { normalize, saveIfBetter, getForLaunch };
         })();
-        // =====================================================================
+        // ======================================================================
 
         function launchPlayer(movie, params) {
             if (!movie || !params) return;
@@ -459,8 +422,13 @@
                 }
             }
 
-            // ✅ плейлист для внешнего плеера: берём и нормализуем
-            const playlistForLaunch = ExternalPlayerModule.getPlaylistForLaunch(params);
+            // определяем внешний плеер, чтобы плейлист не трогать для внутреннего
+            const player_type = Lampa.Storage.field('player_torrent');
+            const force_inner = (player_type === 'inner');
+            const isExternalPlayer = !force_inner && (player_type !== 'lampa');
+
+            // ✅ плейлист для внешнего плеера: используем только если внешний плеер
+            const playlistForLaunch = isExternalPlayer ? ExternalPlaylist.getForLaunch(params) : null;
 
             const streamData = {
                 file_name: params.file_name,
@@ -572,8 +540,8 @@
             try {
                 console.log('[ContinueWatch] Обработка начала воспроизведения:', data);
 
-                // 1) карточка
-                let movie = (data && data.card) ? data.card : null;
+                // 1) Карточка: data.card -> Activity -> lastKnown -> global cache
+                let movie = data && data.card ? data.card : null;
 
                 if (!movie) {
                     const activity = Lampa.Activity.active();
@@ -604,7 +572,7 @@
                 lastKnownMovie = movie;
                 cacheMovie(movie);
 
-                // 2) сезон/эпизод
+                // 2) Сезон/эпизод
                 const { season, episode } = StorageManager.extractSeasonEpisode(data);
                 if (!season || !episode) {
                     console.log('[ContinueWatch] Не удалось извлечь сезон и эпизод из данных:', data);
@@ -613,17 +581,18 @@
 
                 console.log('[ContinueWatch] Извлечены сезон и эпизод:', { season, episode });
 
-                // 3) хэш
+                // 3) Хэш
                 const newHash = StorageManager.generateTimelineHash(movie, season, episode);
                 console.log('[ContinueWatch] Сгенерирован хэш:', newHash, 'Текущий хэш:', currentEpisodeHash);
 
+                // FIX: если уже сохраняли (например, patchPlayer), всё равно фиксируем текущий хэш
                 if (newHash === lastSavedHash) {
                     currentEpisodeHash = newHash;
                     console.log('[ContinueWatch] Хэш уже был сохранен, пропускаем:', newHash);
                     return;
                 }
 
-                // 4) файл/линк/index
+                // 4) Файл/линк/index: в приоритете URL текущего плеера (на WebOS часто нет data.url)
                 let fileName = '';
                 let torrentLink = (data && data.torrent_hash) ? data.torrent_hash : '';
                 let fileIndex = (data && typeof data.file_index !== 'undefined') ? data.file_index : undefined;
@@ -637,6 +606,7 @@
                     if (typeof fileIndex === 'undefined') fileIndex = parsed.file_index;
                 }
 
+                // запасные варианты
                 if (!fileName && data && data.url) {
                     const match = data.url.match(/\/stream\/([^?]+)/);
                     if (match) fileName = decodeURIComponent(match[1]);
@@ -644,6 +614,7 @@
                 if (!fileName && data && data.path) fileName = data.path.split('/').pop() || data.path;
                 if (!fileName && data && data.file_name) fileName = data.file_name;
 
+                // index (если не нашли)
                 if (typeof fileIndex === 'undefined') {
                     if (data && typeof data.id !== 'undefined') fileIndex = data.id;
                     else fileIndex = 0;
@@ -654,8 +625,16 @@
                     return;
                 }
 
-                // ✅ плейлист для внешнего плеера: сохраняем из события в лёгком виде
-                const playlistToSave = ExternalPlayerModule.getPlaylistForSaveFromEvent(data);
+                // ✅ плейлист для внешнего плеера: сохраняем только для внешнего плеера и только если пришёл playlist
+                const player_type = Lampa.Storage.field('player_torrent');
+                const force_inner = (player_type === 'inner');
+                const isExternalPlayer = !force_inner && (player_type !== 'lampa');
+
+                let playlistToSave = undefined;
+                if (isExternalPlayer && data && data.playlist && Array.isArray(data.playlist)) {
+                    const norm = ExternalPlaylist.normalize(data.playlist);
+                    if (norm) playlistToSave = norm;
+                }
 
                 const streamData = {
                     file_name: fileName,
@@ -738,14 +717,23 @@
 
                             const timelineHash = StorageManager.generateTimelineHash(movie, params.season, params.episode);
 
+                            // ✅ плейлист для внешнего плеера: кэшируем плейлист только для внешнего плеера
+                            const player_type = Lampa.Storage.field('player_torrent');
+                            const force_inner = (player_type === 'inner');
+                            const isExternalPlayer = !force_inner && (player_type !== 'lampa');
+
+                            if (isExternalPlayer && params.playlist && Array.isArray(params.playlist)) {
+                                const norm = ExternalPlaylist.normalize(params.playlist);
+                                if (norm) {
+                                    ExternalPlaylist.saveIfBetter(timelineHash, norm);
+                                }
+                            }
+
                             const matchFile = params.url && params.url.match(/\/stream\/([^?]+)/);
                             const matchLink = params.url && params.url.match(/[?&]link=([^&]+)/);
                             const matchIndex = params.url && params.url.match(/[?&]index=(\d+)/);
 
                             if (matchFile && matchLink) {
-                                // ✅ плейлист для внешнего плеера: сохраняем из play(params) в лёгком виде
-                                const playlistToSave = ExternalPlayerModule.getPlaylistForSaveFromPlayParams(params);
-
                                 const streamData = {
                                     file_name: decodeURIComponent(matchFile[1]),
                                     torrent_link: decodeURIComponent(matchLink[1]),
@@ -755,9 +743,7 @@
                                     movie_id: movie.id || movie.movie_id,
                                     season: params.season,
                                     episode: params.episode,
-                                    episode_title: params.title || params.episode_title,
-                                    // ✅ плейлист для внешнего плеера
-                                    playlist: playlistToSave
+                                    episode_title: params.title || params.episode_title
                                 };
 
                                 StorageManager.saveStreamParams(timelineHash, streamData);
@@ -892,6 +878,7 @@
                 PlayerManager.setupPlayerListeners();
                 UIManager.setupContinueButton();
 
+                // Очистка старых параметров
                 setTimeout(() => {
                     try {
                         const params = StorageManager.getParams();
@@ -914,7 +901,7 @@
                     }
                 }, 10000);
 
-                console.log('[ContinueWatch] v100 Loaded. External playlist normalized + stored minimal.');
+                console.log('[ContinueWatch] v101 Loaded. External playlist cached only for external player.');
             } catch (e) {
                 console.error('[ContinueWatch] Initialization failed:', e);
             }
@@ -935,6 +922,7 @@
         };
     })();
 
+    // ОСНОВНАЯ ИНИЦИАЛИЗАЦИЯ
     if (window.appready) {
         InitializationManager.initialize();
     } else {
