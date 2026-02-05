@@ -3,7 +3,7 @@
 
   var Defined = {
     api: 'lampac',
-    localhost: 'http://lampac.fun/',
+    localhost: 'http://lampac.fun/', // Ваш основной сервер
     apn: ''
   };
 
@@ -207,15 +207,39 @@
     }
   }
 
-  // --- МОДИФИЦИРОВАННАЯ ФУНКЦИЯ ACCOUNT ---
+  // --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ACCOUNT ---
   function account(url) {
     url = url + '';
-
-    // Перенаправляем Kodik и Filmix на внешний сервер (wtch.ch)
+    
+    // Проверяем, идет ли запрос к Kodik или Filmix
     if (url.indexOf('kodik') !== -1 || url.indexOf('filmix') !== -1) {
+      // 1. Меняем домен на внешний
       url = url.replace('lampac.fun', 'wtch.ch');
+      
+      // 2. Принудительно ставим HTTPS (для работы на телефонах Android/iOS)
+      if (url.indexOf('http://') !== -1) {
+          url = url.replace('http://', 'https://');
+      }
+
+      // 3. ОЧИЩАЕМ ЛИЧНЫЕ ДАННЫЕ.
+      // Удаляем UID, email, token и cub_id, чтобы сервер принял нас за гостя
+      // и не выдавал 403 ошибку.
+      url = url.replace(/(&|\?)uid=[^&]*/g, '')
+               .replace(/(&|\?)account_email=[^&]*/g, '')
+               .replace(/(&|\?)token=[^&]*/g, '')
+               .replace(/(&|\?)cub_id=[^&]*/g, '');
+
+      // Исправляем возможные проблемы с & после удаления параметров
+      url = url.replace(/\?&/, '?').replace(/&&/, '&');
+      if (url.slice(-1) === '&' || url.slice(-1) === '?') {
+          url = url.slice(0, -1);
+      }
+               
+      // Возвращаем "чистый" url сразу, прерывая функцию
+      return url; 
     }
 
+    // --- Логика для вашего сервера (остальное) ---
     if (url.indexOf('account_email=') == -1) {
       var email = Lampa.Storage.get('account_email');
       if (email) url = Lampa.Utils.addUrlComponent(url, 'account_email=' + encodeURIComponent(email));
@@ -268,14 +292,19 @@
       season: [],
       voice: []
     };
+    
+    // --- ДОБАВЛЕНИЕ FILMIX В СПИСОК ПОИСКА ---
     if (balansers_with_search == undefined) {
       network.timeout(10000);
       network.silent(account('http://lampac.fun/lite/withsearch'), function(json) {
+        // Добавляем filmix, если его нет
+        if (json.indexOf('filmix') === -1) json.push('filmix');
         balansers_with_search = json;
       }, function() {
-        balansers_with_search = [];
+        balansers_with_search = ['filmix']; // Если ошибка, добавляем хотя бы filmix
       });
     }
+    // ------------------------------------------
 
     function balanserName(j) {
       var bals = j.balanser;
@@ -484,6 +513,25 @@
     };
     this.startSource = function(json) {
       return new Promise(function(resolve, reject) {
+        
+        // --- ПРИНУДИТЕЛЬНОЕ ДОБАВЛЕНИЕ FILMIX ---
+        var hasFilmix = false;
+        json.forEach(function(j) {
+           var name = (j.balanser || j.name || '').toLowerCase();
+           if (name.indexOf('filmix') !== -1) hasFilmix = true;
+        });
+        
+        if (!hasFilmix) {
+           json.push({
+             name: 'Filmix',
+             balanser: 'filmix',
+             // Мы ставим URL на свой домен, но account() перехватит его и перекинет на wtch.ch
+             url: Defined.localhost + 'lite/filmix',
+             show: true
+           });
+        }
+        // ----------------------------------------
+
         json.forEach(function(j) {
           var name = balanserName(j);
           sources[name] = {
