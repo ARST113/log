@@ -38,43 +38,35 @@
     });
   }
   var parsersInfo = [{
-    base: 'lampa_app',
-    name: 'Lampa',
+    base: '89.106.89.250:9117/',
+    name: 'MyJackred2',
     settings: {
-      url: 'lampa.app',
-      key: '',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
-    base: 'jacred_viewbox_dev',
-    name: 'Viewbox',
-    settings: {
-      url: 'jacred.viewbox.dev',
-      key: 'viewbox',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
-    base: 'freebie_tom_ru',
-    name: 'Freebie',
-    settings: {
-      url: 'jacred.freebie.tom.ru',
+      url: '89.106.89.250:9117/',
       key: '1',
       parser_torrent_type: 'jackett'
     }
   }, {
-    base: 'trs_my_to',
-    name: 'Trs',
+    base: 'jac.maxvol.pro',
+    name: 'Music',
     settings: {
-      url: 'trs.my.to:9118',
-      key: '',
+      url: 'jac.maxvol.pro',
+      key: '1',
       parser_torrent_type: 'jackett'
     }
   }, {
-    base: 'jacred_my_to',
-    name: 'Jacred',
+    base: 'lampac.fun:8117',
+    name: 'Myjacket',
     settings: {
-      url: 'jacred.my.to',
-      key: '',
+      url: 'https://lampac.fun:8117',
+      key: 'cvy139co64s9pu791s2ao7egzzgogocw',
+      parser_torrent_type: 'jackett'
+    }
+  }, {
+    base: 'Lampac.fun',
+    name: 'Lampac',
+    settings: {
+      url: 'Lampac.fun',
+      key: '1',
       parser_torrent_type: 'jackett'
     }
   }, {
@@ -82,86 +74,6 @@
     name: 'Jacred XYZ',
     settings: {
       url: 'jacred.xyz',
-      key: '',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
-    base: 'jac_red_ru',
-    name: 'Jac-red',
-    settings: {
-      url: 'jac-red.ru',
-      key: '',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
-    base: 'jacred_pro',
-    name: 'Jacred Pro',
-    settings: {
-      url: 'jacred.pro',
-      key: '',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
-    base: 'ru_jacred_pro',
-    name: 'Jacred RU Pro',
-    settings: {
-      url: 'ru.jacred.pro',
-      key: '',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
-    base: 'jr_maxvol_pro',
-    name: 'Maxvol',
-    settings: {
-      url: 'jr.maxvol.pro',
-      key: '',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
-    base: 'jacblack_ru',
-    name: 'Jacblack',
-    settings: {
-      url: 'jacblack.ru:9117',
-      key: '',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
-    base: 'spawn_pp_ua',
-    name: 'Spawn',
-    settings: {
-      url: 'spawn.pp.ua:59117',
-      key: '2',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
-    base: 'lampa32',
-    name: 'Lampa32',
-    settings: {
-      url: '62.60.149.237:2601',
-      key: '',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
-    base: 'jacred_maxvol_pro',
-    name: 'Jacred Maxvol',
-    settings: {
-      url: 'jr.maxvol.pro',
-      key: '',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
-    base: 'jacred_ru',
-    name: 'Jacred RU',
-    settings: {
-      url: 'jac-red.ru',
-      key: '',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
-    base: 'jac_black',
-    name: 'Jac Black',
-    settings: {
-      url: 'jacblack.ru:9117',
       key: '',
       parser_torrent_type: 'jackett'
     }
