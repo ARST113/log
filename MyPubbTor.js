@@ -57,7 +57,7 @@
     base: 'lampac.fun:8117',
     name: 'Myjacket',
     settings: {
-      url: 'https://lampac.fun:8117',
+      url: 'lampac.fun:8117',
       key: 'cvy139co64s9pu791s2ao7egzzgogocw',
       parser_torrent_type: 'jackett'
     }
