@@ -38,10 +38,10 @@
     });
   }
   var parsersInfo = [{
-    base: '89.106.89.250:9117/',
+    base: '89.106.89.250:9117',
     name: 'MyJackred2',
     settings: {
-      url: '89.106.89.250:9117/',
+      url: '89.106.89.250:9117',
       key: '1',
       parser_torrent_type: 'jackett'
     }
