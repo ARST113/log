@@ -204,6 +204,13 @@
             });
 
             if (movie.number_of_seasons) {
+                // ВАЖНО: новую логику выбора применяем ТОЛЬКО для внешнего плеера
+                if (ContinueWatchSelector && ContinueWatchSelector.isExternalPlayer()) {
+                    const picked = ContinueWatchSelector.pickLatestEpisode(params, movie);
+                    if (picked) return picked;
+                    // fallback на старую логику, если вдруг ничего не найдено
+                }
+
                 let episodes = Object.values(params)
                     .filter(p => {
                         const sameTitle = p.original_title === originalTitle;
@@ -279,6 +286,47 @@
                 accountReady = ready;
             }
         };
+    })();
+
+    // ======================================================================
+    // МОДУЛЬ: ВЫБОР "ПОСЛЕДНЕЙ СЕРИИ" ТОЛЬКО ДЛЯ ВНЕШНЕГО ПЛЕЕРА
+    // (Добавлен, остальное не трогаем)
+    // ======================================================================
+    const ContinueWatchSelector = (function () {
+        function isExternalPlayer() {
+            const player_type = Lampa.Storage.field('player_torrent');
+            const force_inner = (player_type === 'inner');
+            return !force_inner && (player_type !== 'lampa');
+        }
+
+        function getIdentity(movie) {
+            const originalTitle = movie && (movie.original_name || movie.original_title) || '';
+            const movieId = movie && (movie.id || movie.movie_id) || null;
+            return { originalTitle, movieId };
+        }
+
+        function pickLatestEpisode(paramsObj, movie) {
+            if (!paramsObj || !movie) return null;
+
+            const { originalTitle, movieId } = getIdentity(movie);
+            if (!originalTitle) return null;
+
+            const list = Object.values(paramsObj)
+                .filter(p => {
+                    if (!p) return false;
+                    if (!p.season || !p.episode) return false;
+
+                    const sameTitle = p.original_title === originalTitle;
+                    const sameId = !movieId || !p.movie_id || p.movie_id === movieId;
+
+                    return sameTitle && sameId;
+                })
+                .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+            return list[0] || null;
+        }
+
+        return { isExternalPlayer, pickLatestEpisode };
     })();
 
     // МОДУЛЬ: УПРАВЛЕНИЕ ПЛЕЕРОМ И СОБЫТИЯМИ
