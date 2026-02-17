@@ -1,30 +1,22 @@
 (function() {
     'use strict';
     
-    // Проверка версии Lampa 3.0.0 и выше
-    if (Lampa.Manifest && Lampa.Manifest.app_digital < 300) return;
+    // Проверка версии Lampa (требуется 3.0.0+)
+    if (!Lampa.Manifest || Lampa.Manifest.app_digital < 300) return;
     
-    Lampa.Platform.tv();
-
-    let observer;
-    let headMoverObserver;
-    window.logoplugin = true;
-
-    function log(...args) {
-        if (window.logoplugin) console.log('[combined-plugin]', ...args);
-    }
-
-    // ===== ОСНОВНЫЕ СТИЛИ =====
-    function applyBaseStyles() {
-        // Удаляем старые стили если есть
-        var oldStyle = document.getElementById('no-blur-plugin-styles');
-        if (oldStyle) oldStyle.remove();
+    // Защита от повторной загрузки
+    if (window.combinedPluginLoaded) return;
+    window.combinedPluginLoaded = true;
+    
+    // ===== СТИЛИ (через Lampa.Template) =====
+    function injectStyles() {
+        const styleId = 'combined-plugin-styles';
         
-        // Добавляем все стили
-        var style = document.createElement('style');
-        style.id = 'no-blur-plugin-styles';
-        style.textContent = `
-            /* Отключаем blur на всех постерах */
+        // Проверяем, есть ли уже стили (защита от множественных вставок)
+        if (document.getElementById(styleId)) return;
+        
+        const css = `
+            /* Отключение blur на постерах и фоне */
             .full-start__poster,
             .full-start-new__poster,
             .full-start__poster img,
@@ -38,7 +30,7 @@
                 -webkit-filter: none !important;
             }
             
-            /* Черный фон и скрытие canvas */
+            /* Чёрный фон и скрытие canvas */
             .background {
                 background: #000 !important;
             }
@@ -46,7 +38,7 @@
                 display: none !important;
             }
             
-            /* Очистка правого блока */
+            /* Очистка правого блока от лишних эффектов */
             .full-start-new__right {
                 background: none !important;
                 border: none !important;
@@ -63,31 +55,11 @@
                 content: unset !important;
             }
             
-            /* Стили для логотипа */
-            .full-start-new__title {
-                position: relative !important;
-                width: 100% !important;
-                display: flex !important;
-                justify-content: center !important;
-                align-items: center !important;
-                min-height: 70px !important;
-                margin: 0 auto !important;
-                box-sizing: border-box !important;
-            }
-            .full-start-new__title img {
-                margin-top: 5px !important;
-                max-height: 125px !important;
-                display: block !important;
-                position: relative !important;
-                z-index: 2 !important;
-            }
-            
-            /* Плавное затемнение постера - УВЕЛИЧЕНО ДО 50% */
+            /* Плавное затемнение постера (50%) */
             .full-start-new__poster {
                 position: relative !important;
                 overflow: hidden !important;
             }
-            
             .full-start-new__poster::after {
                 content: '' !important;
                 position: absolute !important;
@@ -104,423 +76,217 @@
                 pointer-events: none !important;
                 z-index: 1 !important;
             }
-
-            /* Стили для перемещения заголовка с затемненным фоном */
+            
+            /* Год (убрано выделение, оставлен только фон для читаемости) */
             .full-start-new__head {
-                border: 2px solid rgba(255, 255, 255, 0.75) !important;
-                border-radius: 6px !important;
-                padding: 0.25em 0.7em !important;
-                box-sizing: border-box !important;
                 background: rgba(0, 0, 0, 0.7) !important;
                 backdrop-filter: blur(5px) !important;
                 -webkit-backdrop-filter: blur(5px) !important;
+                border: none !important;
+                border-radius: 6px !important;
+                padding: 0.25em 0.7em !important;
+                position: relative !important;
+                display: inline-block !important;
             }
-
-            /* Дополнительный фон для заголовка для лучшей читаемости */
+            /* Убираем дополнительный псевдоэлемент */
             .full-start-new__head::before {
-                content: '' !important;
-                position: absolute !important;
-                top: 0 !important;
-                left: 0 !important;
-                right: 0 !important;
-                bottom: 0 !important;
-                background: rgba(0, 0, 0, 0.3) !important;
-                border-radius: 4px !important;
-                z-index: -1 !important;
+                display: none !important;
+            }
+            
+            /* Центрирование элементов на мобильных */
+            @media (max-width: 768px) {
+                .full-start-new__right,
+                .full-start__left {
+                    display: flex !important;
+                    flex-direction: column !important;
+                    justify-content: center !important;
+                    align-items: center !important;
+                }
+                
+                .full-start-new__buttons,
+                .full-start-new__rate-line,
+                .full-start__buttons,
+                .full-start__details,
+                .full-start-new__details,
+                .full-descr__details,
+                .full-descr__tags,
+                .full-descr__text,
+                .full-start-new__title,
+                .full-start-new__tagline,
+                .full-start-new__head,
+                .full-start__title,
+                .full-start__title-original {
+                    justify-content: center !important;
+                    align-items: center !important;
+                    text-align: center !important;
+                    display: flex !important;
+                    flex-direction: row !important;
+                    flex-wrap: wrap !important;
+                    gap: 0.5em !important;
+                }
+                
+                .items-line__head {
+                    display: flex !important;
+                    justify-content: center !important;
+                    align-items: center !important;
+                    width: 100% !important;
+                }
             }
         `;
-        document.head.appendChild(style);
         
-        return true;
+        Lampa.Template.add(styleId, `<style id="${styleId}">${css}</style>`);
+        Lampa.Template.get(styleId, {}).appendTo('head');
     }
-
-    function initBlurPlugin() {
-        // Запускаем сразу
-        applyBaseStyles();
-
-        // Повторяем через 500ms на случай если DOM еще не готов
-        setTimeout(applyBaseStyles, 500);
-
-        // Мониторинг изменений каждую секунду
-        setInterval(function() {
-            if (window.lampa_settings && window.lampa_settings.blur_poster !== false) {
-                window.lampa_settings.blur_poster = false;
-            }
-        }, 1000);
-    }
-
-    // ===== УЛУЧШЕННЫЕ ФУНКЦИИ ПЕРЕМЕЩЕНИЯ ЗАГОЛОВКА =====
-    function safeReorderHead() {
-        try {
-            const head = document.querySelector('.full-start-new__head');
-            const tagline = document.querySelector('.full-start-new__tagline.full--tagline');
-            const rateLine = document.querySelector('.full-start-new__rate-line');
-
-            if (!head || !rateLine) {
-                return false;
-            }
-
-            // Проверяем, не был ли уже перемещен (имеет ли наши стили)
-            const hasOurStyles = head.style.background === 'rgba(0, 0, 0, 0.7)' || 
-                                head.getAttribute('data-reordered') === 'true';
-            
-            if (hasOurStyles) {
-                return true;
-            }
-
-            // Применяем стили
-            head.style.cssText = `
-                border: 2px solid rgba(255, 255, 255, 0.75) !important;
-                border-radius: 6px !important;
-                padding: 0.25em 0.7em !important;
-                box-sizing: border-box !important;
-                background: rgba(0, 0, 0, 0.7) !important;
-                backdrop-filter: blur(5px) !important;
-                -webkit-backdrop-filter: blur(5px) !important;
-                position: relative !important;
-            `;
-
-            // Добавляем псевдоэлемент для дополнительного фона
-            if (!head.querySelector('.head-background')) {
-                const bg = document.createElement('div');
-                bg.className = 'head-background';
-                bg.style.cssText = `
-                    position: absolute !important;
-                    top: 0 !important;
-                    left: 0 !important;
-                    right: 0 !important;
-                    bottom: 0 !important;
-                    background: rgba(0, 0, 0, 0.3) !important;
-                    border-radius: 4px !important;
-                    z-index: -1 !important;
-                `;
-                head.appendChild(bg);
-            }
-
-            // Перемещаем
-            if (tagline) {
-                if (tagline.nextElementSibling !== head) {
-                    tagline.parentNode.insertBefore(head, tagline.nextElementSibling);
+    
+    // ===== ПРИНУДИТЕЛЬНОЕ ОТКЛЮЧЕНИЕ BLUR =====
+    function initBlurFix() {
+        Lampa.Settings.listener.follow('change', function(e) {
+            if (e.name === 'blur_poster' && e.value !== false) {
+                Lampa.Storage.set('blur_poster', false);
+                if (window.lampa_settings) {
+                    window.lampa_settings.blur_poster = false;
                 }
-                if (head.nextElementSibling !== rateLine) {
-                    rateLine.parentNode.insertBefore(head, rateLine);
-                }
-            } else {
-                if (rateLine.previousElementSibling !== head) {
-                    rateLine.parentNode.insertBefore(head, rateLine);
-                }
-            }
-
-            // Помечаем как обработанный
-            head.setAttribute('data-reordered', 'true');
-            
-            log('Successfully reordered head element');
-            return true;
-        } catch (error) {
-            log('Error reordering head:', error);
-            return false;
-        }
-    }
-
-    function initHeadMover() {
-        // Останавливаем предыдущий observer
-        if (headMoverObserver) {
-            headMoverObserver.disconnect();
-        }
-
-        // Пытаемся переместить сразу, если элементы уже есть
-        setTimeout(() => {
-            if (!safeReorderHead()) {
-                // Если не получилось, запускаем observer
-                startHeadMoverObserver();
-            }
-        }, 100);
-
-        // Дополнительные попытки с задержками
-        [300, 600, 1000, 1500, 2000].forEach(delay => {
-            setTimeout(() => {
-                safeReorderHead();
-            }, delay);
-        });
-    }
-
-    function startHeadMoverObserver() {
-        headMoverObserver = new MutationObserver((mutations) => {
-            let shouldReorder = false;
-            
-            for (let mutation of mutations) {
-                if (mutation.type === 'childList') {
-                    for (let node of mutation.addedNodes) {
-                        if (node.nodeType === 1) {
-                            if (node.classList && node.classList.contains('full-start-new__head')) {
-                                shouldReorder = true;
-                                break;
-                            }
-                            if (node.querySelector && node.querySelector('.full-start-new__head')) {
-                                shouldReorder = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                if (shouldReorder) break;
-            }
-            
-            if (shouldReorder) {
-                setTimeout(safeReorderHead, 50);
-            }
-        });
-
-        // Наблюдаем за правым блоком, где находится контент
-        const rightBlock = document.querySelector('.full-start-new__right');
-        if (rightBlock) {
-            headMoverObserver.observe(rightBlock, {
-                childList: true,
-                subtree: true
-            });
-        } else {
-            // Если правого блока нет, наблюдаем за всем body
-            headMoverObserver.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-        }
-    }
-
-    // ===== ФУНКЦИИ ДЛЯ МОБИЛЬНЫХ СТИЛЕЙ =====
-    function initMobileStyles() {
-        // Подписываемся на события
-        if (typeof Lampa.Listener !== 'undefined' && typeof Lampa.Listener.follow === 'function') {
-            // События приложения
-            Lampa.Listener.follow('app', function(e) {
-                if (e.type === 'full' || e.type === 'card') {
-                    setTimeout(() => {
-                        applyMobileStyles();
-                        startDOMObserver();
-                        // Даем время на загрузку DOM перед перемещением заголовка
-                        setTimeout(initHeadMover, 300);
-                    }, 400);
-                }
-                
-                // При скрытии карточки останавливаем observers
-                if (e.type === 'hide' || e.type === 'component_hide') {
-                    stopDOMObserver();
-                    if (headMoverObserver) {
-                        headMoverObserver.disconnect();
-                        headMoverObserver = null;
-                    }
-                }
-            });
-        }
-
-        // Запускаем постоянное отслеживание
-        startDOMObserver();
-        
-        // Также применяем стили сразу
-        setTimeout(applyMobileStyles, 1000);
-    }
-
-    function startDOMObserver() {
-        // Если observer уже запущен, останавливаем его
-        stopDOMObserver();
-        
-        observer = new MutationObserver(function(mutations) {
-            let shouldApplyStyles = false;
-            
-            mutations.forEach(function(mutation) {
-                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                    for (let node of mutation.addedNodes) {
-                        if (node.nodeType === 1) {
-                            // Проверяем, появились ли элементы карточки
-                            if (node.classList && (
-                                node.classList.contains('full-start-new__right') ||
-                                node.classList.contains('full-start__left') ||
-                                node.classList.contains('items-line__head') ||
-                                node.classList.contains('full-start-new__poster') ||
-                                node.querySelector('.full-start-new__right') ||
-                                node.querySelector('.full-start__left') ||
-                                node.querySelector('.items-line__head') ||
-                                node.querySelector('.full-start-new__poster')
-                            )) {
-                                shouldApplyStyles = true;
-                            }
-                        }
-                    }
-                }
-                
-                // Также проверяем изменения атрибутов
-                if (mutation.type === 'attributes' && 
-                    mutation.target.classList && 
-                    (mutation.target.classList.contains('full-start-new__poster'))) {
-                    shouldApplyStyles = true;
-                }
-            });
-            
-            if (shouldApplyStyles) {
-                setTimeout(applyMobileStyles, 100);
-                // Принудительно переприменяем базовые стили для затемнения
-                setTimeout(applyBaseStyles, 150);
             }
         });
         
-        // Начинаем наблюдение
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['class', 'style']
-        });
-    }
-
-    function stopDOMObserver() {
-        if (observer) {
-            observer.disconnect();
-            observer = null;
+        if (Lampa.Storage.get('blur_poster') !== false) {
+            Lampa.Storage.set('blur_poster', false);
+        }
+        
+        if (window.lampa_settings && window.lampa_settings.blur_poster !== false) {
+            window.lampa_settings.blur_poster = false;
         }
     }
-
-    function applyMobileStyles() {
-        // Применяем стили для мобильной адаптации
-        const styles = {
-            // Основной контейнер
-            '.full-start-new__right, .full-start__left': {
-                'display': 'flex',
-                'flex-direction': 'column',
-                'justify-content': 'center',
-                'align-items': 'center'
-            },
-            
-            // Кнопки и рейтинг
-            '.full-start-new__buttons, .full-start-new__rate-line, .full-start__buttons, .full-start__details': {
-                'justify-content': 'center',
-                'align-items': 'center',
-                'display': 'flex',
-                'flex-direction': 'row',
-                'gap': '0.5em',
-                'flex-wrap': 'wrap'
-            },
-            
-            // Детали
-            '.full-start-new__details, .full-descr__details, .full-descr__tags': {
-                'justify-content': 'center',
-                'align-items': 'center',
-                'display': 'flex',
-                'flex-direction': 'row',
-                'flex-wrap': 'wrap'
-            },
-            
-            // Текстовые блоки
-            '.full-descr__text, .full-start-new__title, .full-start-new__tagline, .full-start-new__head, .full-start__title, .full-start__title-original': {
-                'display': 'flex',
-                'flex-direction': 'row',
-                'justify-content': 'center',
-                'align-items': 'center',
-                'text-align': 'center'
-            }
-        };
-
-        // Применяем все стили
-        Object.keys(styles).forEach(selector => {
-            const elements = document.querySelectorAll(selector);
-            elements.forEach(element => {
-                Object.keys(styles[selector]).forEach(property => {
-                    element.style[property] = styles[selector][property];
-                });
-            });
-        });
-
-        // Стили для заголовков разделов
-        applySectionHeadStyles();
-    }
-
-    function applySectionHeadStyles() {
-        const sectionTitles = [
-            'Рекомендации',
-            'Режиссер', 
-            'Актеры',
-            'Подробно',
-            'Похожие',
-            'Коллекция'
-        ];
-
-        document.querySelectorAll('.items-line__head').forEach(element => {
-            const text = element.textContent.trim();
-            
-            if (text && (
-                sectionTitles.includes(text) ||
-                text.includes('Сезон')
-            )) {
-                element.style.display = 'flex';
-                element.style.justifyContent = 'center';
-                element.style.alignItems = 'center';
-                element.style.width = '100%';
-            }
-        });
-    }
-
-    // ===== ФУНКЦИИ ДЛЯ ЛОГОТИПОВ (ВСТРОЕННЫЕ БЕЗ НАСТРОЕК) =====
-    function initLogoPlugin() {
-        // Встроенная версия плагина логотипов без настроек
+    
+    // ===== ЗАГРУЗКА ЛОГОТИПОВ =====
+    function initLogoLoader() {
         Lampa.Listener.follow('full', function(e) {
             if (e.type === 'complite') {
-                var data = e.data.movie;
-                var type = data.name ? 'tv' : 'movie';
+                if (!e.object || !e.object.activity) return;
                 
-                if (data.id !== '') {
-                    var url = Lampa.TMDB.api(type + '/' + data.id + '/images?api_key=' + Lampa.TMDB.key() + '&language=' + Lampa.Storage.get('language'));
-                    
-                    $.get(url, function(data) {
-                        if (data.logos && data.logos[0]) {
-                            var logo = data.logos[0].file_path;
+                const data = e.data.movie;
+                const type = data.name ? 'tv' : 'movie';
+                const id = data.id;
+                
+                if (!id) return;
+                
+                const url = Lampa.TMDB.api(`${type}/${id}/images?api_key=${Lampa.TMDB.key()}&language=${Lampa.Storage.get('language')}`);
+                
+                $.get(url)
+                    .done(function(resp) {
+                        if (resp.logos && resp.logos[0]) {
+                            const logoPath = resp.logos[0].file_path;
+                            const logoUrl = Lampa.TMDB.image('/t/p/w300' + logoPath.replace('.svg', '.png'));
                             
-                            if (logo !== '') {
-                                // Добавляем логотип с центрированием
-                                e.object.activity.render().find('.full-start-new__title').html(
-                                    '<div style="display: flex; justify-content: center; align-items: center; width: 100%;">' +
-                                    '<img style="margin-top: 5px; max-height: 125px;" src="' + Lampa.TMDB.image('/t/p/w300' + logo.replace('.svg', '.png')) + '"/>' +
-                                    '</div>'
-                                );
+                            const titleBlock = e.object.activity.render().find('.full-start-new__title');
+                            if (titleBlock.length) {
+                                titleBlock.html(`
+                                    <div style="display: flex; justify-content: center; align-items: center; width: 100%;">
+                                        <img style="margin-top: 5px; max-height: 125px;" src="${logoUrl}" />
+                                    </div>
+                                `);
                             }
                         }
-                    }).fail(function() {
-                        // Ошибка загрузки логотипа - оставляем оригинальный текст
-                        log('Failed to load logo');
                     });
-                }
             }
         });
     }
+    
+    // ===== ПЕРЕОПРЕДЕЛЕНИЕ ШАБЛОНА full_start_new =====
+    function overrideTemplate() {
+        // Изменён порядок: title -> tagline -> head -> rate-line
+        Lampa.Template.add('full_start_new', `
+<div class="full-start-new">
+    <div class="full-start-new__body">
+        <div class="full-start-new__left">
+            <div class="full-start-new__poster">
+                <img class="full-start-new__img full--poster" />
+            </div>
+        </div>
 
-    // ===== ОБЩАЯ ИНИЦИАЛИЗАЦИЯ =====
-    function initAllPlugins() {
-        initBlurPlugin();    // Запускаем отключение blur и базовые стили
-        initMobileStyles();  // Запускаем мобильные стили
-        initLogoPlugin();    // Запускаем логотипы (встроенные без настроек)
-        setTimeout(initHeadMover, 800); // Запускаем перемещение заголовка с задержкой
+        <div class="full-start-new__right">
+            <div class="full-start-new__title">{title}</div>
+            <div class="full-start-new__tagline full--tagline">{tagline}</div>
+            <div class="full-start-new__head"></div>
+            <div class="full-start-new__rate-line">
+                <div class="full-start__rate rate--tmdb"><div>{rating}</div><div class="source--name">TMDB</div></div>
+                <div class="full-start__rate rate--imdb hide"><div></div><div>IMDB</div></div>
+                <div class="full-start__rate rate--kp hide"><div></div><div>KP</div></div>
+                <div class="full-start__pg hide"></div>
+                <div class="full-start__status hide"></div>
+            </div>
+            <div class="full-start-new__details"></div>
+            <div class="full-start-new__reactions">
+                <div>#{reactions_none}</div>
+            </div>
+
+            <div class="full-start-new__buttons">
+                <div class="full-start__button selector button--play">
+                    <svg><use xlink:href="#sprite-play"></use></svg>
+                    <span>#{title_watch}</span>
+                </div>
+
+                <div class="full-start__button selector button--book">
+                    <svg width="21" height="32" viewBox="0 0 21 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M2 1.5H19C19.2761 1.5 19.5 1.72386 19.5 2V27.9618C19.5 28.3756 19.0261 28.6103 18.697 28.3595L12.6212 23.7303C11.3682 22.7757 9.63183 22.7757 8.37885 23.7303L2.30302 28.3595C1.9739 28.6103 1.5 28.3756 1.5 27.9618V2C1.5 1.72386 1.72386 1.5 2 1.5Z" stroke="currentColor" stroke-width="2.5"/>
+                    </svg>
+                    <span>#{settings_input_links}</span>
+                </div>
+
+                <div class="full-start__button selector button--reaction">
+                    <svg><use xlink:href="#sprite-reaction"></use></svg>           
+                    <span>#{title_reactions}</span>
+                </div>
+
+                <div class="full-start__button selector button--subscribe hide">
+                    <svg viewBox="0 0 25 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M6.01892 24C6.27423 27.3562 9.07836 30 12.5 30C15.9216 30 18.7257 27.3562 18.981 24H15.9645C15.7219 25.6961 14.2632 27 12.5 27C10.7367 27 9.27804 25.6961 9.03542 24H6.01892Z" fill="currentColor"></path>
+                        <path d="M3.81972 14.5957V10.2679C3.81972 5.41336 7.7181 1.5 12.5 1.5C17.2819 1.5 21.1803 5.41336 21.1803 10.2679V14.5957C21.1803 15.8462 21.5399 17.0709 22.2168 18.1213L23.0727 19.4494C24.2077 21.2106 22.9392 23.5 20.9098 23.5H4.09021C2.06084 23.5 0.792282 21.2106 1.9273 19.4494L2.78317 18.1213C3.46012 17.0709 3.81972 15.8462 3.81972 14.5957Z" stroke="currentColor" stroke-width="2.6"></path>
+                    </svg>
+                    <span>#{title_subscribe}</span>
+                </div>
+
+                <div class="full-start__button selector button--options">
+                    <svg><use xlink:href="#sprite-dots"></use></svg>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="hide buttons--container">
+        <div class="full-start__button view--torrent hide">
+            <svg><use xlink:href="#sprite-torrent"></use></svg>
+            <span>#{full_torrents}</span>
+        </div>
+
+        <div class="full-start__button selector view--trailer">
+            <svg><use xlink:href="#sprite-trailer"></use></svg>
+            <span>#{full_trailers}</span>
+        </div>
+    </div>
+</div>
+        `);
     }
-
-    function startPlugin() {
+    
+    // ===== ИНИЦИАЛИЗАЦИЯ =====
+    function init() {
+        injectStyles();
+        overrideTemplate();
+        initBlurFix();
+        initLogoLoader();
+    }
+    
+    // Запуск плагина с использованием Lampa.Timer
+    Lampa.Timer.add(500, function() {
         if (window.appready) {
-            initAllPlugins();
+            init();
         } else {
-            if (typeof Lampa.Listener !== 'undefined' && typeof Lampa.Listener.follow === 'function') {
-                Lampa.Listener.follow('app', function(e) {
-                    if (e.type === 'ready') {
-                        setTimeout(initAllPlugins, 500);
-                    }
-                });
-            } else {
-                setTimeout(initAllPlugins, 2000);
-            }
+            Lampa.Listener.follow('app', function(e) {
+                if (e.type === 'ready') {
+                    init();
+                }
+            });
         }
-    }
-
-    // Запускаем плагин
-    if (typeof Lampa.Timer !== 'undefined' && typeof Lampa.Timer.add === 'function') {
-        Lampa.Timer.add(500, startPlugin, true);
-    } else {
-        setTimeout(startPlugin, 500);
-    }
-
+    }, true);
+    
 })();
