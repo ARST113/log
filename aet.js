@@ -3,20 +3,43 @@
 
     if (!window.Lampa) return;
 
+    let externalStarted = false;
+    let lastHash = '';
+
     function init() {
 
+        // Маркер запуска внешнего плеера
+        Lampa.Listener.on('external', function () {
+            externalStarted = true;
+        });
+
+        // Реальный источник данных
         Lampa.Listener.on('state:changed', function (e) {
 
-            // выводим ключевые поля
-            let info = [];
+            const target = e.target || e.targer;
 
-            if (e.target) info.push('target:' + e.target);
-            if (e.targer) info.push('targer:' + e.targer);
-            if (e.type) info.push('type:' + e.type);
-            if (e.reason) info.push('reason:' + e.reason);
+            if (!externalStarted) return;
+            if (target !== 'timeline') return;
+            if (e.reason !== 'update') return;
 
-            Lampa.Noty.show('EVENT → ' + info.join(' | '));
+            if (!e.data) return;
 
+            const hash = e.data.hash;
+            const road = e.data.road;
+
+            if (!road) return;
+            if (hash === lastHash) return;
+
+            lastHash = hash;
+            externalStarted = false;
+
+            const timeText = Lampa.Utils.secondsToTime(road.time, true);
+            const durationText = Lampa.Utils.secondsToTime(road.duration || 0, true);
+            const percent = Math.round(road.percent || 0);
+
+            Lampa.Noty.show(
+                `Финальная позиция: ${timeText} / ${durationText} (${percent}%)`
+            );
         });
     }
 
