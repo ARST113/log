@@ -88,10 +88,18 @@
                 position: relative !important;
                 display: inline-block !important;
             }
-            /* Убираем дополнительный псевдоэлемент */
             .full-start-new__head::before {
                 display: none !important;
             }
+            
+            /* Классы для контуров логотипов (пока закомментированы) 
+            .logo-light {
+                filter: drop-shadow(0 0 2px rgba(0,0,0,0.8)) drop-shadow(0 0 2px rgba(0,0,0,0.8));
+            }
+            .logo-dark {
+                filter: drop-shadow(0 0 2px rgba(255,255,255,0.8)) drop-shadow(0 0 2px rgba(255,255,255,0.8));
+            }
+            */
             
             /* Центрирование элементов на мобильных */
             @media (max-width: 768px) {
@@ -158,7 +166,7 @@
         }
     }
     
-    // ===== ЗАГРУЗКА ЛОГОТИПОВ =====
+    // ===== ЗАГРУЗКА ЛОГОТИПОВ (ОРИГИНАЛЬНОЕ КАЧЕСТВО, БЕЗ АНАЛИЗА) =====
     function initLogoLoader() {
         Lampa.Listener.follow('full', function(e) {
             if (e.type === 'complite') {
@@ -176,15 +184,34 @@
                     .done(function(resp) {
                         if (resp.logos && resp.logos[0]) {
                             const logoPath = resp.logos[0].file_path;
-                            const logoUrl = Lampa.TMDB.image('/t/p/w300' + logoPath.replace('.svg', '.png'));
+                            // Используем оригинальное качество
+                            const logoUrl = Lampa.TMDB.image('/t/p/original' + logoPath.replace('.svg', '.png'));
                             
                             const titleBlock = e.object.activity.render().find('.full-start-new__title');
                             if (titleBlock.length) {
-                                titleBlock.html(`
-                                    <div style="display: flex; justify-content: center; align-items: center; width: 100%;">
-                                        <img style="margin-top: 5px; max-height: 125px;" src="${logoUrl}" />
+                                // Создаём контейнер с фиксированной минимальной высотой и невидимым изображением
+                                titleBlock.empty();
+                                const container = $(`
+                                    <div style="display: flex; justify-content: center; align-items: center; width: 100%; min-height: 125px; position: relative;">
+                                        <img style="max-height: 125px; opacity: 0; transition: opacity 0.2s ease;" />
                                     </div>
                                 `);
+                                titleBlock.append(container);
+                                
+                                const imgElement = container.find('img')[0];
+                                
+                                // Просто загружаем изображение и показываем его (без анализа)
+                                const img = new Image();
+                                img.src = logoUrl;
+                                
+                                img.onload = function() {
+                                    imgElement.src = logoUrl;
+                                    imgElement.style.opacity = '1';
+                                };
+                                
+                                img.onerror = function() {
+                                    // Если не удалось загрузить, ничего не делаем
+                                };
                             }
                         }
                     });
