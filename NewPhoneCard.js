@@ -12,7 +12,7 @@
     function injectStyles() {
         const styleId = 'combined-plugin-styles';
         
-        // Проверяем, есть ли уже стили (защита от множественных вставок)
+        // Проверяем, есть ли уже стили
         if (document.getElementById(styleId)) return;
         
         const css = `
@@ -77,7 +77,7 @@
                 z-index: 1 !important;
             }
             
-            /* Год (убрано выделение, оставлен только фон для читаемости) */
+            /* Год (убрано выделение, оставлен только фон) */
             .full-start-new__head {
                 background: rgba(0, 0, 0, 0.7) !important;
                 backdrop-filter: blur(5px) !important;
@@ -92,38 +92,29 @@
                 display: none !important;
             }
             
-            /* Классы для контуров логотипов (пока закомментированы) 
-            .logo-light {
-                filter: drop-shadow(0 0 2px rgba(0,0,0,0.8)) drop-shadow(0 0 2px rgba(0,0,0,0.8));
-            }
-            .logo-dark {
-                filter: drop-shadow(0 0 2px rgba(255,255,255,0.8)) drop-shadow(0 0 2px rgba(255,255,255,0.8));
-            }
-            */
-            
-            /* Центрирование элементов на мобильных */
+            /* Центрирование элементов на мобильных ТОЛЬКО внутри полной карточки */
             @media (max-width: 768px) {
-                .full-start-new__right,
-                .full-start__left {
+                .full-start-new .full-start-new__right,
+                .full-start .full-start__left {
                     display: flex !important;
                     flex-direction: column !important;
                     justify-content: center !important;
                     align-items: center !important;
                 }
                 
-                .full-start-new__buttons,
-                .full-start-new__rate-line,
-                .full-start__buttons,
-                .full-start__details,
-                .full-start-new__details,
-                .full-descr__details,
-                .full-descr__tags,
-                .full-descr__text,
-                .full-start-new__title,
-                .full-start-new__tagline,
-                .full-start-new__head,
-                .full-start__title,
-                .full-start__title-original {
+                .full-start-new .full-start-new__buttons,
+                .full-start-new .full-start-new__rate-line,
+                .full-start .full-start__buttons,
+                .full-start .full-start__details,
+                .full-start-new .full-start-new__details,
+                .full-start .full-descr__details,
+                .full-start .full-descr__tags,
+                .full-start .full-descr__text,
+                .full-start-new .full-start-new__title,
+                .full-start-new .full-start-new__tagline,
+                .full-start-new .full-start-new__head,
+                .full-start .full-start__title,
+                .full-start .full-start__title-original {
                     justify-content: center !important;
                     align-items: center !important;
                     text-align: center !important;
@@ -133,7 +124,7 @@
                     gap: 0.5em !important;
                 }
                 
-                .items-line__head {
+                .full-start .items-line__head {
                     display: flex !important;
                     justify-content: center !important;
                     align-items: center !important;
@@ -200,7 +191,7 @@
                                 
                                 const imgElement = container.find('img')[0];
                                 
-                                // Просто загружаем изображение и показываем его (без анализа)
+                                // Просто загружаем изображение и показываем его
                                 const img = new Image();
                                 img.src = logoUrl;
                                 
