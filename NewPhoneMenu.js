@@ -3,19 +3,21 @@ Lampa.Platform.tv();
 (function () {
     'use strict';
 
-    /** SVG-иконки через спрайт */
-    const MOVIE_SVG = `<svg><use xlink:href="#sprite-movie"></use></svg>`;
-    const TV_SVG = `<svg><use xlink:href="#sprite-tv"></use></svg>`;
-    const ANIME_SVG = `<svg><use xlink:href="#sprite-anime"></use></svg>`;
+    // ==================== ДЕФОЛТНЫЕ НАСТРОЙКИ ====================
+    var defaults = {
+        1: { action: 'movie',   svg: '<svg><use xlink:href="#sprite-movie"></use></svg>',   name: 'Фильмы' },
+        2: { action: 'tv',      svg: '<svg><use xlink:href="#sprite-tv"></use></svg>',      name: 'Сериалы' },
+        3: { action: 'cartoon', svg: '<svg><use xlink:href="#sprite-cartoon"></use></svg>', name: 'Мультфильмы' }
+    };
 
-    /** Проверка поддержки backdrop-filter */
+    // ==================== CSS (стили из плагина 2) ====================
     function supportsBackdropFilter() {
-        const CSS = window.CSS;
+        var CSS = window.CSS;
         return CSS && (CSS.supports('backdrop-filter', 'blur(10px)') || CSS.supports('-webkit-backdrop-filter', 'blur(10px)'));
     }
 
-    /** CSS с правильными отступами и центрированием */
-    const baseCSS = `
+    var baseCSS = `
+    /* ===== Стили панели из плагина 2 ===== */
     .navigation-bar__body {
         display: flex !important;
         justify-content: space-between !important;
@@ -32,7 +34,6 @@ Lampa.Platform.tv();
         box-sizing: border-box !important;
         gap: 8px !important;
     }
-    /* Интеграция с glass-системой Lampa */
     body.glass--style .navigation-bar__body {
         background-color: rgba(20,20,25,0.45) !important;
         backdrop-filter: blur(14px) !important;
@@ -89,11 +90,11 @@ Lampa.Platform.tv();
         min-height: 18px !important;
         transition: all 0.3s ease;
     }
-    /* Скрыть подписи в портретном режиме */
     .navigation-bar__label {
         display: none !important;
     }
-    /* Ландшафтный режим - меню справа компактное и центрированное */
+
+    /* Ландшафтный режим */
     body.true--mobile.orientation--landscape .navigation-bar__body {
         flex-direction: column !important;
         width: auto !important;
@@ -138,7 +139,8 @@ Lampa.Platform.tv();
         min-width: 18px !important;
         min-height: 18px !important;
     }
-    /* Адаптивность для маленьких экранов в ландшафтном режиме */
+
+    /* Адаптив для ландшафта */
     @media (max-height: 600px) {
         body.true--mobile.orientation--landscape .navigation-bar__body {
             padding: 10px 6px !important;
@@ -199,6 +201,7 @@ Lampa.Platform.tv();
             min-height: 14px !important;
         }
     }
+
     /* Портретный режим адаптивность */
     @media (max-width: 1200px) {
         .navigation-bar__body {
@@ -251,228 +254,431 @@ Lampa.Platform.tv();
             min-width: 16px !important;
             min-height: 16px !important;
         }
+    }
+
+    /* ===== Модальное окно выбора из плагина 1 ===== */
+    .phone-menu-picker-overlay {
+        position: fixed; left: 0; top: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.75);
+        display: flex; align-items: center; justify-content: center; z-index: 9999; padding: 10px; box-sizing: border-box;
+    }
+    @supports (padding: constant(safe-area-inset-top)) {
+        .phone-menu-picker-overlay { padding: constant(safe-area-inset-top) constant(safe-area-inset-right) constant(safe-area-inset-bottom) constant(safe-area-inset-left); }
+    }
+    @supports (padding: env(safe-area-inset-top)) {
+        .phone-menu-picker-overlay { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+    }
+    .phone-menu-picker-modal {
+        background: #1e1e24; padding: 12px; border-radius: 12px; max-width: 96%; max-height: 88vh; overflow: hidden;
+        display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,0.6); box-sizing: border-box; width: 100%;
+    }
+    .phone-menu-picker-title {
+        text-align: center; color: #fff; margin: 0 0 10px; font-size: 16px; font-weight: 600;
+    }
+    .phone-menu-picker-grid {
+        display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; overflow-y: auto; padding: 4px; flex: 1; min-height: 100px; -webkit-overflow-scrolling: touch;
+    }
+    .phone-menu-picker-grid .picker-item {
+        display: flex; flex-direction: column; align-items: center; cursor: pointer; padding: 8px; border-radius: 10px; transition: background 0.2s;
+    }
+    .phone-menu-picker-grid .picker-item:hover {
+        background: rgba(255,255,255,0.1);
+    }
+    .phone-menu-picker-grid .picker-icon-wrap {
+        width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; margin-bottom: 6px;
+    }
+    .phone-menu-picker-grid .picker-icon-wrap svg {
+        width: 40px; height: 40px;
+    }
+    .phone-menu-picker-grid .picker-name {
+        font-size: 11px; color: #fff; text-align: center; word-break: break-word;
+    }
+    .phone-menu-picker-reset {
+        grid-column: 1 / -1; text-align: center; padding: 12px; cursor: pointer; color: #ff5555; font-size: 14px;
+    }
+    @media (min-width: 360px) {
+        .phone-menu-picker-modal { padding: 16px; border-radius: 14px; }
+        .phone-menu-picker-title { font-size: 17px; margin-bottom: 12px; }
+        .phone-menu-picker-grid { gap: 12px; min-height: 120px; }
+        .phone-menu-picker-grid .picker-icon-wrap { width: 50px; height: 50px; margin-bottom: 8px; }
+        .phone-menu-picker-grid .picker-icon-wrap svg { width: 46px; height: 46px; }
+        .phone-menu-picker-grid .picker-name { font-size: 12px; }
+    }
+    @media (min-width: 480px) {
+        .phone-menu-picker-modal { padding: 20px; border-radius: 16px; max-width: 420px; }
+        .phone-menu-picker-title { font-size: 18px; }
+        .phone-menu-picker-grid { gap: 16px; min-height: 140px; }
+        .phone-menu-picker-grid .picker-icon-wrap { width: 56px; height: 56px; }
+        .phone-menu-picker-grid .picker-icon-wrap svg { width: 48px; height: 48px; }
+        .phone-menu-picker-grid .picker-name { font-size: 13px; }
+    }
+    @media (min-width: 768px) {
+        .phone-menu-picker-overlay { padding: 20px; }
+        .phone-menu-picker-modal { max-width: 480px; max-height: 85vh; }
     }`;
 
-    /** Селекторы */
-    const $ = (s, r = document) => r.querySelector(s);
-    const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+    // ==================== УТИЛИТЫ ====================
+    var $ = function(s,r){ r = r || document; return r.querySelector(s); };
+    var $$ = function(s,r){ r = r || document; var n = r.querySelectorAll(s); return Array.prototype.slice.call(n); };
 
-    /** Кэш DOM элементов */
-    const cache = {
+    function svgToStorage(svg){
+        if(!svg || typeof svg !== 'string') return svg;
+        try{ return 'b64:' + btoa(unescape(encodeURIComponent(svg))); } catch(e){ return svg; }
+    }
+    function svgFromStorage(val){
+        if(!val || typeof val !== 'string') return val;
+        if(val.indexOf('b64:') !== 0) return val;
+        try{ return decodeURIComponent(escape(atob(val.slice(4)))); } catch(e){ return val; }
+    }
+
+    function injectCSS(){
+        if(!$('#menu-glass-auto-style')){
+            var st = document.createElement('style');
+            st.id = 'menu-glass-auto-style';
+            st.textContent = baseCSS;
+            document.head.appendChild(st);
+        }
+    }
+
+    // ==================== НАВИГАЦИЯ ====================
+    function triggerClick(el){
+        if(!el) return;
+        try{ el.click(); } catch(e){}
+        try{
+            var ev = document.createEvent('MouseEvents');
+            ev.initMouseEvent('click', true, true, window, 1, 0, 0, 0, 0, false, false, false, false, 0, null);
+            el.dispatchEvent(ev);
+        } catch(e){}
+    }
+
+    function getLeftMenuRoot(){
+        try{
+            var sidebarMenu = document.querySelector('.sidebar .menu, .sidebar .selector');
+            if(sidebarMenu && sidebarMenu.parentElement) return sidebarMenu.parentElement;
+            var sidebar = document.querySelector('.sidebar, .sidebar__body');
+            if(sidebar) return sidebar;
+            var menu = document.querySelector('.menu');
+            return menu || null;
+        } catch(e){ return null; }
+    }
+
+    function findAndClickMenuItem(action){
+        try{
+            var root = getLeftMenuRoot();
+            var list = root && root.querySelectorAll ? root.querySelectorAll('.menu__item[data-action], .menu__item[data-id], .selector[data-action], .selector[data-id], .menu__item, .selector') : [];
+            for(var i = 0; i < list.length; i++){
+                var el = list[i];
+                var v = (el && el.getAttribute && (el.getAttribute('data-action') || el.getAttribute('data-id'))) || '';
+                if(v && v === action){ triggerClick(el); return true; }
+            }
+            for(var j = 0; j < list.length; j++){
+                var el2 = list[j];
+                var nameEl = el2 && el2.querySelector ? el2.querySelector('.menu__text, .selector__text, .selector-title') : null;
+                var text = (nameEl && nameEl.textContent ? nameEl.textContent.trim() : (el2.textContent || '').trim().replace(/\s+/g, ' ')) || '';
+                if(text && text === action){ triggerClick(el2); return true; }
+            }
+        } catch(e){}
+        return false;
+    }
+
+    function emulateSidebarClick(action){
+        try{
+            if(!action) return false;
+            if(typeof Lampa !== 'undefined' && Lampa.Go){
+                try{ Lampa.Go(action); return true; } catch(e){}
+            }
+            if(findAndClickMenuItem(action)) return true;
+            setTimeout(function(){
+                findAndClickMenuItem(action);
+            }, 280);
+            return true;
+        } catch(e){ return false; }
+    }
+
+    // ==================== СБОР ПУНКТОВ ЛЕВОГО МЕНЮ (без разворачивания спрайтов) ====================
+    function collectMenuSections(){
+        var out = [];
+        var seen = {};
+        var root = getLeftMenuRoot();
+        if(!root) return out;
+
+        function add(el){
+            var action = (el.getAttribute('data-action') || el.getAttribute('data-id') || '').trim();
+            var nameEl = el.querySelector('.menu__text, .selector__text, .selector-title, .text');
+            var name = (nameEl && nameEl.textContent) ? nameEl.textContent.trim() : '';
+            if(!name) name = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 50);
+            var key = action || name || ('item_' + out.length);
+            if(!key || seen[key]) return;
+            if(action === 'main' || action === 'settings') return;
+            if(name && (name.indexOf('Редактировать') !== -1 || name.indexOf('Настройки') !== -1)) return;
+            seen[key] = true;
+
+            var ico = el.querySelector('.menu__ico, .selector__ico, .selector-icon, .ico');
+            var svg = '';
+            if(ico){
+                var svgEl = ico.querySelector('svg');
+                if(svgEl) svg = svgEl.outerHTML;
+            }
+            if(!svg){
+                var firstSvg = el.querySelector('svg');
+                if(firstSvg) svg = firstSvg.outerHTML;
+            }
+            if(!svg) return;
+            // Не разворачиваем <use>, оставляем как есть
+            out.push({ name: name || key, action: key, svg: svg });
+        }
+
+        var selectors = [
+            '.menu__item[data-action]', '.menu__item[data-id]', '.menu__item',
+            '.selector[data-action]', '.selector[data-id]', '.selector'
+        ];
+        for(var i = 0; i < selectors.length; i++){
+            var list = root.querySelectorAll(selectors[i]);
+            for(var j = 0; j < list.length; j++){
+                add(list[j]);
+            }
+        }
+        return out;
+    }
+
+    // ==================== МОДАЛЬНОЕ ОКНО ВЫБОРА ====================
+    function showIconPicker(position, div, iconEl, labelEl, defaultAction, defaultSvg, defaultName){
+        var overlay = document.createElement('div');
+        overlay.className = 'phone-menu-picker-overlay';
+        overlay.addEventListener('click', function(e){ if(e.target === overlay) overlay.parentNode && overlay.parentNode.removeChild(overlay); });
+
+        var modal = document.createElement('div');
+        modal.className = 'phone-menu-picker-modal';
+
+        var title = document.createElement('h3');
+        title.textContent = 'Настройка кнопки';
+        title.className = 'phone-menu-picker-title';
+        modal.appendChild(title);
+
+        var grid = document.createElement('div');
+        grid.className = 'phone-menu-picker-grid';
+        var options = collectMenuSections();
+        if(options.length === 0) return;
+
+        // Функция заполнения сетки
+        function renderOptionsGrid(grid, options, position, div, iconEl, labelEl, overlay, defaultAction, defaultSvg, defaultName){
+            grid.innerHTML = '';
+            for(var i = 0; i < options.length; i++){
+                var opt = options[i];
+                var item = document.createElement('div');
+                item.className = 'picker-item';
+                item.innerHTML = '<div class="picker-icon-wrap">' + opt.svg + '</div><span class="picker-name">' + (opt.name || '') + '</span>';
+                var svgEl = item.querySelector('svg');
+                if(svgEl){ svgEl.style.width = '48px'; svgEl.style.height = '48px'; }
+                if(opt.action !== '_'){
+                    (function(o, a, s, n){
+                        item.addEventListener('click', function(){
+                            // Сохраняем иконку как есть (без разворачивания)
+                            div.setAttribute('data-action', a);
+                            localStorage.setItem('bottom_bar_' + position + '_action', a);
+                            iconEl.innerHTML = s; // используем исходный SVG
+                            localStorage.setItem('bottom_bar_' + position + '_svg', svgToStorage(s));
+                            labelEl.textContent = n;
+                            localStorage.setItem('bottom_bar_' + position + '_name', n);
+                            if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                        });
+                    })(opt, opt.action, opt.svg, opt.name);
+                } else {
+                    item.style.pointerEvents = 'none';
+                    item.style.opacity = '0.7';
+                }
+                grid.appendChild(item);
+            }
+            var reset = document.createElement('div');
+            reset.className = 'phone-menu-picker-reset';
+            reset.textContent = 'Сбросить на стандарт';
+            reset.addEventListener('click', function(){
+                div.setAttribute('data-action', defaultAction);
+                localStorage.removeItem('bottom_bar_' + position + '_action');
+                iconEl.innerHTML = defaultSvg; // используем стандартную иконку как есть
+                localStorage.setItem('bottom_bar_' + position + '_svg', svgToStorage(defaultSvg));
+                labelEl.textContent = defaultName;
+                localStorage.removeItem('bottom_bar_' + position + '_name');
+                if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
+            });
+            grid.appendChild(reset);
+        }
+
+        renderOptionsGrid(grid, options, position, div, iconEl, labelEl, overlay, defaultAction, defaultSvg, defaultName);
+
+        modal.appendChild(grid);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+    }
+
+    // ==================== ДОБАВЛЕНИЕ КНОПКИ ====================
+    function addItem(position, defaultAction, defaultSvg, defaultName){
+        var bar = $('.navigation-bar__body');
+        if(!bar || bar.querySelector('[data-position="' + position + '"]')) return;
+
+        var savedAction = localStorage.getItem('bottom_bar_' + position + '_action') || defaultAction;
+        var savedSvg = svgFromStorage(localStorage.getItem('bottom_bar_' + position + '_svg') || defaultSvg);
+        var savedName = localStorage.getItem('bottom_bar_' + position + '_name') || defaultName;
+
+        var div = document.createElement('div');
+        div.className = 'navigation-bar__item';
+        div.setAttribute('data-action', savedAction);
+        div.setAttribute('data-position', position);
+
+        var iconDiv = document.createElement('div');
+        iconDiv.className = 'navigation-bar__icon';
+        iconDiv.innerHTML = savedSvg; // вставляем иконку как есть (с <use>)
+
+        var labelDiv = document.createElement('div');
+        labelDiv.className = 'navigation-bar__label';
+        labelDiv.textContent = savedName;
+
+        div.appendChild(iconDiv);
+        div.appendChild(labelDiv);
+
+        var search = bar.querySelector('.navigation-bar__item[data-action="search"]');
+        if(search) bar.insertBefore(div, search);
+        else bar.appendChild(div);
+
+        div.addEventListener('click', function(){
+            emulateSidebarClick(div.getAttribute('data-action'));
+        });
+
+        // Долгое нажатие для настройки
+        var timer;
+        function start(){
+            timer = setTimeout(function(){ showIconPicker(position, div, iconDiv, labelDiv, defaultAction, defaultSvg, defaultName); }, 700);
+        }
+        function cancel(){ clearTimeout(timer); }
+
+        div.addEventListener('touchstart', start);
+        div.addEventListener('touchend', cancel);
+        div.addEventListener('touchmove', cancel);
+        div.addEventListener('touchcancel', cancel);
+        div.addEventListener('mousedown', function(e){
+            if(e.button === 0){
+                start();
+                function up(){ cancel(); document.removeEventListener('mouseup', up); }
+                document.addEventListener('mouseup', up);
+            }
+        });
+    }
+
+    // ==================== АДАПТАЦИЯ ИЗ ПЛАГИНА 2 ====================
+    var cache = {
         bar: null,
         items: null,
         resizeObserver: null,
         lampaListeners: [],
-        getBar() {
+        getBar: function() {
             if (!this.bar || !document.contains(this.bar)) {
                 this.bar = $('.navigation-bar__body');
             }
             return this.bar;
         },
-        getItems() {
-            const bar = this.getBar();
+        getItems: function() {
+            var bar = this.getBar();
             if (!bar) {
                 this.items = null;
                 return [];
             }
-            if (!this.items || this.items.some(item => !document.contains(item))) {
+            if (!this.items || this.items.some(function(item){ return !document.contains(item); })) {
                 this.items = $$('.navigation-bar__item', bar);
             }
             return this.items;
         },
-        clear() {
-            this.bar = null;
-            this.items = null;
-            this.lampaListeners.forEach(listener => listener && listener());
-            this.lampaListeners = [];
-        },
-        clearBarCache() {
+        clearBarCache: function() {
             this.bar = null;
         }
     };
 
-    /** Дебаунсинг */
     function debounce(func, wait) {
         if (window.Lampa && window.Lampa.Utils && window.Lampa.Utils.debounce) {
             return Lampa.Utils.debounce(func, wait);
         }
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
+        var timeout;
+        return function executedFunction() {
+            var args = arguments;
+            var later = function() {
                 clearTimeout(timeout);
-                func(...args);
+                func.apply(null, args);
             };
             clearTimeout(timeout);
             timeout = setTimeout(later, wait);
         };
     }
 
-    /** Навигация через Lampa API */
-    function navigateToCategory(action) {
-        if (window.Lampa && window.Lampa.Router) {
-            const categoryMap = {
-                'movie': { title: 'Фильмы', url: 'movie', source: Lampa.Storage ? Lampa.Storage.field('source') : 'tmdb' },
-                'tv': { title: 'Сериалы', url: 'tv', source: Lampa.Storage ? Lampa.Storage.field('source') : 'tmdb' },
-                'anime': { title: 'Аниме', url: 'anime', source: 'cub' }
-            };
-            const category = categoryMap[action];
-            if (category) {
-                Lampa.Router.call('category', {
-                    url: category.url,
-                    title: category.title,
-                    source: category.source,
-                    page: 1
-                });
-                return;
-            }
-        }
-        requestAnimationFrame(() => {
-            const menuItems = $$('.menu__item, .selector');
-            for (const el of menuItems) {
-                if (el.dataset?.action === action) {
-                    el.click();
-                    return;
-                }
-            }
-        });
-    }
-
-    /** Вставка CSS */
-    function injectCSS() {
-        if (!$('#menu-glass-auto-style')) {
-            const style = document.createElement('style');
-            style.id = 'menu-glass-auto-style';
-            style.textContent = baseCSS;
-            document.head.appendChild(style);
-        }
-    }
-
-    /** Добавление элемента в панель навигации */
-    function addItem(action, svg) {
-        const bar = cache.getBar();
-        if (!bar || bar.querySelector(`[data-action="${action}"]`)) return;
-
-        const div = document.createElement('div');
-        div.className = 'navigation-bar__item';
-        div.dataset.action = action;
-        div.innerHTML = `<div class="navigation-bar__icon">${svg}</div>`;
-
-        // Вставляем перед кнопкой поиска, если она есть
-        const search = bar.querySelector('.navigation-bar__item[data-action="search"]');
-        if (search) {
-            bar.insertBefore(div, search);
-        } else {
-            bar.appendChild(div);
-        }
-
-        div.addEventListener('click', () => navigateToCategory(action));
-        cache.clearBarCache();
-
-        // Активация при загрузке соответствующей страницы
-        requestAnimationFrame(() => {
-            const currentPath = window.location.pathname;
-            const currentPage = Lampa.Router && Lampa.Router.current ? Lampa.Router.current().url : currentPath;
-            if (currentPage.includes(action) ||
-                (action === 'movie' && (currentPage.includes('/movie/') || currentPage === 'movie')) ||
-                (action === 'tv' && (currentPage.includes('/tv/') || currentPage === 'tv')) ||
-                (action === 'anime' && (currentPage.includes('/anime/') || currentPage === 'anime'))) {
-                div.classList.add('active');
-            }
-        });
-    }
-
-    /** Динамическая корректировка для ландшафтного режима */
     function adjustLandscapeSpacing() {
-        requestAnimationFrame(() => {
-            const bar = cache.getBar();
-            const items = cache.getItems();
+        requestAnimationFrame(function() {
+            var bar = cache.getBar();
+            var items = cache.getItems();
             if (!bar || !items.length) return;
 
-            // Получаем реальные размеры экрана
-            const screenHeight = window.innerHeight;
-            const screenWidth = window.innerWidth;
+            var screenHeight = window.innerHeight;
+            var screenWidth = window.innerWidth;
 
-            // Определяем размеры элементов на основе высоты экрана
-            let itemSize;
+            var itemSize;
             if (screenHeight > 600) {
-                // Большие экраны
                 itemSize = Math.min(56, Math.floor(screenHeight * 0.08));
             } else if (screenHeight > 450) {
-                // Средние экраны
                 itemSize = Math.min(48, Math.floor(screenHeight * 0.09));
             } else if (screenHeight > 350) {
-                // Маленькие экраны
                 itemSize = Math.min(40, Math.floor(screenHeight * 0.1));
             } else {
-                // Очень маленькие экраны
                 itemSize = Math.min(36, Math.floor(screenHeight * 0.11));
             }
-
-            // Ограничиваем минимальный размер
             itemSize = Math.max(32, itemSize);
 
-            // Рассчитываем ширину панели на основе размера элементов
-            const panelWidth = itemSize + 16; // + отступы
+            var panelWidth = itemSize + 16;
+            bar.style.width = panelWidth + 'px';
+            bar.style.minWidth = panelWidth + 'px';
+            bar.style.maxWidth = panelWidth + 'px';
 
-            // Применяем размеры к панели
-            bar.style.width = `${panelWidth}px`;
-            bar.style.minWidth = `${panelWidth}px`;
-            bar.style.maxWidth = `${panelWidth}px`;
-
-            // Применяем размеры к элементам
-            items.forEach((item) => {
-                item.style.width = `${itemSize}px`;
-                item.style.height = `${itemSize}px`;
-                item.style.minWidth = `${itemSize}px`;
-                item.style.maxWidth = `${itemSize}px`;
+            items.forEach(function(item) {
+                item.style.width = itemSize + 'px';
+                item.style.height = itemSize + 'px';
+                item.style.minWidth = itemSize + 'px';
+                item.style.maxWidth = itemSize + 'px';
                 item.style.flex = '0 0 auto';
                 item.style.margin = '0';
             });
 
-            // Центрируем элементы в панели
             bar.style.justifyContent = 'center';
             bar.style.alignItems = 'center';
 
-            // Если элементы не помещаются, уменьшаем отступы
-            const itemCount = items.length;
-            const totalItemsHeight = itemSize * itemCount;
-            const availableHeight = screenHeight - 24; // Учитываем отступы
+            var itemCount = items.length;
+            var totalItemsHeight = itemSize * itemCount;
+            var availableHeight = screenHeight - 24;
 
             if (totalItemsHeight > availableHeight) {
-                // Вычисляем максимальный размер, который поместится
-                const maxItemSize = Math.floor(availableHeight / itemCount);
-                const finalItemSize = Math.max(32, maxItemSize);
-                const finalPanelWidth = finalItemSize + 12;
-
-                // Обновляем размеры
-                bar.style.width = `${finalPanelWidth}px`;
-                bar.style.minWidth = `${finalPanelWidth}px`;
-                bar.style.maxWidth = `${finalPanelWidth}px`;
-                items.forEach((item) => {
-                    item.style.width = `${finalItemSize}px`;
-                    item.style.height = `${finalItemSize}px`;
-                    item.style.minWidth = `${finalItemSize}px`;
-                    item.style.maxWidth = `${finalItemSize}px`;
+                var maxItemSize = Math.floor(availableHeight / itemCount);
+                var finalItemSize = Math.max(32, maxItemSize);
+                var finalPanelWidth = finalItemSize + 12;
+                bar.style.width = finalPanelWidth + 'px';
+                bar.style.minWidth = finalPanelWidth + 'px';
+                bar.style.maxWidth = finalPanelWidth + 'px';
+                items.forEach(function(item) {
+                    item.style.width = finalItemSize + 'px';
+                    item.style.height = finalItemSize + 'px';
+                    item.style.minWidth = finalItemSize + 'px';
+                    item.style.maxWidth = finalItemSize + 'px';
                 });
             }
         });
     }
 
-    /** Сброс стилей для портретного режима */
     function resetPortraitStyles() {
-        requestAnimationFrame(() => {
-            const bar = cache.getBar();
-            const items = cache.getItems();
+        requestAnimationFrame(function() {
+            var bar = cache.getBar();
+            var items = cache.getItems();
             if (!bar || !items.length) return;
 
-            // Сбрасываем все стили, установленные для ландшафтного режима
             bar.style.width = '';
             bar.style.minWidth = '';
             bar.style.maxWidth = '';
             bar.style.justifyContent = '';
             bar.style.alignItems = '';
 
-            items.forEach((item) => {
+            items.forEach(function(item) {
                 item.style.width = '';
                 item.style.height = '';
                 item.style.minWidth = '';
@@ -483,9 +689,8 @@ Lampa.Platform.tv();
         });
     }
 
-    /** Автоматическая корректировка размера элементов */
     function adjustSpacing() {
-        const isLandscape = document.body.classList.contains('orientation--landscape') && document.body.classList.contains('true--mobile');
+        var isLandscape = document.body.classList.contains('orientation--landscape') && document.body.classList.contains('true--mobile');
         if (isLandscape) {
             adjustLandscapeSpacing();
         } else {
@@ -493,38 +698,32 @@ Lampa.Platform.tv();
         }
     }
 
-    /** Настройка обработчиков событий */
     function setupEvents() {
-        const bar = cache.getBar();
+        var bar = cache.getBar();
         if (!bar) return;
 
-        // Используем Lampa.Listener если доступен
         if (window.Lampa && window.Lampa.Listener) {
-            const listener = window.Lampa.Listener;
+            var listener = window.Lampa.Listener;
             cache.lampaListeners.push(
-                listener.follow('size:changed', () => {
-                    adjustSpacing();
-                }),
-                listener.follow('orientation:changed', () => {
-                    setTimeout(() => {
+                listener.follow('size:changed', function() { adjustSpacing(); }),
+                listener.follow('orientation:changed', function() {
+                    setTimeout(function() {
                         adjustSpacing();
                         if (bar) {
-                            // Принудительный рефлоу
                             bar.style.display = 'none';
                             bar.offsetHeight;
                             bar.style.display = 'flex';
                         }
                     }, 300);
                 }),
-                // Слушаем изменения роутера для обновления активного элемента
-                listener.follow('router:change', () => {
-                    requestAnimationFrame(() => {
-                        const items = cache.getItems();
-                        const currentPage = Lampa.Router && Lampa.Router.current ? Lampa.Router.current().url : window.location.pathname;
-                        items.forEach(item => {
-                            const action = item.dataset.action;
+                listener.follow('router:change', function() {
+                    requestAnimationFrame(function() {
+                        var items = cache.getItems();
+                        var currentPage = Lampa.Router && Lampa.Router.current ? Lampa.Router.current().url : window.location.pathname;
+                        items.forEach(function(item) {
+                            var action = item.dataset.action;
                             if (!action) return;
-                            const isActive = currentPage.includes(action) ||
+                            var isActive = currentPage.includes(action) ||
                                 (action === 'movie' && (currentPage.includes('/movie/') || currentPage === 'movie')) ||
                                 (action === 'tv' && (currentPage.includes('/tv/') || currentPage === 'tv')) ||
                                 (action === 'anime' && (currentPage.includes('/anime/') || currentPage === 'anime'));
@@ -535,240 +734,35 @@ Lampa.Platform.tv();
             );
         } else {
             window.addEventListener('resize', debounce(adjustSpacing, 100));
-            window.addEventListener('orientationchange', () => {
-                setTimeout(adjustSpacing, 300);
-            });
+            window.addEventListener('orientationchange', function() { setTimeout(adjustSpacing, 300); });
         }
 
-        // Наблюдатель за изменением размеров
         if (window.ResizeObserver) {
-            cache.resizeObserver = new ResizeObserver(
-                debounce(() => {
-                    adjustSpacing();
-                }, 100)
-            );
+            cache.resizeObserver = new ResizeObserver(debounce(adjustSpacing, 100));
             cache.resizeObserver.observe(bar);
         }
     }
 
-    // ==================== НОВЫЕ ФУНКЦИИ ====================
-
-    // Вспомогательная функция для загрузки сохранённых кнопок
-    function getSavedButtons() {
-        if (!window.Lampa || !Lampa.Storage) return [];
-        const data = Lampa.Storage.get('nav_custom_buttons');
-        if (!data) return [];
-        if (typeof data === 'string') {
-            try {
-                return JSON.parse(data) || [];
-            } catch (e) {
-                console.error('Failed to parse nav_custom_buttons', e);
-                return [];
-            }
-        }
-        if (Array.isArray(data)) return data;
-        if (data && typeof data === 'object' && data.length !== undefined) return Array.from(data);
-        return [];
-    }
-
-    /** Получение доступных пунктов из левого меню (включая фильмы, сериалы, аниме) */
-    function scanMenu() {
-        const items = [];
-        const firstList = document.querySelector('.menu .menu__list');
-        if (!firstList) return items;
-
-        const menuItems = firstList.querySelectorAll('.menu__item[data-action]');
-        menuItems.forEach(el => {
-            const action = el.dataset.action;
-            // Исключаем только системные кнопки, которые не должны заменяться
-            if (!['back', 'main', 'search', 'settings'].includes(action)) {
-                const iconEl = el.querySelector('.menu__ico svg');
-                const svg = iconEl ? iconEl.outerHTML : '<svg></svg>';
-                const textEl = el.querySelector('.menu__text');
-                const title = textEl ? textEl.textContent.trim() : action;
-                items.push({ action, svg, title });
-            }
-        });
-        console.log('scanMenu found:', items);
-        return items;
-    }
-
-    /** Показ модального окна для выбора кнопок (автосохранение при клике) */
-    function showCustomModal() {
-        console.log('showCustomModal called');
-        const available = scanMenu();
-        if (available.length === 0) {
-            if (window.Lampa && Lampa.Notice) Lampa.Noty.show('Нет доступных кнопок для добавления');
-            return;
-        }
-
-        let selected = getSavedButtons();
-        console.log('Loaded selected from storage:', selected);
-
-        const list = document.createElement('div');
-        list.style.display = 'grid';
-        list.style.gap = '12px';
-        list.style.padding = '12px';
-
-        available.forEach(item => {
-            const isSelected = selected.some(s => s.action === item.action);
-            const el = document.createElement('div');
-            el.className = 'selector';
-            el.style.display = 'flex';
-            el.style.alignItems = 'center';
-            el.style.padding = '10px';
-            el.style.borderRadius = '8px';
-            el.style.background = isSelected ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.05)';
-            el.setAttribute('data-action', item.action);
-            el.innerHTML = `
-                <div style="width:24px;height:24px;margin-right:12px;flex-shrink:0;">${item.svg}</div>
-                <div style="font-size:14px;">${item.title}</div>
-                <div class="modal-item-check" style="margin-left:auto;width:20px;height:20px;display:flex;align-items:center;justify-content:center;">
-                    ${isSelected ? '✓' : ''}
-                </div>
-            `;
-            el.addEventListener('click', (e) => {
-                e.stopPropagation();
-                console.log('Clicked item:', item.action, item.title);
-                const currentlySelected = selected.some(s => s.action === item.action);
-                const checkDiv = el.querySelector('.modal-item-check');
-                if (currentlySelected) {
-                    // Убрать
-                    selected = selected.filter(s => s.action !== item.action);
-                    el.style.background = 'rgba(255,255,255,0.05)';
-                    if (checkDiv) checkDiv.textContent = '';
-                    console.log('Removed from selection:', item.action, 'selected now:', selected);
-                } else if (selected.length < 3) {
-                    // Добавить
-                    selected.push({ action: item.action, svg: item.svg });
-                    el.style.background = 'rgba(255,255,255,0.1)';
-                    if (checkDiv) checkDiv.textContent = '✓';
-                    console.log('Added to selection:', item.action, 'selected now:', selected);
-                } else {
-                    if (window.Lampa && Lampa.Notice) Lampa.Noty.show('Можно выбрать до 3 кнопок');
-                    console.log('Selection limit reached (3)');
-                    return;
-                }
-
-                // Сохраняем изменения и обновляем панель
-                if (window.Lampa && Lampa.Storage) {
-                    Lampa.Storage.set('nav_custom_buttons', selected);
-                    console.log('Saved to Storage:', selected);
-                }
-                rebuildCustomButtons();
-            });
-            list.appendChild(el);
-        });
-
-        // Кнопка "Готово" для закрытия
-        const closeBtn = document.createElement('div');
-        closeBtn.className = 'modal__button selector';
-        closeBtn.textContent = 'Готово';
-        closeBtn.style.marginTop = '12px';
-        closeBtn.addEventListener('click', () => {
-            if (window.Lampa && Lampa.Modal) Lampa.Modal.close();
-        });
-
-        const footer = document.createElement('div');
-        footer.className = 'modal__footer';
-        footer.appendChild(closeBtn);
-
-        if (window.Lampa && Lampa.Modal) {
-            Lampa.Modal.open({
-                title: 'Выберите до 3 кнопок',
-                html: list,
-                buttons: [{ name: 'Закрыть', onSelect: () => Lampa.Modal.close() }],
-                onBack: () => Lampa.Modal.close()
-            });
-            console.log('Modal opened');
-        } else {
-            console.error('Lampa.Modal not available');
-        }
-    }
-
-    /** Список системных кнопок, которые нельзя удалять */
-    const SYSTEM_ACTIONS = ['search', 'settings', 'back', 'main'];
-
-    /** Удаление всех кастомных кнопок из панели (оставляем только системные) */
-    function removeAllCustomButtons() {
-        const bar = cache.getBar();
-        if (!bar) return;
-        const items = bar.querySelectorAll('.navigation-bar__item');
-        items.forEach(item => {
-            const action = item.dataset.action;
-            if (action && !SYSTEM_ACTIONS.includes(action)) {
-                item.remove();
-                console.log('Removed custom button:', action);
-            }
-        });
-        cache.clearBarCache();
-    }
-
-    /** Пересоздание кнопок на основе сохранённых */
-    function rebuildCustomButtons() {
-        console.log('rebuildCustomButtons called');
-        removeAllCustomButtons();
-
-        const selected = getSavedButtons();
-        console.log('Loaded from storage for rebuild:', selected);
-        selected.forEach(item => {
-            if (item.action && item.svg) {
-                console.log('Adding button:', item.action);
-                addItem(item.action, item.svg);
-            } else {
-                console.warn('Invalid item in selected:', item);
-            }
-        });
-    }
-
     // ==================== ИНИЦИАЛИЗАЦИЯ ====================
-
     function init() {
-        console.log('init started');
         injectCSS();
 
-        removeAllCustomButtons();
-
-        const selected = getSavedButtons();
-        console.log('init: loaded selected from storage:', selected);
-
-        if (selected.length > 0) {
-            selected.forEach(item => {
-                if (item.action && item.svg) {
-                    console.log('init: adding custom button:', item.action);
-                    addItem(item.action, item.svg);
-                }
-            });
-        } else {
-            console.log('init: adding default buttons (movie, tv, anime)');
-            addItem('movie', MOVIE_SVG);
-            addItem('tv', TV_SVG);
-            addItem('anime', ANIME_SVG);
-        }
+        addItem('1', defaults[1].action, defaults[1].svg, defaults[1].name);
+        addItem('2', defaults[2].action, defaults[2].svg, defaults[2].name);
+        addItem('3', defaults[3].action, defaults[3].svg, defaults[3].name);
 
         adjustSpacing();
-
-        const bar = cache.getBar();
-        if (!bar) return;
-
         setupEvents();
-
-        bar.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            console.log('contextmenu on navigation bar');
-            showCustomModal();
-        });
-        console.log('init finished');
     }
 
     // ==================== ЗАПУСК ====================
-
-    const mo = new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
+    var mo = new MutationObserver(function(mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+            var mutation = mutations[i];
             if (mutation.type === 'childList' && mutation.addedNodes.length) {
-                for (const node of mutation.addedNodes) {
-                    if (node.nodeType === 1 && (node.classList?.contains('navigation-bar__body') || node.querySelector?.('.navigation-bar__body'))) {
-                        console.log('navigation-bar__body detected by MutationObserver');
+                for (var j = 0; j < mutation.addedNodes.length; j++) {
+                    var node = mutation.addedNodes[j];
+                    if (node.nodeType === 1 && (node.classList && node.classList.contains('navigation-bar__body') || (node.querySelector && node.querySelector('.navigation-bar__body')))) {
                         mo.disconnect();
                         init();
                         return;
@@ -780,9 +774,7 @@ Lampa.Platform.tv();
     mo.observe(document.documentElement, { childList: true, subtree: true });
 
     if ($('.navigation-bar__body')) {
-        console.log('navigation-bar__body already exists, starting init');
         mo.disconnect();
         init();
     }
-
 })();
