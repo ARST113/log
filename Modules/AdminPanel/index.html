@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lampac Admin Panel (native-first)</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <h1>Lampac Admin</h1>
+        <nav id="menu"></nav>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <h2 id="section-title">Обзор</h2>
+            <p id="section-subtitle">Native-first панель управления и редактор init.conf</p>
+          </div>
+          <div id="restart-indicator" class="badge hidden">Требуется restart/reload</div>
+        </header>
+
+        <section id="view-overview" class="view"></section>
+        <section id="view-configuration" class="view hidden"></section>
+        <section id="view-sources" class="view hidden"></section>
+        <section id="view-modules" class="view hidden"></section>
+        <section id="view-plugins" class="view hidden"></section>
+        <section id="view-users" class="view hidden"></section>
+        <section id="view-components" class="view hidden"></section>
+        <section id="view-system" class="view hidden"></section>
+        <section id="view-logs" class="view hidden"></section>
+        <section id="view-advanced" class="view hidden"></section>
+
+        <footer class="action-bar" id="action-bar">
+          <button data-action="save">Сохранить</button>
+          <button data-action="diff">Показать diff</button>
+          <button data-action="raw">Показать raw JSON</button>
+          <button data-action="rollback" class="danger">Откатить</button>
+        </footer>
+      </main>
+    </div>
+
+    <dialog id="modal">
+      <article>
+        <header>
+          <h3 id="modal-title">Данные</h3>
+          <button id="modal-close" class="icon">✕</button>
+        </header>
+        <pre id="modal-content"></pre>
+      </article>
+    </dialog>
+
+    <script src="./panel.js"></script>
+  </body>
+</html>
