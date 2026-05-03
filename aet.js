@@ -155,63 +155,136 @@
         });
     }
 
-    function probeLastState(showFail) {
-        var session = getLastSession();
+    function normalizeEvents(data) {
+    if (Array.isArray(data)) return data;
+    if (data && Array.isArray(data.value)) return data.value;
+    if (data && Array.isArray(data.Value)) return data.Value;
+    return [];
+}
 
-        if (!session || !session.sid || !session.token) {
-            if (showFail) noty('DDD probe: нет session');
-            return Promise.resolve(false);
-        }
+function findBestPlaybackEvent(state, eventsRaw) {
+    var events = normalizeEvents(eventsRaw);
 
-        var pingUrl = HOST + '/ping';
-        var stateUrl = HOST + '/state?sid=' + encodeURIComponent(session.sid) + '&token=' + encodeURIComponent(session.token);
+    var candidates = [];
 
-        clog('probe ping', pingUrl);
-        clog('probe state', stateUrl);
+    if (state) candidates.push(state);
 
-        return fetchJson(pingUrl, 2500)
-            .then(function (ping) {
-                clog('ping ok', ping);
-                return fetchJson(stateUrl, 2500);
-            })
-            .then(function (state) {
-                clog('state ok', state);
-
-                var p = state && state.payload ? state.payload : {};
-                var pos = Number(p.position || 0);
-                var dur = Number(p.duration || 0);
-                var idx = typeof p.windowIndex !== 'undefined' ? p.windowIndex : '?';
-                var type = state && state.type ? state.type : 'unknown';
-
-                var now = Date.now();
-
-                if (now - lastOkStateTs > 5000) {
-                    lastOkStateTs = now;
-
-                    noty(
-                        'DDD state OK: ' +
-                        type +
-                        ', ' +
-                        formatMs(pos) +
-                        ' / ' +
-                        formatMs(dur) +
-                        ', index=' +
-                        idx
-                    );
-                }
-
-                return true;
-            })
-            .catch(function (e) {
-                clog('probe failed', e);
-
-                if (showFail) {
-                    noty('DDD state FAIL: ' + (e.message || e));
-                }
-
-                return false;
-            });
+    for (var i = events.length - 1; i >= 0; i--) {
+        candidates.push(events[i]);
     }
+
+    for (var j = 0; j < candidates.length; j++) {
+        var ev = candidates[j];
+        var p = ev && ev.payload ? ev.payload : null;
+
+        if (!p) continue;
+
+        if (
+            typeof p.windowIndex !== 'undefined' &&
+            typeof p.position !== 'undefined'
+        ) {
+            return ev;
+        }
+    }
+
+    for (var k = 0; k < candidates.length; k++) {
+        var ev2 = candidates[k];
+        var p2 = ev2 && ev2.payload ? ev2.payload : null;
+
+        if (!p2) continue;
+
+        if (typeof p2.position !== 'undefined') {
+            return ev2;
+        }
+    }
+
+    return state || null;
+}
+
+function probeLastState(showFail) {
+    var session = getLastSession();
+
+    if (!session || !session.sid || !session.token) {
+        if (showFail) noty('DDD probe: нет session');
+        return Promise.resolve(false);
+    }
+
+    var pingUrl = HOST + '/ping';
+    var stateUrl = HOST + '/state?sid=' + encodeURIComponent(session.sid) + '&token=' + encodeURIComponent(session.token);
+    var eventsUrl = HOST + '/events?sid=' + encodeURIComponent(session.sid) + '&token=' + encodeURIComponent(session.token);
+
+    clog('probe ping', pingUrl);
+    clog('probe state', stateUrl);
+    clog('probe events', eventsUrl);
+
+    var stateResult = null;
+
+    return fetchJson(pingUrl, 2500)
+        .then(function (ping) {
+            clog('ping ok', ping);
+            return fetchJson(stateUrl, 2500);
+        })
+        .then(function (state) {
+            stateResult = state;
+            clog('state ok', state);
+            return fetchJson(eventsUrl, 2500);
+        })
+        .then(function (eventsRaw) {
+            clog('events ok', eventsRaw);
+
+            var best = findBestPlaybackEvent(stateResult, eventsRaw);
+            var p = best && best.payload ? best.payload : {};
+
+            var pos = Number(p.position || 0);
+            var dur = Number(p.duration || 0);
+            var idx = typeof p.windowIndex !== 'undefined' ? p.windowIndex : '?';
+            var type = best && best.type ? best.type : 'unknown';
+
+            var playlistSize = '?';
+
+            try {
+                var events = normalizeEvents(eventsRaw);
+
+                for (var i = events.length - 1; i >= 0; i--) {
+                    var ep = events[i] && events[i].payload ? events[i].payload : {};
+                    if (typeof ep.playlistSize !== 'undefined') {
+                        playlistSize = ep.playlistSize;
+                        break;
+                    }
+                }
+            } catch (e) {}
+
+            var now = Date.now();
+
+            if (now - lastOkStateTs > 5000) {
+                lastOkStateTs = now;
+
+                noty(
+                    'DDD OK: ' +
+                    type +
+                    ', ' +
+                    formatMs(pos) +
+                    ' / ' +
+                    formatMs(dur) +
+                    ', index=' +
+                    idx +
+                    ', list=' +
+                    playlistSize
+                );
+            }
+
+            return true;
+        })
+        .catch(function (e) {
+            clog('probe failed', e);
+
+            if (showFail) {
+                noty('DDD state FAIL: ' + (e.message || e));
+            }
+
+            return false;
+        });
+}
 
     function patchPlayerPlay() {
         if (patched) return;
