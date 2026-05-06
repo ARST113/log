@@ -2176,59 +2176,58 @@ var DDD_DEBUG = false;
             return null;
         }
 
-        function renderButtonContent(movie, params) {
-        var timelineHash = StorageManager.generateTimelineHash(movie, params.season, params.episode);
-        var timeline = getTimelineView(timelineHash);
-    
-        var percent = 0;
-        var timeText = '';
-    
-        if (timeline && timeline.percent > 0) {
-            percent = Number(timeline.percent || 0);
-            timeText = Utils.formatSeconds(timeline.time || 0);
-        }
-    
-        var season = Number(params.season || 0);
-        var episode = Number(params.episode || 0);
-    
-        var label = '';
-    
-        /**
-         * Сериал: - компактно показываем только сезон, серию и время. Пример: S1.E5 · 12:34
-        if (season > 0 && episode > 0) {
-            label = 'S' + season + '.E' + episode;
-    
-            if (timeText) {
-                label += ' <span style="opacity:0.7;font-size:0.9em">· ' + timeText + '</span>';
-            }
-        }
-    
-        /**
-         * Фильм:
-         * показываем только время, если оно есть.
-         *
-         * Пример:
-         * 1:12:44
-         */
-        else if (timeText) {
-            label = '<span style="opacity:0.85">' + timeText + '</span>';
-        }
-    
-        /**
-         * Fallback:
-         * если timeline ещё нет.
-         */
-        else {
-            label = 'Продолжить';
-        }
-    
-        var dash = (percent * 65.97 / 100).toFixed(2);
-    
-        return {
-            label: label,
-            dash: dash
-        };
+function renderButtonContent(movie, params) {
+    params = params || {};
+
+    var timelineHash = StorageManager.generateTimelineHash(
+        movie,
+        params.season,
+        params.episode
+    );
+
+    var timeline = getTimelineView(timelineHash);
+
+    var percent = 0;
+    var timeText = '';
+
+    if (timeline && timeline.percent > 0) {
+        percent = Number(timeline.percent || 0);
+        timeText = Utils.formatSeconds(timeline.time || 0);
     }
+
+    var season = Number(params.season || 0);
+    var episode = Number(params.episode || 0);
+
+    var label = '';
+
+    // Сериал: компактно показываем только сезон, серию и время.
+    // Пример: S1.E5 · 12:34
+    if (season > 0 && episode > 0) {
+        label = 'S' + season + '.E' + episode;
+
+        if (timeText) {
+            label += ' <span style="opacity:0.7;font-size:0.9em">· ' + timeText + '</span>';
+        }
+    }
+
+    // Фильм: показываем только время, если оно есть.
+    // Пример: 1:12:44
+    else if (timeText) {
+        label = '<span style="opacity:0.85">' + timeText + '</span>';
+    }
+
+    // Fallback: если timeline ещё нет.
+    else {
+        label = 'Продолжить';
+    }
+
+    var dash = (percent * 65.97 / 100).toFixed(2);
+
+    return {
+        label: label,
+        dash: dash
+    };
+}
 
         function createButton(movie, params) {
             var content = renderButtonContent(movie, params);
@@ -2283,14 +2282,14 @@ var DDD_DEBUG = false;
 
         function createStatusButton(movie) {
             var html =
-                '<div class="full-start__button selector button--continue-watch-ddd" style="margin-top:0.5em;position:relative;max-width:100%;overflow:hidden;">' +
+                '<div class="full-start__button selector button--continue-watch-ddd-debug" style="margin-top:0.5em;position:relative;max-width:100%;overflow:hidden;">' +
                     '<div>DDD статус</div>' +
                 '</div>';
-
+        
             var button = $(html);
-
+        
             bindStatusButton(button, movie);
-
+        
             return button;
         }
 
