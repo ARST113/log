@@ -17,7 +17,7 @@
      */
 
     var PLUGIN_NAME = 'ContinueWatchDDD';
-    var PLUGIN_VERSION = 'v3.0.0-fixed';
+    var PLUGIN_VERSION = 'v3.0.1-compact-label';
 /**
  * Диагностика.
  *
