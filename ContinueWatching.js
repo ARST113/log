@@ -17,7 +17,7 @@
      */
 
     var PLUGIN_NAME = 'ContinueWatchDDD';
-    var PLUGIN_VERSION = 'v3.0.1-compact-label';
+    var PLUGIN_VERSION = 'v3.0.0-fixed';
 /**
  * Диагностика.
  *
@@ -2190,49 +2190,9 @@ function renderButtonContent(movie, params) {
     var percent = 0;
     var timeText = '';
 
-    if (timeline) {
-        var timelinePercent = Number(timeline.percent || 0);
-
-        var timelineTime = Number(
-            timeline.time ||
-            timeline.position ||
-            timeline.current ||
-            timeline.currentTime ||
-            timeline.positionSec ||
-            timeline.sec ||
-            0
-        );
-
-        var timelineDuration = Number(
-            timeline.duration ||
-            timeline.total ||
-            timeline.length ||
-            timeline.totalTime ||
-            timeline.durationSec ||
-            0
-        );
-
-        if (timelinePercent > 0) {
-            percent = timelinePercent;
-        } else if (timelineTime > 0 && timelineDuration > 0) {
-            percent = Utils.clamp(
-                Math.round((timelineTime / timelineDuration) * 100),
-                0,
-                100
-            );
-        }
-
-        /**
-         * Если время явно не сохранено, но есть процент и длительность,
-         * восстанавливаем примерное время из них.
-         */
-        if (!timelineTime && timelinePercent > 0 && timelineDuration > 0) {
-            timelineTime = Math.round((timelineDuration * timelinePercent) / 100);
-        }
-
-        if (timelineTime > 0) {
-            timeText = Utils.formatSeconds(timelineTime);
-        }
+    if (timeline && timeline.percent > 0) {
+        percent = Number(timeline.percent || 0);
+        timeText = Utils.formatSeconds(timeline.time || 0);
     }
 
     var season = Number(params.season || 0);
@@ -2258,15 +2218,6 @@ function renderButtonContent(movie, params) {
      */
     else if (timeText) {
         label += ' <span style="opacity:0.7;font-size:0.9em">· ' + timeText + '</span>';
-    }
-
-    /**
-     * Если время не удалось получить, но прогресс есть,
-     * показываем хотя бы процент. Это лучше, чем просто "Продолжить"
-     * при видимом кольце прогресса.
-     */
-    else if (percent > 0) {
-        label += ' <span style="opacity:0.7;font-size:0.9em">· ' + Math.round(percent) + '%</span>';
     }
 
     var dash = (percent * 65.97 / 100).toFixed(2);
