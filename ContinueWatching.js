@@ -2198,27 +2198,26 @@ function renderButtonContent(movie, params) {
     var season = Number(params.season || 0);
     var episode = Number(params.episode || 0);
 
-    var label = '';
+    var label = 'Продолжить';
 
-    // Сериал: компактно показываем только сезон, серию и время.
-    // Пример: S1.E5 · 12:34
+    /**
+     * Сериал:
+     * Продолжить S1.E5 · 12:34
+     */
     if (season > 0 && episode > 0) {
-        label = 'S' + season + '.E' + episode;
+        label += ' S' + season + '.E' + episode;
 
         if (timeText) {
             label += ' <span style="opacity:0.7;font-size:0.9em">· ' + timeText + '</span>';
         }
     }
 
-    // Фильм: показываем только время, если оно есть.
-    // Пример: 1:12:44
+    /**
+     * Фильм:
+     * Продолжить · 1:12:44
+     */
     else if (timeText) {
-        label = '<span style="opacity:0.85">' + timeText + '</span>';
-    }
-
-    // Fallback: если timeline ещё нет.
-    else {
-        label = 'Продолжить';
+        label += ' <span style="opacity:0.7;font-size:0.9em">· ' + timeText + '</span>';
     }
 
     var dash = (percent * 65.97 / 100).toFixed(2);
@@ -2231,17 +2230,17 @@ function renderButtonContent(movie, params) {
 
         function createButton(movie, params) {
             var content = renderButtonContent(movie, params);
-
+        
             var html =
-                '<div class="full-start__button selector button--continue-watch-ddd" style="margin-top:0.5em;position:relative;">' +
-                    '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" style="margin-right:0.5em">' +
+                '<div class="full-start__button selector button--continue-watch-ddd" style="margin-top:0.5em;position:relative;max-width:100%;overflow:hidden;">' +
+                    '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" style="margin-right:0.5em;flex-shrink:0;">' +
                         '<path d="M8 5v14l11-7L8 5z" fill="currentColor"></path>' +
                         '<circle class="continue-watch-ddd-progress" cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="1.5" fill="none" ' +
                             'stroke-dasharray="' + content.dash + ' 65.97" transform="rotate(-90 12 12)" style="opacity:0.5"></circle>' +
                     '</svg>' +
                     '<div class="continue-watch-ddd-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;">' + content.label + '</div>' +
                 '</div>';
-
+        
             return $(html);
         }
 
