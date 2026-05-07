@@ -6,7 +6,8 @@
     window.__CONTINUE_WATCH_DDD_INTEGRATED_LOADER__ = true;
 
     var CORE_URL = 'https://cdn.jsdelivr.net/gh/ARST113/log@92e23a3e333162ec24dcf52ff6159304354976a1/Debuger.js';
-    var FIX_VERSION = 'series-meta-hard-storage-v2';
+    var FIX_VERSION = 'series-meta-pointer-ui-v3';
+    var pendingRefreshTimer = null;
 
     function log() {
         try {
@@ -154,7 +155,6 @@
         }
 
         if (episode > 0 && !season) season = 1;
-
         return { season: season || 0, episode: episode || 0 };
     }
 
@@ -180,7 +180,7 @@
     }
 
     function readSelectedIndex(params, playlist) {
-        var fields = ['playlist_index', 'ddd_start_index', 'start_index', 'playlistIndex', 'index'];
+        var fields = ['playlist_index', 'ddd_start_index', 'start_index', 'playlistIndex'];
 
         for (var i = 0; i < fields.length; i++) {
             var key = fields[i];
@@ -336,10 +336,19 @@
         var beforeSeason = toInt(record.season);
         var beforeEpisode = toInt(record.episode);
         var beforeTitle = record.episode_title || '';
+        var beforePi = toInt(record.playlist_index);
 
         normalizeParams(record);
 
-        var changed = beforeSeason !== toInt(record.season) || beforeEpisode !== toInt(record.episode) || beforeTitle !== (record.episode_title || '');
+        if (record.season && record.episode && !record.timestamp) {
+            record.timestamp = now();
+        }
+
+        var changed =
+            beforeSeason !== toInt(record.season) ||
+            beforeEpisode !== toInt(record.episode) ||
+            beforeTitle !== (record.episode_title || '') ||
+            beforePi !== toInt(record.playlist_index);
 
         if (changed) {
             log('storage record normalized', hash, 'S' + (record.season || 0) + 'E' + (record.episode || 0), 'fi=' + (record.file_index !== undefined ? record.file_index : '-'), 'pi=' + (record.playlist_index !== undefined ? record.playlist_index : '-'));
@@ -348,39 +357,171 @@
         return changed;
     }
 
-    function normalizeStorageMap(value) {
-        if (!value || typeof value !== 'object') return value;
+    function isCandidateRecord(record) {
+        return !!(
+            record &&
+            typeof record === 'object' &&
+            record.file_name &&
+            record.torrent_link &&
+            toInt(record.season) > 0 &&
+            toInt(record.episode) > 0
+        );
+    }
 
-        var changed = false;
-        var lastByMovie = value.__last_by_movie || {};
+    function isBetterRecord(a, b) {
+        if (!b) return true;
+
+        var at = toInt(a.timestamp);
+        var bt = toInt(b.timestamp);
+        if (at !== bt) return at > bt;
+
+        var as = toInt(a.season);
+        var bs = toInt(b.season);
+        if (as !== bs) return as > bs;
+
+        return toInt(a.episode) > toInt(b.episode);
+    }
+
+    function rebuildLastPointers(value) {
+        var best = {};
 
         Object.keys(value).forEach(function (hash) {
             if (hash === '__last_by_movie') return;
 
             var record = value[hash];
-            var recordChanged = normalizeStorageRecord(record, hash);
-            if (!record || !record.season || !record.episode) return;
+            if (!isCandidateRecord(record)) return;
 
             var movieKey = getMovieKeyFromData(record);
             if (!movieKey) return;
 
-            var oldPointer = lastByMovie[movieKey];
-            if (!oldPointer || oldPointer.hash !== hash || toInt(oldPointer.season) !== toInt(record.season) || toInt(oldPointer.episode) !== toInt(record.episode)) {
-                lastByMovie[movieKey] = {
+            if (isBetterRecord(record, best[movieKey] && best[movieKey].record)) {
+                best[movieKey] = {
                     hash: hash,
-                    season: toInt(record.season),
-                    episode: toInt(record.episode),
-                    timestamp: now()
+                    record: record
                 };
+            }
+        });
+
+        var oldPointers = value.__last_by_movie || {};
+        var nextPointers = {};
+        var changed = false;
+
+        Object.keys(oldPointers).forEach(function (movieKey) {
+            if (!best[movieKey]) nextPointers[movieKey] = oldPointers[movieKey];
+        });
+
+        Object.keys(best).forEach(function (movieKey) {
+            var item = best[movieKey];
+            var record = item.record;
+            var pointer = {
+                hash: item.hash,
+                season: toInt(record.season),
+                episode: toInt(record.episode),
+                timestamp: toInt(record.timestamp) || now()
+            };
+
+            var old = oldPointers[movieKey];
+            if (
+                !old ||
+                old.hash !== pointer.hash ||
+                toInt(old.season) !== pointer.season ||
+                toInt(old.episode) !== pointer.episode ||
+                toInt(old.timestamp) !== pointer.timestamp
+            ) {
                 changed = true;
             }
 
-            if (recordChanged) changed = true;
+            nextPointers[movieKey] = pointer;
         });
 
-        if (changed) {
-            value.__last_by_movie = lastByMovie;
+        value.__last_by_movie = nextPointers;
+        return changed;
+    }
+
+    function getLatestRecord(value) {
+        var latest = null;
+
+        Object.keys(value || {}).forEach(function (hash) {
+            if (hash === '__last_by_movie') return;
+            var record = value[hash];
+            if (!isCandidateRecord(record)) return;
+            if (!latest || isBetterRecord(record, latest)) latest = record;
+        });
+
+        return latest;
+    }
+
+    function buildContinueLabel(record) {
+        if (!record) return '';
+
+        var label = 'Продолжить S' + toInt(record.season) + ' E' + toInt(record.episode);
+        var title = record.episode_title || record.title || '';
+
+        if (title) label += ' · ' + title;
+
+        return label;
+    }
+
+    function patchTextNodes(root, label) {
+        if (!root || !label) return false;
+
+        var changed = false;
+        var walker;
+
+        try {
+            walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+        } catch (e) {
+            return false;
         }
+
+        var node;
+        while ((node = walker.nextNode())) {
+            var text = node.nodeValue || '';
+            if (text.indexOf('Продолжить S') === -1) continue;
+
+            var replaced = text.replace(/Продолжить\s+S\d+\s+E\d+(?:\s*·\s*[^\n\r]*)?/g, label);
+            if (replaced !== text) {
+                node.nodeValue = replaced;
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    function scheduleVisibleRefresh(value) {
+        var latest = getLatestRecord(value);
+        var label = buildContinueLabel(latest);
+        if (!label) return;
+
+        if (pendingRefreshTimer) clearTimeout(pendingRefreshTimer);
+
+        pendingRefreshTimer = setTimeout(function () {
+            pendingRefreshTimer = null;
+
+            try {
+                if (patchTextNodes(document.body, label)) {
+                    log('visible continue label refreshed', label);
+                }
+            } catch (e) {
+                warn('visible refresh failed', e);
+            }
+        }, 120);
+    }
+
+    function normalizeStorageMap(value) {
+        if (!value || typeof value !== 'object') return value;
+
+        var changed = false;
+
+        Object.keys(value).forEach(function (hash) {
+            if (hash === '__last_by_movie') return;
+            if (normalizeStorageRecord(value[hash], hash)) changed = true;
+        });
+
+        if (rebuildLastPointers(value)) changed = true;
+
+        if (changed) scheduleVisibleRefresh(value);
 
         return value;
     }
@@ -391,22 +532,29 @@
 
     function installStoragePatch() {
         if (!window.Lampa || !Lampa.Storage || !Lampa.Storage.set) return false;
-        if (Lampa.Storage.__ddd_series_storage_patch) return true;
+        if (Lampa.Storage.__ddd_series_storage_patch_v3) return true;
 
         var originalSet = Lampa.Storage.set;
         Lampa.Storage.set = function (key, value) {
+            var shouldPatch = isContinueWatchStorageKey(key);
+
             try {
-                if (isContinueWatchStorageKey(key)) {
-                    normalizeStorageMap(value);
-                }
+                if (shouldPatch) normalizeStorageMap(value);
             } catch (e) {
                 warn('storage normalize failed', e);
             }
 
-            return originalSet.apply(this, arguments);
+            var result = originalSet.apply(this, arguments);
+
+            try {
+                if (shouldPatch) scheduleVisibleRefresh(value);
+            } catch (e2) {}
+
+            return result;
         };
 
         Lampa.Storage.__ddd_series_storage_patch = true;
+        Lampa.Storage.__ddd_series_storage_patch_v3 = true;
         log('storage patch installed', FIX_VERSION);
         return true;
     }
@@ -414,7 +562,7 @@
     function installPlayerPatch() {
         if (!window.Lampa || !Lampa.Player || !Lampa.Player.play) return false;
         if (!Lampa.Player.__continue_watch_ddd_patched_v3) return false;
-        if (Lampa.Player.__ddd_series_meta_integrated_patch) return true;
+        if (Lampa.Player.__ddd_series_meta_integrated_patch_v3) return true;
 
         var originalPlay = Lampa.Player.play;
         Lampa.Player.play = function (params) {
@@ -427,6 +575,7 @@
         };
 
         Lampa.Player.__ddd_series_meta_integrated_patch = true;
+        Lampa.Player.__ddd_series_meta_integrated_patch_v3 = true;
         log('player patch installed', FIX_VERSION);
         return true;
     }
@@ -439,7 +588,9 @@
             version: FIX_VERSION,
             normalizeParams: normalizeParams,
             normalizeStorageMap: normalizeStorageMap,
-            readSeriesFields: readSeriesFields
+            readSeriesFields: readSeriesFields,
+            rebuildLastPointers: rebuildLastPointers,
+            scheduleVisibleRefresh: scheduleVisibleRefresh
         };
     }
 
@@ -448,7 +599,7 @@
         var timer = setInterval(function () {
             installPatches();
 
-            if (window.Lampa && Lampa.Player && Lampa.Player.__ddd_series_meta_integrated_patch) {
+            if (window.Lampa && Lampa.Player && Lampa.Player.__ddd_series_meta_integrated_patch_v3) {
                 clearInterval(timer);
                 noty('series meta patch installed', 2);
                 return;
