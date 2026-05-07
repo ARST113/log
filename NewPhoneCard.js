@@ -106,49 +106,54 @@
                 box-shadow: none !important;
             }
             /* Логотип проекта без повторного мигания */
-                .combined-logo-container {
-                    display: flex !important;
-                    justify-content: center !important;
-                    align-items: center !important;
-                    width: 100% !important;
-                    min-height: 125px !important;
-                    position: relative !important;
-                }
-                
-                .combined-logo-container img {
-                    max-height: 125px !important;
-                    max-width: 100% !important;
-                    opacity: 1 !important;
-                    filter: none !important;
-                    -webkit-filter: none !important;
-                }
-                
-                /* Полное снятие обводок/теней с года */
-                .full-start-new__head,
-                .full-start-new__head div,
-                .full-start-new__head span {
-                    color: inherit !important;
-                    border: none !important;
-                    outline: none !important;
-                    box-shadow: none !important;
-                    text-shadow: none !important;
-                    -webkit-text-stroke-width: 0 !important;
-                    -webkit-text-stroke-color: transparent !important;
-                    paint-order: normal !important;
-                }
-                
-                .full-start-new__head::before,
-                .full-start-new__head::after,
-                .full-start__head::before,
-                .full-start__head::after {
-                    display: none !important;
-                    content: none !important;
-                    border: none !important;
-                    outline: none !important;
-                    box-shadow: none !important;
-                    background: none !important;
-                }
-                            
+/* Слот заголовка: сначала резервируем место под логотип */
+.full-start-new__title.combined-logo-slot {
+    min-height: 125px !important;
+    width: 100% !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    text-align: center !important;
+    position: relative !important;
+}
+
+/* Пока проверяем логотип, текстовое название не показываем */
+.full-start-new__title.combined-logo-slot.combined-logo-pending .combined-title-text {
+    visibility: hidden !important;
+    opacity: 0 !important;
+}
+
+/* Если логотип найден, текстовое название полностью убираем */
+.full-start-new__title.combined-logo-slot.combined-logo-ready .combined-title-text {
+    display: none !important;
+}
+
+/* Если логотипа нет, возвращаем обычное название */
+.full-start-new__title.combined-logo-slot.combined-logo-missing .combined-title-text {
+    visibility: visible !important;
+    opacity: 1 !important;
+    display: inline !important;
+}
+
+/* Контейнер логотипа */
+    .combined-logo-container {
+        display: flex !important;
+        justify-content: center !important;
+        align-items: center !important;
+        width: 100% !important;
+        min-height: 125px !important;
+        position: relative !important;
+    }
+    
+    /* Сам логотип */
+    .combined-logo-container img {
+        display: block !important;
+        max-height: 125px !important;
+        max-width: 100% !important;
+        opacity: 1 !important;
+        filter: none !important;
+        -webkit-filter: none !important;
+    }        
             /* Центрирование элементов на мобильных ТОЛЬКО внутри полной карточки */
             @media (max-width: 768px) {
                 .full-start-new .full-start-new__right,
@@ -246,82 +251,169 @@
                 return title;
             }
     
-            function isSameCardStillOpen() {
-                const title = getTitleBlock();
-                if (!title.length) return false;
+            function isNodeAlive(node) {
+                return node && node.length && document.documentElement.contains(node[0]);
+            }
     
-                const currentMovie = e.data && e.data.movie;
-                if (!currentMovie || currentMovie.id !== id) return false;
+            function ensureTitleSlot(titleBlock) {
+                if (!titleBlock.length) return;
     
-                return true;
+                titleBlock.addClass('combined-logo-slot');
+    
+                const hasLogo = titleBlock.find('img[data-combined-logo="1"]').length > 0;
+                const hasText = titleBlock.find('.combined-title-text').length > 0;
+    
+                if (!hasLogo && !hasText) {
+                    const currentHtml = titleBlock.html();
+    
+                    titleBlock.html(
+                        '<span class="combined-title-text">' + currentHtml + '</span>'
+                    );
+                }
+    
+                titleBlock.attr('data-combined-logo-key', requestKey);
+            }
+    
+            function setPending(titleBlock) {
+                if (!titleBlock.length) return;
+    
+                titleBlock
+                    .removeClass('combined-logo-ready combined-logo-missing')
+                    .addClass('combined-logo-pending');
+            }
+    
+            function setMissing(titleBlock) {
+                if (!titleBlock.length) return;
+    
+                titleBlock
+                    .removeClass('combined-logo-pending combined-logo-ready')
+                    .addClass('combined-logo-missing');
+            }
+    
+            function isSameLogoAlreadyApplied(titleBlock, logoUrl) {
+                const img = titleBlock.find('img[data-combined-logo="1"]');
+    
+                return (
+                    titleBlock.attr('data-combined-logo-key') === requestKey &&
+                    titleBlock.attr('data-combined-logo-url') === logoUrl &&
+                    img.length &&
+                    img.attr('src') === logoUrl
+                );
             }
     
             function applyLogo(logoUrl) {
-                if (!logoUrl) return;
-                if (!isSameCardStillOpen()) return;
-    
-                const titleBlock = getTitleBlock();
-                if (!titleBlock.length) return;
-    
-                const currentKey = titleBlock.attr('data-combined-logo-key');
-                const currentUrl = titleBlock.attr('data-combined-logo-url');
-                const currentImg = titleBlock.find('img[data-combined-logo="1"]');
-    
-                // Если этот же логотип уже стоит в текущем DOM, вообще ничего не делаем.
-                if (
-                    currentKey === requestKey &&
-                    currentUrl === logoUrl &&
-                    currentImg.length &&
-                    currentImg.attr('src') === logoUrl
-                ) {
+                if (!logoUrl) {
+                    const titleBlock = getTitleBlock();
+                    if (titleBlock.length) setMissing(titleBlock);
                     return;
                 }
+    
+                let titleBlock = getTitleBlock();
+                if (!titleBlock.length) return;
+                if (!isNodeAlive(titleBlock)) return;
+    
+                ensureTitleSlot(titleBlock);
+    
+                if (isSameLogoAlreadyApplied(titleBlock, logoUrl)) {
+                    return;
+                }
+    
+                setPending(titleBlock);
     
                 const preload = new Image();
     
                 preload.onload = function() {
                     if (requestToken !== window.__combinedLogoRequestToken) return;
-                    if (!isSameCardStillOpen()) return;
     
                     const fresh = getTitleBlock();
                     if (!fresh.length) return;
+                    if (!isNodeAlive(fresh)) return;
     
-                    const freshKey = fresh.attr('data-combined-logo-key');
-                    const freshUrl = fresh.attr('data-combined-logo-url');
-                    const freshImg = fresh.find('img[data-combined-logo="1"]');
+                    ensureTitleSlot(fresh);
     
-                    // Повторная защита уже после загрузки.
-                    if (
-                        freshKey === requestKey &&
-                        freshUrl === logoUrl &&
-                        freshImg.length &&
-                        freshImg.attr('src') === logoUrl
-                    ) {
+                    if (isSameLogoAlreadyApplied(fresh, logoUrl)) {
                         return;
                     }
     
-                    // Важный момент: не делаем fade/opacity. Просто ставим уже загруженную картинку.
-                    fresh.html(
-                        '<div class="combined-logo-container">' +
-                            '<img data-combined-logo="1" src="' + logoUrl + '" />' +
-                        '</div>'
-                    );
+                    const container = $('<div class="combined-logo-container"></div>');
+                    const img = $('<img data-combined-logo="1" />');
     
-                    fresh.attr('data-combined-logo-key', requestKey);
-                    fresh.attr('data-combined-logo-url', logoUrl);
+                    img.attr('src', logoUrl);
+                    container.append(img);
+    
+                    /*
+                     * Важно:
+                     * здесь мы больше не показываем текстовое название перед логотипом.
+                     * title-слот уже был скрыт через combined-logo-pending.
+                     */
+                    fresh.empty();
+                    fresh.append(container);
+    
+                    fresh
+                        .attr('data-combined-logo-key', requestKey)
+                        .attr('data-combined-logo-url', logoUrl)
+                        .removeClass('combined-logo-pending combined-logo-missing')
+                        .addClass('combined-logo-ready');
                 };
     
                 preload.onerror = function() {
-                    // Не очищаем текстовый заголовок.
+                    const fresh = getTitleBlock();
+                    if (!fresh.length) return;
+                    if (!isNodeAlive(fresh)) return;
+    
+                    ensureTitleSlot(fresh);
+                    setMissing(fresh);
                 };
     
                 preload.src = logoUrl;
             }
     
-            if (window.__combinedLogoCache[requestKey]) {
-                applyLogo(window.__combinedLogoCache[requestKey]);
+            let titleBlock = getTitleBlock();
+            if (!titleBlock.length) return;
+    
+            ensureTitleSlot(titleBlock);
+    
+            const cached = window.__combinedLogoCache[requestKey];
+    
+            /*
+             * Если уже знаем, что логотипа нет, не держим пустой слот.
+             */
+            if (cached === false) {
+                setMissing(titleBlock);
                 return;
             }
+    
+            /*
+             * Если логотип уже есть в кэше, ставим его без похода в TMDB.
+             */
+            if (typeof cached === 'string' && cached) {
+                if (isSameLogoAlreadyApplied(titleBlock, cached)) return;
+    
+                applyLogo(cached);
+                return;
+            }
+    
+            /*
+             * Первый заход на карточку:
+             * сразу скрываем текст, чтобы не было уродской замены title -> logo.
+             */
+            setPending(titleBlock);
+    
+            /*
+             * Защита от вечного пустого блока, если TMDB подвис.
+             * Если за 4 секунды логотип не пришёл, возвращаем обычное название.
+             */
+            const fallbackTimer = setTimeout(function() {
+                if (requestToken !== window.__combinedLogoRequestToken) return;
+    
+                const fresh = getTitleBlock();
+                if (!fresh.length) return;
+                if (!isNodeAlive(fresh)) return;
+    
+                if (!fresh.hasClass('combined-logo-ready')) {
+                    setMissing(fresh);
+                }
+            }, 4000);
     
             const url = Lampa.TMDB.api(
                 type + '/' + id + '/images?api_key=' + Lampa.TMDB.key() + '&language=' + language
@@ -329,9 +421,21 @@
     
             $.get(url)
                 .done(function(resp) {
+                    clearTimeout(fallbackTimer);
+    
                     if (requestToken !== window.__combinedLogoRequestToken) return;
-                    if (!isSameCardStillOpen()) return;
-                    if (!resp || !resp.logos || !resp.logos[0] || !resp.logos[0].file_path) return;
+    
+                    if (!resp || !resp.logos || !resp.logos[0] || !resp.logos[0].file_path) {
+                        window.__combinedLogoCache[requestKey] = false;
+    
+                        const fresh = getTitleBlock();
+                        if (fresh.length) {
+                            ensureTitleSlot(fresh);
+                            setMissing(fresh);
+                        }
+    
+                        return;
+                    }
     
                     const logoPath = resp.logos[0].file_path;
                     const logoUrl = Lampa.TMDB.image('/t/p/original' + logoPath.replace('.svg', '.png'));
@@ -339,6 +443,15 @@
                     window.__combinedLogoCache[requestKey] = logoUrl;
     
                     applyLogo(logoUrl);
+                })
+                .fail(function() {
+                    clearTimeout(fallbackTimer);
+    
+                    const fresh = getTitleBlock();
+                    if (!fresh.length) return;
+    
+                    ensureTitleSlot(fresh);
+                    setMissing(fresh);
                 });
         });
     }
@@ -356,7 +469,9 @@
         </div>
 
         <div class="full-start-new__right">
-            <div class="full-start-new__title">{title}</div>
+            <div class="full-start-new__title combined-logo-slot combined-logo-pending">
+                <span class="combined-title-text">{title}</span>
+            </div>>
             <div class="full-start-new__tagline full--tagline">{tagline}</div>
             <div class="full-start-new__head"></div>
             <div class="full-start-new__rate-line">
