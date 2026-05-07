@@ -471,7 +471,7 @@
         <div class="full-start-new__right">
             <div class="full-start-new__title combined-logo-slot combined-logo-pending">
                 <span class="combined-title-text">{title}</span>
-            </div>>
+            </div>
             <div class="full-start-new__tagline full--tagline">{tagline}</div>
             <div class="full-start-new__head"></div>
             <div class="full-start-new__rate-line">
