@@ -7,6 +7,10 @@
     // Защита от повторной загрузки
     if (window.combinedPluginLoaded) return;
     window.combinedPluginLoaded = true;
+    window.__combinedPluginInitialized = window.__combinedPluginInitialized || false;
+    window.__combinedLogoLoaderInitialized = window.__combinedLogoLoaderInitialized || false;
+    window.__combinedLogoRequestToken = window.__combinedLogoRequestToken || 0;
+    window.__combinedLogoCache = window.__combinedLogoCache || {};
     
     // ===== СТИЛИ (через Lampa.Template) =====
     function injectStyles() {
@@ -77,21 +81,74 @@
                 z-index: 1 !important;
             }
             
-            /* Год (убрано выделение, оставлен только фон) */
+            /* Год */
             .full-start-new__head {
                 background: rgba(0, 0, 0, 0.7) !important;
                 backdrop-filter: blur(5px) !important;
                 -webkit-backdrop-filter: blur(5px) !important;
                 border: none !important;
+                outline: none !important;
+                box-shadow: none !important;
+                text-shadow: none !important;
+                -webkit-text-stroke: 0 !important;
                 border-radius: 6px !important;
                 padding: 0.25em 0.7em !important;
                 position: relative !important;
                 display: inline-block !important;
             }
-            .full-start-new__head::before {
+            .full-start-new__head::before,
+            .full-start-new__head::after {
                 display: none !important;
+                content: none !important;
+                background: none !important;
+                border: none !important;
+                outline: none !important;
+                box-shadow: none !important;
             }
-            
+            /* Логотип проекта без повторного мигания */
+                .combined-logo-container {
+                    display: flex !important;
+                    justify-content: center !important;
+                    align-items: center !important;
+                    width: 100% !important;
+                    min-height: 125px !important;
+                    position: relative !important;
+                }
+                
+                .combined-logo-container img {
+                    max-height: 125px !important;
+                    max-width: 100% !important;
+                    opacity: 1 !important;
+                    filter: none !important;
+                    -webkit-filter: none !important;
+                }
+                
+                /* Полное снятие обводок/теней с года */
+                .full-start-new__head,
+                .full-start-new__head div,
+                .full-start-new__head span {
+                    color: inherit !important;
+                    border: none !important;
+                    outline: none !important;
+                    box-shadow: none !important;
+                    text-shadow: none !important;
+                    -webkit-text-stroke-width: 0 !important;
+                    -webkit-text-stroke-color: transparent !important;
+                    paint-order: normal !important;
+                }
+                
+                .full-start-new__head::before,
+                .full-start-new__head::after,
+                .full-start__head::before,
+                .full-start__head::after {
+                    display: none !important;
+                    content: none !important;
+                    border: none !important;
+                    outline: none !important;
+                    box-shadow: none !important;
+                    background: none !important;
+                }
+                            
             /* Центрирование элементов на мобильных ТОЛЬКО внутри полной карточки */
             @media (max-width: 768px) {
                 .full-start-new .full-start-new__right,
@@ -159,54 +216,130 @@
     
     // ===== ЗАГРУЗКА ЛОГОТИПОВ (ОРИГИНАЛЬНОЕ КАЧЕСТВО, БЕЗ АНАЛИЗА) =====
     function initLogoLoader() {
+        if (window.__combinedLogoLoaderInitialized) return;
+        window.__combinedLogoLoaderInitialized = true;
+    
         Lampa.Listener.follow('full', function(e) {
-            if (e.type === 'complite') {
-                if (!e.object || !e.object.activity) return;
-                
-                const data = e.data.movie;
-                const type = data.name ? 'tv' : 'movie';
-                const id = data.id;
-                
-                if (!id) return;
-                
-                const url = Lampa.TMDB.api(`${type}/${id}/images?api_key=${Lampa.TMDB.key()}&language=${Lampa.Storage.get('language')}`);
-                
-                $.get(url)
-                    .done(function(resp) {
-                        if (resp.logos && resp.logos[0]) {
-                            const logoPath = resp.logos[0].file_path;
-                            // Используем оригинальное качество
-                            const logoUrl = Lampa.TMDB.image('/t/p/original' + logoPath.replace('.svg', '.png'));
-                            
-                            const titleBlock = e.object.activity.render().find('.full-start-new__title');
-                            if (titleBlock.length) {
-                                // Создаём контейнер с фиксированной минимальной высотой и невидимым изображением
-                                titleBlock.empty();
-                                const container = $(`
-                                    <div style="display: flex; justify-content: center; align-items: center; width: 100%; min-height: 125px; position: relative;">
-                                        <img style="max-height: 125px; opacity: 0; transition: opacity 0.2s ease;" />
-                                    </div>
-                                `);
-                                titleBlock.append(container);
-                                
-                                const imgElement = container.find('img')[0];
-                                
-                                // Просто загружаем изображение и показываем его
-                                const img = new Image();
-                                img.src = logoUrl;
-                                
-                                img.onload = function() {
-                                    imgElement.src = logoUrl;
-                                    imgElement.style.opacity = '1';
-                                };
-                                
-                                img.onerror = function() {
-                                    // Если не удалось загрузить, ничего не делаем
-                                };
-                            }
-                        }
-                    });
+            if (!e || e.type !== 'complite') return;
+            if (!e.object || !e.object.activity) return;
+            if (!e.data || !e.data.movie) return;
+    
+            const data = e.data.movie;
+            const type = data.name ? 'tv' : 'movie';
+            const id = data.id;
+    
+            if (!id) return;
+    
+            const activity = e.object.activity;
+            const language = Lampa.Storage.get('language') || '';
+            const requestKey = type + ':' + id + ':' + language;
+            const requestToken = ++window.__combinedLogoRequestToken;
+    
+            function getTitleBlock() {
+                if (!activity || typeof activity.render !== 'function') return $();
+    
+                const render = activity.render();
+                const title = render.find('.full-start-new__title');
+    
+                if (!title.length) return $();
+    
+                return title;
             }
+    
+            function isSameCardStillOpen() {
+                const title = getTitleBlock();
+                if (!title.length) return false;
+    
+                const currentMovie = e.data && e.data.movie;
+                if (!currentMovie || currentMovie.id !== id) return false;
+    
+                return true;
+            }
+    
+            function applyLogo(logoUrl) {
+                if (!logoUrl) return;
+                if (!isSameCardStillOpen()) return;
+    
+                const titleBlock = getTitleBlock();
+                if (!titleBlock.length) return;
+    
+                const currentKey = titleBlock.attr('data-combined-logo-key');
+                const currentUrl = titleBlock.attr('data-combined-logo-url');
+                const currentImg = titleBlock.find('img[data-combined-logo="1"]');
+    
+                // Если этот же логотип уже стоит в текущем DOM, вообще ничего не делаем.
+                if (
+                    currentKey === requestKey &&
+                    currentUrl === logoUrl &&
+                    currentImg.length &&
+                    currentImg.attr('src') === logoUrl
+                ) {
+                    return;
+                }
+    
+                const preload = new Image();
+    
+                preload.onload = function() {
+                    if (requestToken !== window.__combinedLogoRequestToken) return;
+                    if (!isSameCardStillOpen()) return;
+    
+                    const fresh = getTitleBlock();
+                    if (!fresh.length) return;
+    
+                    const freshKey = fresh.attr('data-combined-logo-key');
+                    const freshUrl = fresh.attr('data-combined-logo-url');
+                    const freshImg = fresh.find('img[data-combined-logo="1"]');
+    
+                    // Повторная защита уже после загрузки.
+                    if (
+                        freshKey === requestKey &&
+                        freshUrl === logoUrl &&
+                        freshImg.length &&
+                        freshImg.attr('src') === logoUrl
+                    ) {
+                        return;
+                    }
+    
+                    // Важный момент: не делаем fade/opacity. Просто ставим уже загруженную картинку.
+                    fresh.html(
+                        '<div class="combined-logo-container">' +
+                            '<img data-combined-logo="1" src="' + logoUrl + '" />' +
+                        '</div>'
+                    );
+    
+                    fresh.attr('data-combined-logo-key', requestKey);
+                    fresh.attr('data-combined-logo-url', logoUrl);
+                };
+    
+                preload.onerror = function() {
+                    // Не очищаем текстовый заголовок.
+                };
+    
+                preload.src = logoUrl;
+            }
+    
+            if (window.__combinedLogoCache[requestKey]) {
+                applyLogo(window.__combinedLogoCache[requestKey]);
+                return;
+            }
+    
+            const url = Lampa.TMDB.api(
+                type + '/' + id + '/images?api_key=' + Lampa.TMDB.key() + '&language=' + language
+            );
+    
+            $.get(url)
+                .done(function(resp) {
+                    if (requestToken !== window.__combinedLogoRequestToken) return;
+                    if (!isSameCardStillOpen()) return;
+                    if (!resp || !resp.logos || !resp.logos[0] || !resp.logos[0].file_path) return;
+    
+                    const logoPath = resp.logos[0].file_path;
+                    const logoUrl = Lampa.TMDB.image('/t/p/original' + logoPath.replace('.svg', '.png'));
+    
+                    window.__combinedLogoCache[requestKey] = logoUrl;
+    
+                    applyLogo(logoUrl);
+                });
         });
     }
     
@@ -288,6 +421,9 @@
     
     // ===== ИНИЦИАЛИЗАЦИЯ =====
     function init() {
+        if (window.__combinedPluginInitialized) return;
+        window.__combinedPluginInitialized = true;
+    
         injectStyles();
         overrideTemplate();
         initBlurFix();
