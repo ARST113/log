@@ -6,25 +6,15 @@
     window.__DDD_DIAGNOSTIC_DEBUGER_LOADER__ = true;
 
     var PLUGIN_NAME = 'DDD Diagnostic Wrapper';
-    var PLUGIN_VERSION = 'diag-20260507-1';
-    var CORE_URL = 'https://arst113.github.io/log/ContinueWatching.js?v=diag-20260507-1';
+    var PLUGIN_VERSION = 'diag-ja-canonical-20260507-1';
+    var CORE_URL = 'https://arst113.github.io/log/ContinueWatching.js?v=diag-ja-canonical-20260507-1';
     var NOTY_MIN_INTERVAL = 350;
     var lastNoty = '';
     var lastNotyAt = 0;
+    var movieContext = {};
 
     function now() {
         return Date.now ? Date.now() : new Date().getTime();
-    }
-
-    function safeJson(value, maxLen) {
-        var out = '';
-        try {
-            out = JSON.stringify(value);
-        } catch (e) {
-            out = String(value);
-        }
-        if (maxLen && out.length > maxLen) return out.substring(0, maxLen) + '…';
-        return out;
     }
 
     function compact(value, maxLen) {
@@ -59,6 +49,10 @@
         noty('WARN ' + message, true);
     }
 
+    function safeDecode(value) {
+        try { return decodeURIComponent(value); } catch (e) { return value; }
+    }
+
     function isDddStorageKey(key) {
         return typeof key === 'string' && (
             key.indexOf('continue_watch_params') === 0 ||
@@ -79,8 +73,242 @@
         };
     }
 
-    function safeDecode(value) {
-        try { return decodeURIComponent(value); } catch (e) { return value; }
+    function getFileIndexFromUrl(url) {
+        var parsed = parseStreamUrl(url || '');
+        return parsed ? toInt(parsed.file_index) : 0;
+    }
+
+    function getHash(value) {
+        try {
+            if (value && window.Lampa && Lampa.Utils && Lampa.Utils.hash) return String(Lampa.Utils.hash(String(value)));
+        } catch (e) {}
+        return '';
+    }
+
+    function getRecordMovieKey(record) {
+        record = record || {};
+        if (record.movie_key) return String(record.movie_key);
+        if (record.movie_id) return 'id:' + String(record.movie_id);
+        var title = record.original_title || record.original_name || record.title || record.name || '';
+        var hash = getHash(title);
+        return hash ? 'title:' + hash : '';
+    }
+
+    function rememberContext(obj, source) {
+        if (!obj || typeof obj !== 'object') return;
+
+        var card = obj.card || obj.movie || obj.data || obj;
+        var lang = card.original_language || card.originalLanguage || obj.original_language || obj.originalLanguage || '';
+        var id = card.id || card.movie_id || obj.movie_id || '';
+        var title = card.original_name || card.original_title || card.name || card.title || obj.original_title || obj.title || '';
+        var key = '';
+
+        if (id) key = 'id:' + String(id);
+        else {
+            var titleHash = getHash(title);
+            if (titleHash) key = 'title:' + titleHash;
+        }
+
+        if (!key && obj.movie_key) key = String(obj.movie_key);
+        if (!key) return;
+
+        movieContext[key] = {
+            lang: String(lang || '').toLowerCase(),
+            title: title || '',
+            source: source || '',
+            ts: now()
+        };
+
+        if (id) movieContext['id:' + String(id)] = movieContext[key];
+        if (title) {
+            var h = getHash(title);
+            if (h) movieContext['title:' + h] = movieContext[key];
+        }
+    }
+
+    function getRecordLanguage(record) {
+        record = record || {};
+        var lang = record.original_language || record.originalLanguage || record.language || '';
+        if (lang) return String(lang).toLowerCase();
+
+        var key = getRecordMovieKey(record);
+        if (key && movieContext[key] && movieContext[key].lang) return movieContext[key].lang;
+
+        return '';
+    }
+
+    function parseSeasonEpisodeFromFileName(fileName) {
+        fileName = String(fileName || '');
+        var m;
+
+        m = fileName.match(/\bS\s*0?(\d{1,2})\s*[-_. ]+\s*0?(\d{1,3})\b/i);
+        if (m) return { season: parseInt(m[1], 10) || 0, episode: parseInt(m[2], 10) || 0, source: 'file_name_s_dash_e' };
+
+        m = fileName.match(/\bS\s*0?(\d{1,2})\s*E\s*0?(\d{1,3})\b/i);
+        if (m) return { season: parseInt(m[1], 10) || 0, episode: parseInt(m[2], 10) || 0, source: 'file_name_sxe' };
+
+        m = fileName.match(/\b0?(\d{1,2})\s*[xх×]\s*0?(\d{1,3})\b/i);
+        if (m) return { season: parseInt(m[1], 10) || 0, episode: parseInt(m[2], 10) || 0, source: 'file_name_1x02' };
+
+        m = fileName.match(/season\s*0?(\d{1,2}).*?(?:episode|ep\.?)\s*0?(\d{1,3})/i);
+        if (m) return { season: parseInt(m[1], 10) || 0, episode: parseInt(m[2], 10) || 0, source: 'file_name_season_episode' };
+
+        m = fileName.match(/(?:эпизод|сер(?:ия|ии|и)?|episode|ep\.?|сер\.)\s*[-–—:]?\s*0?(\d{1,4})/i);
+        if (m) return { season: 0, episode: parseInt(m[1], 10) || 0, source: 'file_name_episode_text' };
+
+        return { season: 0, episode: 0, source: '' };
+    }
+
+    function isJapaneseAnimeDddCase(record) {
+        record = record || {};
+
+        var lang = getRecordLanguage(record);
+        if (lang !== 'ja') return false;
+
+        var playlist = Array.isArray(record.playlist) ? record.playlist : [];
+        var playlistSize = playlist.length || toInt(record.playlistSize || record.playlist_size);
+        if (playlistSize <= 1) return false;
+
+        var pi = toInt(record.playlist_index);
+        var item = playlist[pi] || {};
+        var fileName = String(record.file_name || item.file_name || item.title || item.name || record.episode_title || '');
+        var url = String(record.url || record.uri || item.url || '');
+        var hasDddFileIdentity = !!fileName || /[?&]index=\d+/i.test(url) || record.file_index !== undefined;
+
+        return hasDddFileIdentity;
+    }
+
+    function canonicalizeJapaneseAnimeDddRecord(record, hash) {
+        if (!record || typeof record !== 'object') return false;
+        if (!isJapaneseAnimeDddCase(record)) return false;
+
+        var playlist = Array.isArray(record.playlist) ? record.playlist : [];
+        var oldSeason = toInt(record.season);
+        var oldEpisode = toInt(record.episode);
+        var oldPi = toInt(record.playlist_index);
+        var pi = oldPi;
+
+        if (!isFinite(pi) || pi < 0) pi = toInt(record.ddd_start_index);
+        if (!isFinite(pi) || pi < 0) pi = toInt(record.start_index);
+        if (!isFinite(pi) || pi < 0) pi = 0;
+
+        var item = playlist[pi] || {};
+        var fileName = record.file_name || item.file_name || item.title || item.name || record.episode_title || '';
+        var url = record.url || record.uri || item.url || '';
+        var fileIndex = toInt(record.file_index) || getFileIndexFromUrl(url) || toInt(item.file_index) || getFileIndexFromUrl(item.url || '');
+        var fromFile = parseSeasonEpisodeFromFileName(fileName);
+
+        var itemSeason = toInt(item.season) || toInt(item.season_number) || toInt(item.seasonNumber);
+        var itemEpisode = toInt(item.episode) || toInt(item.episode_number) || toInt(item.episodeNumber) || toInt(item.number) || toInt(item.num);
+
+        var season = oldSeason;
+        var episode = oldEpisode;
+        var source = 'old_record';
+
+        if (fromFile.season && fromFile.episode) {
+            season = fromFile.season;
+            episode = fromFile.episode;
+            source = fromFile.source;
+        } else if (fromFile.episode) {
+            season = oldSeason || itemSeason || 1;
+            episode = fromFile.episode;
+            source = fromFile.source;
+        } else if (fileIndex > 0) {
+            season = oldSeason || itemSeason || 1;
+            episode = fileIndex;
+            source = 'url_file_index';
+        } else if (itemSeason && itemEpisode) {
+            season = itemSeason;
+            episode = itemEpisode;
+            source = 'playlist_item';
+        } else if (pi >= 0) {
+            season = oldSeason || itemSeason || 1;
+            episode = pi + 1;
+            source = 'playlist_index_plus_one';
+        }
+
+        if (episode && !season) season = 1;
+
+        var expectedPi = pi;
+        if (episode > 0 && playlist.length >= episode) expectedPi = episode - 1;
+        else if (fileIndex > 0 && playlist.length >= fileIndex) expectedPi = fileIndex - 1;
+
+        var changed = false;
+        if (season && toInt(record.season) !== season) { record.season = season; changed = true; }
+        if (episode && toInt(record.episode) !== episode) { record.episode = episode; changed = true; }
+        if (fileIndex && toInt(record.file_index) !== fileIndex) { record.file_index = fileIndex; changed = true; }
+        if (expectedPi >= 0 && toInt(record.playlist_index) !== expectedPi) { record.playlist_index = expectedPi; changed = true; }
+
+        if (!record.episode_title) {
+            record.episode_title = item.episode_title || item.title || item.name || fileName || '';
+            if (record.episode_title) changed = true;
+        }
+
+        if (record.source !== 'ddd') {
+            record.source = 'ddd';
+            changed = true;
+        }
+
+        if (record.ddd_canonical_source !== source) {
+            record.ddd_canonical_source = source;
+            changed = true;
+        }
+
+        if (changed || oldSeason !== season || oldEpisode !== episode || oldPi !== expectedPi) {
+            noty(
+                'anime canonical old=S' + oldSeason + 'E' + oldEpisode +
+                ' new=S' + (record.season || 0) + 'E' + (record.episode || 0) +
+                ' src=' + source +
+                ' fi=' + compact(record.file_index) +
+                ' pi=' + compact(record.playlist_index) +
+                ' start=' + compact(record.playlist_index) +
+                ' hash=' + compact(hash, 8),
+                true
+            );
+            try { console.log('[DDD DBG anime canonical]', hash, record, { oldSeason: oldSeason, oldEpisode: oldEpisode, oldPi: oldPi, source: source, fileName: fileName, url: url }); } catch (e) {}
+        }
+
+        return changed;
+    }
+
+    function refreshLastPointerForRecord(map, hash, record) {
+        if (!map || !hash || !record || !record.season || !record.episode) return false;
+        var movieKey = getRecordMovieKey(record);
+        if (!movieKey) return false;
+
+        if (!map.__last_by_movie) map.__last_by_movie = {};
+
+        var pointer = map.__last_by_movie[movieKey] || {};
+        var changed = pointer.hash !== hash || toInt(pointer.season) !== toInt(record.season) || toInt(pointer.episode) !== toInt(record.episode);
+
+        map.__last_by_movie[movieKey] = {
+            hash: hash,
+            season: toInt(record.season),
+            episode: toInt(record.episode),
+            timestamp: toInt(record.timestamp) || now()
+        };
+
+        return changed;
+    }
+
+    function canonicalizeJapaneseAnimeStorageMap(map) {
+        if (!map || typeof map !== 'object') return false;
+
+        var changed = false;
+        Object.keys(map).forEach(function (hash) {
+            if (hash === '__last_by_movie') return;
+            var record = map[hash];
+            if (!record || typeof record !== 'object') return;
+
+            rememberContext(record, 'storage-record');
+
+            if (canonicalizeJapaneseAnimeDddRecord(record, hash)) {
+                changed = true;
+                if (refreshLastPointerForRecord(map, hash, record)) changed = true;
+            }
+        });
+
+        return changed;
     }
 
     function summarizeRecord(record) {
@@ -136,12 +364,15 @@
         if (typeof key !== 'string') return;
 
         if (key.indexOf('continue_watch_ddd_session') === 0) {
+            rememberContext(value, 'session');
             noty('session set key=' + key + ' sid=' + compact(value && value.sid, 10) + ' start=' + compact(value && value.start_index) + ' meta=' + (value && value.meta && value.meta.length || value && value.playlist && value.playlist.length || 0), true);
             try { console.log('[DDD DBG session set full]', key, value); } catch (e) {}
             return;
         }
 
         if (key.indexOf('continue_watch_params') !== 0) return;
+
+        canonicalizeJapaneseAnimeStorageMap(value);
 
         var latest = getLatestRecordInfo(value);
         var latestText = latest ? ('latestHash=' + compact(latest.hash, 10) + ' ' + summarizeRecord(latest.record)) : 'latest=none';
@@ -170,6 +401,8 @@
 
     function inspectPlayerParams(params) {
         if (!params || typeof params !== 'object') return;
+        rememberContext(params, 'player');
+
         var playlist = Array.isArray(params.playlist) ? params.playlist : [];
         var pi = toInt(params.playlist_index || params.ddd_start_index || params.start_index || params.playlistIndex || 0);
         var item = playlist[pi] || null;
@@ -183,6 +416,7 @@
             'iS=' + compact(item && (item.season || item.season_number || item.seasonNumber || 0)),
             'iE=' + compact(item && (item.episode || item.episode_number || item.episodeNumber || item.number || 0)),
             'fi=' + compact(parsed && parsed.file_index),
+            'lang=' + compact(getRecordLanguage(params) || '-'),
             'it=' + compact(item && (item.title || item.name || item.episode_title || ''), 18)
         ].join(' ');
 
@@ -365,7 +599,10 @@
         version: PLUGIN_VERSION,
         inspectStorageSet: inspectStorageSet,
         inspectStorageGet: inspectStorageGet,
-        inspectPlayerParams: inspectPlayerParams
+        inspectPlayerParams: inspectPlayerParams,
+        canonicalizeJapaneseAnimeStorageMap: canonicalizeJapaneseAnimeStorageMap,
+        canonicalizeJapaneseAnimeDddRecord: canonicalizeJapaneseAnimeDddRecord,
+        movieContext: movieContext
     };
 
     installPatchesLoop();
