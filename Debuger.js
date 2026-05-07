@@ -2,2012 +2,2440 @@
     'use strict';
 
     if (!window.Lampa) return;
-    if (window.__DDD_DIAGNOSTIC_DEBUGER_LOADER__) return;
-    window.__DDD_DIAGNOSTIC_DEBUGER_LOADER__ = true;
+    if (window.__CONTINUE_WATCH_DDD_LAYER_V3__) return;
+    window.__CONTINUE_WATCH_DDD_LAYER_V3__ = true;
 
-    var PLUGIN_NAME = 'DDD Diagnostic Wrapper';
-    var PLUGIN_VERSION = 'diag-ja-bridge-canonical-20260507-2';
-
-    /*
-     * Важно:
-     * Debuger.js остаётся диагностическим wrapper'ом.
-     * Основной ContinueWatching.js не переписываем.
+    /**
+     * ContinueWatch + DDD Local Bridge
+     *
+     * Цель:
+     * - использовать штатные механизмы Lampa: Player, Timeline, playlist;
+     * - не конкурировать с системой истории Lampa;
+     * - сохранять только минимальные stream-параметры для повторного запуска TorrServer stream;
+     * - не привязывать сохранённые записи к старому TorrServer host;
+     * - дать диагностику через Lampa.Noty.show для Android.
      */
-    var CORE_URL = 'https://arst113.github.io/log/ContinueWatching.js?v=diag-ja-bridge-canonical-20260507-2';
 
-    /*
-     * Главная защита:
-     * canonical-save включён только для японского anime case.
+    var PLUGIN_NAME = 'ContinueWatchDDD';
+    var PLUGIN_VERSION = 'v3.0.0-fixed';
+/**
+ * Диагностика.
+ *
+ * Сейчас выключено.
+ * Для включения логов, Noty.show и кнопки DDD статус
+ * раскомментируй одну строку ниже.
+ */
+var DDD_DEBUG = false;
+// DDD_DEBUG = true;
+    
+    var CONFIG = {
+        storageBaseKey: 'continue_watch_params',
+        sessionStorageKey: 'continue_watch_ddd_session',
+
+        cleanupAgeMs: 60 * 24 * 60 * 60 * 1000,
+        debounceDelayMs: 1000,
+
+        dddEnabled: true,
+        dddHost: 'http://127.0.0.1',
+        dddPort: 39677,
+        dddClient: 'lampa',
+
+        dddPollIntervalMs: 4000,
+        dddFetchTimeoutMs: 2500,
+        dddTimelineSaveIntervalMs: 5000,
+
+        minSaveSeconds: 8,
+        minDurationSeconds: 60,
+        finishPercent: 90,
+
+    /**
+     * Консоль оставлена для браузера / desktop / WebView debug.
      */
-    var JA_CANONICAL_ENABLED = true;
-
-    /*
-     * true — писать исправленную запись в continue_watch_params.
-     * false — только логировать расчёт.
+    debugConsole: DDD_DEBUG,
+    
+    /**
+     * Android-диагностика через Lampa.Noty.show.
      */
-    var JA_CANONICAL_WRITE_ENABLED = true;
-
-    /*
-     * true — показывать огромный bridge body в Noty.
-     * Сейчас лучше false, иначе Noty забивает весь экран.
-     * Полный body всё равно пишется в console.
+    debugNoty: DDD_DEBUG,
+    
+    /**
+     * 0 — только критические ошибки;
+     * 1 — загрузка, запуск, восстановление;
+     * 2 — сохранение, playlist, DDD attach;
+     * 3 — подробные polling/timeline события.
      */
-    var SHOW_BRIDGE_BODY_IN_NOTY = false;
-
-    var NOTY_MIN_INTERVAL = 350;
-
-    var state = {
-        activeSession: null,
-        activeSessionKey: '',
-        activeMovie: null,
-        activeParamsStorageKey: '',
-        lastNoty: '',
-        lastNotyAt: 0,
-        suppressStoragePatch: false,
-        movieContext: {},
-        lastBridgeCanonicalAt: 0,
-        lastBridgeCanonicalKey: ''
-    };
-
-    // ============================================================
-    // Basic utils
-    // ============================================================
-
-    function now() {
-        return Date.now ? Date.now() : new Date().getTime();
-    }
-
-    function compact(value, maxLen) {
-        if (value === undefined) return '-';
-        if (value === null) return 'null';
-
-        var s;
-
-        try {
-            if (typeof value === 'object') s = JSON.stringify(value);
-            else s = String(value);
-        } catch (e) {
-            s = String(value);
-        }
-
-        if (maxLen && s.length > maxLen) return s.substring(0, maxLen) + '…';
-
-        return s;
-    }
-
-    function toInt(value) {
-        var n = Number(value || 0);
-        return isFinite(n) ? Math.floor(n) : 0;
-    }
-
-    function toNumber(value) {
-        var n = Number(value || 0);
-        return isFinite(n) ? n : 0;
-    }
-
-    function hasValue(value) {
-        return value !== undefined && value !== null && value !== '';
-    }
-
-    function hasNumber(value) {
-        return value !== undefined && value !== null && value !== '' && isFinite(Number(value));
-    }
-
-    function safeJson(value) {
-        try {
-            return JSON.stringify(value);
-        } catch (e) {
-            return '';
-        }
-    }
-
-    function safeParseJson(text) {
-        if (!text || typeof text !== 'string') return null;
-
-        try {
-            return JSON.parse(text);
-        } catch (e) {}
-
-        return null;
-    }
-
-    function safeDecode(value) {
-        value = String(value || '');
-
-        try {
-            return decodeURIComponent(value);
-        } catch (e) {
-            return value;
-        }
-    }
-
-    function stripFragment(url) {
-        url = String(url || '');
-
-        var p = url.indexOf('#');
-        return p >= 0 ? url.substring(0, p) : url;
-    }
-
-    function normalizeText(value) {
-        return String(value || '')
-            .toLowerCase()
-            .replace(/\s+/g, ' ')
-            .replace(/[_]+/g, ' ')
-            .trim();
-    }
-
-    function normalizeFileName(value) {
-        return safeDecode(value || '')
-            .replace(/\+/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-    }
-
-    function noty(message, force) {
-        message = '[DDD DBG] ' + String(message || '');
-
-        try {
-            console.log(message);
-        } catch (e) {}
-
-        var t = now();
-
-        if (!force && message === state.lastNoty && t - state.lastNotyAt < NOTY_MIN_INTERVAL) {
-            return;
-        }
-
-        state.lastNoty = message;
-        state.lastNotyAt = t;
-
-        try {
-            if (window.Lampa && Lampa.Noty && Lampa.Noty.show) {
-                Lampa.Noty.show(message);
-            }
-        } catch (e) {}
-    }
-
-    function warn(message, data, silentAbort) {
-        try {
-            console.warn('[DDD DBG]', message, data || '');
-        } catch (e) {}
-
-        if (silentAbort) return;
-
-        noty('WARN ' + message, true);
-    }
-
-    function isAbortError(error) {
-        if (!error) return false;
-
-        var name = String(error.name || '');
-        var message = String(error.message || error || '');
-
-        return name === 'AbortError' || message.indexOf('aborted') !== -1;
-    }
-
-    // ============================================================
-    // Lampa / storage keys
-    // ============================================================
-
-    function getProfileId() {
-        try {
-            if (
-                window.Lampa &&
-                Lampa.Account &&
-                Lampa.Account.Permit &&
-                Lampa.Account.Permit.sync &&
-                Lampa.Account.Permit.account &&
-                Lampa.Account.Permit.account.profile &&
-                Lampa.Account.Permit.account.profile.id !== undefined
-            ) {
-                return Lampa.Account.Permit.account.profile.id;
-            }
-        } catch (e) {}
-
-        return null;
-    }
-
-    function getParamsStorageKey() {
-        var profileId = getProfileId();
-
-        if (profileId !== null && profileId !== undefined) {
-            return 'continue_watch_params_' + profileId;
-        }
-
-        return 'continue_watch_params';
-    }
-
-    function getSessionStorageKey() {
-        var profileId = getProfileId();
-
-        if (profileId !== null && profileId !== undefined) {
-            return 'continue_watch_ddd_session_' + profileId;
-        }
-
-        return 'continue_watch_ddd_session';
-    }
-
-    function isDddStorageKey(key) {
-        return typeof key === 'string' && (
-            key.indexOf('continue_watch_params') === 0 ||
-            key.indexOf('continue_watch_ddd_session') === 0
-        );
-    }
-
-    function isParamsStorageKey(key) {
-        return typeof key === 'string' && key.indexOf('continue_watch_params') === 0;
-    }
-
-    function isSessionStorageKey(key) {
-        return typeof key === 'string' && key.indexOf('continue_watch_ddd_session') === 0;
-    }
-
-    function readStorage(key, fallback) {
-        try {
-            var value = Lampa.Storage.get(key);
-            return value || fallback;
-        } catch (e) {
-            return fallback;
-        }
-    }
-
-    function writeStorage(key, value) {
-        try {
-            state.suppressStoragePatch = true;
-            Lampa.Storage.set(key, value);
-            state.suppressStoragePatch = false;
-            return true;
-        } catch (e) {
-            state.suppressStoragePatch = false;
-            warn('storage write failed ' + key, e);
-            return false;
-        }
-    }
-
-    function syncStorage(key) {
-        try {
-            if (Lampa.Storage && Lampa.Storage.sync) {
-                Lampa.Storage.sync(key, 'object_object');
-            }
-        } catch (e) {}
-    }
-
-    // ============================================================
-    // Stream URL parsing
-    // ============================================================
-
-    function parseStreamUrl(url) {
-        url = stripFragment(String(url || ''));
-
-        if (!url) return null;
-
-        var fileMatch = url.match(/\/stream\/([^?]+)/);
-        var linkMatch = url.match(/[?&]link=([^&#]+)/);
-        var indexMatch = url.match(/[?&]index=(\d+)/);
-
-        if (!fileMatch && !indexMatch) return null;
-
-        return {
-            url: url,
-            file_name: fileMatch ? normalizeFileName(fileMatch[1]) : '',
-            torrent_link: linkMatch ? safeDecode(linkMatch[1]) : '',
-            file_index: indexMatch ? parseInt(indexMatch[1], 10) : 0
-        };
-    }
-
-    function parseStreamIdentityFromObject(obj) {
-        obj = obj || {};
-
-        var url = obj.url || obj.uri || obj.stream || '';
-        var parsed = parseStreamUrl(url);
-
-        if (parsed) {
-            if (!parsed.file_name && obj.file_name) parsed.file_name = normalizeFileName(obj.file_name);
-            if (!parsed.torrent_link && obj.torrent_link) parsed.torrent_link = String(obj.torrent_link || '');
-            if (!parsed.file_index && hasNumber(obj.file_index)) parsed.file_index = toInt(obj.file_index);
-            return parsed;
-        }
-
-        if (obj.file_name || obj.torrent_link || hasNumber(obj.file_index)) {
-            return {
-                url: '',
-                file_name: normalizeFileName(obj.file_name || obj.title || obj.name || ''),
-                torrent_link: String(obj.torrent_link || ''),
-                file_index: hasNumber(obj.file_index) ? toInt(obj.file_index) : 0
-            };
-        }
-
-        return null;
-    }
-
-    function streamIdentityKey(identity) {
-        if (!identity) return '';
-
-        return [
-            String(identity.torrent_link || ''),
-            String(identity.file_index || 0),
-            normalizeFileName(identity.file_name || '')
-        ].join('|');
-    }
-
-    function streamIdentitySoftKey(identity) {
-        if (!identity) return '';
-
-        return [
-            String(identity.torrent_link || ''),
-            normalizeFileName(identity.file_name || '')
-        ].join('|');
-    }
-
-    function sameStreamIdentity(a, b) {
-        if (!a || !b) return false;
-
-        var aFile = normalizeFileName(a.file_name || '');
-        var bFile = normalizeFileName(b.file_name || '');
-
-        if (
-            a.torrent_link &&
-            b.torrent_link &&
-            String(a.torrent_link) === String(b.torrent_link) &&
-            hasNumber(a.file_index) &&
-            hasNumber(b.file_index) &&
-            toInt(a.file_index) === toInt(b.file_index)
-        ) {
-            return true;
-        }
-
-        if (
-            a.torrent_link &&
-            b.torrent_link &&
-            String(a.torrent_link) === String(b.torrent_link) &&
-            aFile &&
-            bFile &&
-            aFile === bFile
-        ) {
-            return true;
-        }
-
-        if (aFile && bFile && aFile === bFile) {
-            return true;
-        }
-
-        return false;
-    }
-
-    // ============================================================
-    // Season / episode parsing
-    // ============================================================
-
-    function parseSeasonEpisodeFromFileName(fileName) {
-        fileName = normalizeFileName(fileName || '');
-
-        var m;
-
-        /*
-         * Главный случай:
-         * [SubsPlus+] Oshi No Ko S2 - 10 [WEB-DL ...].mkv
-         */
-        m = fileName.match(/\bS\s*0?(\d{1,2})\s*[-_. ]+\s*0?(\d{1,3})\b/i);
-        if (m) {
-            return {
-                season: parseInt(m[1], 10) || 0,
-                episode: parseInt(m[2], 10) || 0,
-                source: 'file_name_s_dash_e'
-            };
-        }
-
-        /*
-         * S2E10 / S02E010
-         */
-        m = fileName.match(/\bS\s*0?(\d{1,2})\s*E\s*0?(\d{1,3})\b/i);
-        if (m) {
-            return {
-                season: parseInt(m[1], 10) || 0,
-                episode: parseInt(m[2], 10) || 0,
-                source: 'file_name_sxe'
-            };
-        }
-
-        /*
-         * 2x10 / 2х10 / 2×10
-         */
-        m = fileName.match(/\b0?(\d{1,2})\s*[xх×]\s*0?(\d{1,3})\b/i);
-        if (m) {
-            return {
-                season: parseInt(m[1], 10) || 0,
-                episode: parseInt(m[2], 10) || 0,
-                source: 'file_name_1x02'
-            };
-        }
-
-        /*
-         * Season 2 Episode 10
-         */
-        m = fileName.match(/season\s*0?(\d{1,2}).*?(?:episode|ep\.?)\s*0?(\d{1,3})/i);
-        if (m) {
-            return {
-                season: parseInt(m[1], 10) || 0,
-                episode: parseInt(m[2], 10) || 0,
-                source: 'file_name_season_episode'
-            };
-        }
-
-        /*
-         * 2 сезон 10 серия
-         */
-        m = fileName.match(/0?(\d{1,2})\s*сезон.*?0?(\d{1,3})\s*сер/i);
-        if (m) {
-            return {
-                season: parseInt(m[1], 10) || 0,
-                episode: parseInt(m[2], 10) || 0,
-                source: 'file_name_ru_season_episode'
-            };
-        }
-
-        /*
-         * Эпизод 10 / Episode 10 / Серия 10.
-         * Сезон здесь неизвестен, его можно брать только из movie/session/item.
-         */
-        m = fileName.match(/(?:эпизод|сер(?:ия|ии|и)?|episode|ep\.?|сер\.)\s*[-–—:]?\s*0?(\d{1,4})/i);
-        if (m) {
-            return {
-                season: 0,
-                episode: parseInt(m[1], 10) || 0,
-                source: 'file_name_episode_text'
-            };
-        }
-
-        return {
-            season: 0,
-            episode: 0,
-            source: ''
-        };
-    }
-
-    function getItemSeasonEpisode(item) {
-        item = item || {};
-
-        var season = toInt(
-            item.season ||
-            item.season_number ||
-            item.seasonNumber ||
-            item.s ||
-            0
-        );
-
-        var episode = toInt(
-            item.episode ||
-            item.episode_number ||
-            item.episodeNumber ||
-            item.number ||
-            item.num ||
-            item.e ||
-            0
-        );
-
-        if (season && episode) {
-            return {
-                season: season,
-                episode: episode,
-                source: 'playlist_item_fields'
-            };
-        }
-
-        var identity = parseStreamIdentityFromObject(item);
-        var fileName = identity && identity.file_name
-            ? identity.file_name
-            : (item.file_name || item.title || item.name || item.episode_title || '');
-
-        var parsed = parseSeasonEpisodeFromFileName(fileName);
-
-        if (parsed.season || parsed.episode) return parsed;
-
-        return {
-            season: 0,
-            episode: 0,
-            source: ''
-        };
-    }
-
-    // ============================================================
-    // Movie / language context
-    // ============================================================
-
-    function getHash(value) {
-        try {
-            if (value && window.Lampa && Lampa.Utils && Lampa.Utils.hash) {
-                return String(Lampa.Utils.hash(String(value)));
-            }
-        } catch (e) {}
-
-        return '';
-    }
-
-    function getMovieTitle(movie) {
-        movie = movie || {};
-
-        return (
-            movie.original_name ||
-            movie.original_title ||
-            movie.name ||
-            movie.title ||
-            movie.originalName ||
-            movie.originalTitle ||
-            ''
-        );
-    }
-
-    function getMovieId(movie) {
-        movie = movie || {};
-
-        return movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId || '';
-    }
-
-    function getMovieKey(movie) {
-        movie = movie || {};
-
-        if (movie.movie_key) return String(movie.movie_key);
-
-        var id = getMovieId(movie);
-        if (id) return 'id:' + String(id);
-
-        var title = getMovieTitle(movie);
-        var hash = getHash(title);
-
-        return hash ? 'title:' + hash : '';
-    }
-
-    function getRecordMovieKey(record) {
-        record = record || {};
-
-        if (record.movie_key) return String(record.movie_key);
-
-        if (record.movie_id) return 'id:' + String(record.movie_id);
-
-        var title = (
-            record.original_title ||
-            record.original_name ||
-            record.title ||
-            record.name ||
-            ''
-        );
-
-        var hash = getHash(title);
-
-        return hash ? 'title:' + hash : '';
-    }
-
-    function getOriginalLanguage(obj) {
-        obj = obj || {};
-
-        var card = obj.card || obj.movie || obj.data || obj;
-
-        var lang = (
-            obj.original_language ||
-            obj.originalLanguage ||
-            obj.language ||
-            card.original_language ||
-            card.originalLanguage ||
-            card.language ||
-            ''
-        );
-
-        return String(lang || '').toLowerCase();
-    }
-
-    function rememberMovieContext(obj, source) {
-        if (!obj || typeof obj !== 'object') return;
-
-        var movie = obj.movie || obj.card || obj.data || obj;
-        var lang = getOriginalLanguage(movie);
-        var key = getMovieKey(movie);
-        var title = getMovieTitle(movie);
-
-        if (!key && !title) return;
-
-        var context = {
-            movie: movie,
-            lang: lang,
-            title: title,
-            source: source || '',
-            ts: now()
+    debugNotyLevel: DDD_DEBUG ? 2 : 0,
+    
+    /**
+     * Защита от спама одинаковыми уведомлениями.
+     */
+    debugNotyMinIntervalMs: 1500,
+    
+    /**
+     * Успешные polling-события лучше держать false.
+     * Иначе уведомления будут каждые несколько секунд.
+     */
+    debugNotyPollSuccess: false,
+    
+    /**
+     * Ошибки polling показывать только при ручном probe/focus/destroy
+     * или при debugNotyLevel >= 3.
+     */
+    debugNotyPollFail: DDD_DEBUG,
+    
+    /**
+     * Временная диагностическая кнопка на карточке.
+     */
+    debugStatusButton: DDD_DEBUG,
+    
+            /**
+             * true:
+             * DDD-слой добавляется только для внешнего torrent-плеера.
+             *
+             * false:
+             * DDD-слой добавляется всегда, если URL похож на TorrServer stream.
+             */
+            onlyExternalTorrentPlayer: true
         };
 
-        if (key) state.movieContext[key] = context;
-
-        var id = getMovieId(movie);
-        if (id) state.movieContext['id:' + String(id)] = context;
-
-        if (title) {
-            var h = getHash(title);
-            if (h) state.movieContext['title:' + h] = context;
-        }
-
-        if (lang === 'ja') {
-            state.activeMovie = movie;
-        } else if (!state.activeMovie && title) {
-            state.activeMovie = movie;
-        }
-    }
-
-    function getActiveMovie() {
-        if (state.activeSession && state.activeSession.movie) {
-            return state.activeSession.movie;
-        }
-
-        if (state.activeMovie) return state.activeMovie;
-
-        return null;
-    }
-
-    function getRecordLanguage(record) {
-        record = record || {};
-
-        var lang = getOriginalLanguage(record);
-        if (lang) return lang;
-
-        var movie = getActiveMovie();
-        lang = getOriginalLanguage(movie);
-        if (lang) return lang;
-
-        var key = getRecordMovieKey(record);
-
-        if (key && state.movieContext[key] && state.movieContext[key].lang) {
-            return state.movieContext[key].lang;
-        }
-
-        return '';
-    }
-
-    function isJapaneseAnimeContext(record, payload) {
-        if (!JA_CANONICAL_ENABLED) return false;
-
-        var lang = '';
-
-        if (record) lang = getRecordLanguage(record);
-        if (!lang && payload) lang = getOriginalLanguage(payload);
-
-        var movie = getActiveMovie();
-        if (!lang && movie) lang = getOriginalLanguage(movie);
-
-        return String(lang || '').toLowerCase() === 'ja';
-    }
-
     // ============================================================
-    // Playlist / session helpers
+    // Utils
     // ============================================================
 
-    function normalizePlaylist(list) {
-        if (!Array.isArray(list)) return [];
+    var Utils = (function () {
+        var lastNotyMessage = '';
+        var lastNotyTime = 0;
 
-        var out = [];
-
-        for (var i = 0; i < list.length; i++) {
-            var item = list[i];
-
-            if (!item || typeof item !== 'object') continue;
-
-            var copy = {};
-
-            Object.keys(item).forEach(function (key) {
-                copy[key] = item[key];
-            });
-
-            var identity = parseStreamIdentityFromObject(copy);
-
-            if (identity) {
-                copy.file_name = identity.file_name || copy.file_name || '';
-                copy.torrent_link = identity.torrent_link || copy.torrent_link || '';
-                copy.file_index = hasNumber(identity.file_index) ? toInt(identity.file_index) : toInt(copy.file_index);
-            }
-
-            if (!copy.title && copy.name) copy.title = copy.name;
-            if (!copy.episode_title && copy.title) copy.episode_title = copy.title;
-
-            out.push(copy);
+        function now() {
+            return Date.now ? Date.now() : new Date().getTime();
         }
 
-        return out;
-    }
+        function stringifyArgs(args) {
+            var out = [];
 
-    function getSessionPlaylist(session) {
-        session = session || state.activeSession || {};
+            for (var i = 0; i < args.length; i++) {
+                var item = args[i];
 
-        var list = [];
+                if (item === undefined) continue;
 
-        if (Array.isArray(session.meta)) list = session.meta;
-        else if (Array.isArray(session.playlist)) list = session.playlist;
-        else if (Array.isArray(session.items)) list = session.items;
-        else if (Array.isArray(session.files)) list = session.files;
-
-        return normalizePlaylist(list);
-    }
-
-    function findPlaylistIndexByIdentity(playlist, identity) {
-        if (!Array.isArray(playlist) || !identity) return -1;
-
-        for (var i = 0; i < playlist.length; i++) {
-            var item = playlist[i] || {};
-            var itemIdentity = parseStreamIdentityFromObject(item);
-
-            if (sameStreamIdentity(identity, itemIdentity)) {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
-    function findPlaylistItemByIdentity(playlist, identity) {
-        var index = findPlaylistIndexByIdentity(playlist, identity);
-
-        if (index < 0) {
-            return {
-                index: -1,
-                item: null
-            };
-        }
-
-        return {
-            index: index,
-            item: playlist[index] || null
-        };
-    }
-
-    function getSelectedSessionItem(index) {
-        var playlist = getSessionPlaylist();
-
-        if (!playlist.length) {
-            return {
-                playlist: [],
-                item: null,
-                index: -1
-            };
-        }
-
-        index = toInt(index);
-
-        if (index < 0 || index >= playlist.length) {
-            index = toInt(
-                state.activeSession &&
-                (
-                    state.activeSession.start_index ||
-                    state.activeSession.ddd_start_index ||
-                    state.activeSession.playlist_index ||
-                    0
-                )
-            );
-        }
-
-        if (index < 0 || index >= playlist.length) index = 0;
-
-        return {
-            playlist: playlist,
-            item: playlist[index] || null,
-            index: index
-        };
-    }
-
-    function rememberSession(session, key, source) {
-        if (!session || typeof session !== 'object') return;
-
-        state.activeSession = session;
-        state.activeSessionKey = key || state.activeSessionKey || getSessionStorageKey();
-
-        if (session.movie) {
-            rememberMovieContext(session.movie, source || 'session.movie');
-        } else {
-            rememberMovieContext(session, source || 'session');
-        }
-
-        try {
-            console.log('[DDD DBG session remembered]', source, key, session);
-        } catch (e) {}
-    }
-
-    // ============================================================
-    // Timeline hash / params save
-    // ============================================================
-
-    function generateTimelineHash(movie, season, episode) {
-        movie = movie || {};
-
-        var originalTitle = getMovieTitle(movie);
-
-        season = toInt(season);
-        episode = toInt(episode);
-
-        if (!originalTitle) return '';
-
-        /*
-         * Повторяет формулу основного ContinueWatching.js:
-         * season > 10 ? ':' : ''
-         */
-        if (season > 0 && episode > 0) {
-            var separator = season > 10 ? ':' : '';
-            return getHash([season, separator, episode, originalTitle].join(''));
-        }
-
-        return getHash(originalTitle);
-    }
-
-    function getParamsMapAndKey() {
-        var key = state.activeParamsStorageKey || getParamsStorageKey();
-
-        syncStorage(key);
-
-        var map = readStorage(key, {});
-
-        if (!map || typeof map !== 'object') map = {};
-
-        return {
-            key: key,
-            map: map
-        };
-    }
-
-    function updateLastPointer(map, hash, record) {
-        if (!map || !hash || !record) return false;
-        if (!record.season || !record.episode) return false;
-
-        var movieKey = getRecordMovieKey(record);
-
-        if (!movieKey) return false;
-
-        if (!map.__last_by_movie) map.__last_by_movie = {};
-
-        var old = map.__last_by_movie[movieKey] || {};
-
-        var pointer = {
-            hash: hash,
-            season: toInt(record.season),
-            episode: toInt(record.episode),
-            timestamp: toInt(record.timestamp) || now(),
-            source: 'ddd-ja-canonical'
-        };
-
-        var changed = safeJson(old) !== safeJson(pointer);
-
-        map.__last_by_movie[movieKey] = pointer;
-
-        return changed;
-    }
-
-    function saveCanonicalRecord(hash, record, reason) {
-        if (!hash || !record) return false;
-
-        var storage = getParamsMapAndKey();
-        var map = storage.map;
-        var key = storage.key;
-
-        var old = map[hash] || {};
-        var changed = false;
-
-        if (!map[hash]) {
-            map[hash] = old;
-            changed = true;
-        }
-
-        Object.keys(record).forEach(function (field) {
-            var newValue = record[field];
-
-            if (field === 'playlist') {
-                var oldJson = old.playlist ? safeJson(old.playlist) : '';
-                var newJson = newValue ? safeJson(newValue) : '';
-
-                if (oldJson !== newJson) {
-                    old.playlist = newValue;
-                    changed = true;
+                if (item === null) {
+                    out.push('null');
+                    continue;
                 }
 
-                return;
+                if (
+                    typeof item === 'string' ||
+                    typeof item === 'number' ||
+                    typeof item === 'boolean'
+                ) {
+                    out.push(String(item));
+                    continue;
+                }
+
+                try {
+                    out.push(JSON.stringify(item));
+                } catch (e) {
+                    out.push('[object]');
+                }
             }
 
-            if (safeJson(old[field]) !== safeJson(newValue)) {
-                old[field] = newValue;
-                changed = true;
-            }
-        });
-
-        old.timestamp = now();
-        if (!old.original_timestamp) old.original_timestamp = old.timestamp;
-
-        updateLastPointer(map, hash, old);
-
-        if (!JA_CANONICAL_WRITE_ENABLED) {
-            noty(
-                'DRY canonical ' +
-                'S' + old.season + 'E' + old.episode +
-                ' pi=' + old.playlist_index +
-                ' fi=' + old.file_index +
-                ' hash=' + compact(hash, 10) +
-                ' reason=' + reason,
-                true
-            );
-
-            try {
-                console.log('[DDD DBG canonical dry]', key, hash, old, map);
-            } catch (e) {}
-
-            return true;
+            return out.join(' ');
         }
 
-        writeStorage(key, map);
+        function showConsole(method, args) {
+            if (!CONFIG.debugConsole) return;
 
-        noty(
-            'canonical saved ' +
-            'S' + old.season + 'E' + old.episode +
-            ' pi=' + old.playlist_index +
-            ' fi=' + old.file_index +
-            ' pl=' + (old.playlist ? old.playlist.length : 0) +
-            ' hash=' + compact(hash, 10) +
-            ' reason=' + reason,
-            true
-        );
+            try {
+                var prefix = '[' + PLUGIN_NAME + ']';
+                var list = [prefix].concat(Array.prototype.slice.call(args));
 
-        try {
-            console.log('[DDD DBG canonical saved]', key, hash, old, map);
-        } catch (e) {}
+                if (console && console[method]) {
+                    console[method].apply(console, list);
+                }
+            } catch (e) {}
+        }
 
-        return changed;
-    }
+        function showNoty(message, level, force) {
+            level = level === undefined ? 1 : Number(level || 0);
+        
+            /**
+             * Главный выключатель Noty-диагностики.
+             * Если DDD_DEBUG = false, никакие debug-уведомления не показываются,
+             * даже если вызов был с force = true.
+             */
+            if (!CONFIG.debugNoty) return;
+        
+            if (!force && level > Number(CONFIG.debugNotyLevel || 0)) return;
+        
+            message = String(message || '');
+            if (!message) return;
+        
+            var current = now();
+        
+            if (
+                !force &&
+                message === lastNotyMessage &&
+                current - lastNotyTime < CONFIG.debugNotyMinIntervalMs
+            ) {
+                return;
+            }
+        
+            lastNotyMessage = message;
+            lastNotyTime = current;
+        
+            try {
+                if (window.Lampa && Lampa.Noty && Lampa.Noty.show) {
+                    Lampa.Noty.show(message);
+                }
+            } catch (e) {}
+        }
+
+        function log() {
+            showConsole('log', arguments);
+            showNoty('[DDD] ' + stringifyArgs(arguments), 3, false);
+        }
+
+        function warn() {
+            showConsole('warn', arguments);
+            showNoty('[DDD WARN] ' + stringifyArgs(arguments), 1, false);
+        }
+
+        function error() {
+            showConsole('error', arguments);
+            showNoty('[DDD ERR] ' + stringifyArgs(arguments), 0, false);
+        }
+
+        function noty(message, force, level) {
+            showConsole('log', [message]);
+            showNoty('[DDD] ' + message, level, force);
+        }
+
+        function stripFragment(url) {
+            if (typeof url !== 'string') return url;
+
+            var pos = url.indexOf('#');
+            return pos >= 0 ? url.substring(0, pos) : url;
+        }
+
+        function isStreamUrl(url) {
+            return typeof url === 'string' && url.indexOf('/stream/') !== -1;
+        }
+
+        function encodeParams(params) {
+            var result = [];
+
+            Object.keys(params).forEach(function (key) {
+                if (params[key] === undefined || params[key] === null) return;
+
+                result.push(
+                    encodeURIComponent(key) + '=' + encodeURIComponent(String(params[key]))
+                );
+            });
+
+            return result.join('&');
+        }
+
+        function pad2(value) {
+            value = Number(value || 0);
+            return value < 10 ? '0' + value : String(value);
+        }
+
+        function formatSeconds(seconds) {
+            seconds = Number(seconds || 0);
+
+            if (!seconds || seconds < 0) return '0:00';
+
+            var total = Math.floor(seconds);
+            var h = Math.floor(total / 3600);
+            var m = Math.floor((total % 3600) / 60);
+            var s = total % 60;
+
+            if (h > 0) {
+                return h + ':' + pad2(m) + ':' + pad2(s);
+            }
+
+            return m + ':' + pad2(s);
+        }
+
+        function msToSeconds(ms) {
+            ms = Number(ms || 0);
+
+            if (!ms || ms < 0) return 0;
+
+            return Math.floor(ms / 1000);
+        }
+
+        function clamp(value, min, max) {
+            value = Number(value || 0);
+
+            if (value < min) return min;
+            if (value > max) return max;
+
+            return value;
+        }
+
+        function safeJson(value) {
+            try {
+                return JSON.stringify(value);
+            } catch (e) {
+                return '';
+            }
+        }
+
+        function isExternalTorrentPlayer() {
+            try {
+                var type = Lampa.Storage.field('player_torrent');
+
+                if (type === 'inner') return false;
+                if (type === 'lampa') return false;
+
+                return true;
+            } catch (e) {
+                return true;
+            }
+        }
+
+        function shouldUseDDDLayer() {
+            if (!CONFIG.dddEnabled) return false;
+
+            if (!CONFIG.onlyExternalTorrentPlayer) return true;
+
+            return isExternalTorrentPlayer();
+        }
+
+        function safeDecode(value) {
+            try {
+                return decodeURIComponent(value);
+            } catch (e) {
+                return value;
+            }
+        }
+
+        function parseStreamUrl(url) {
+            if (!url || typeof url !== 'string') return null;
+
+            url = stripFragment(url);
+
+            var fileMatch = url.match(/\/stream\/([^?]+)/);
+            var linkMatch = url.match(/[?&]link=([^&#]+)/);
+            var indexMatch = url.match(/[?&]index=(\d+)/);
+
+            if (!fileMatch || !linkMatch) return null;
+
+            return {
+                file_name: safeDecode(fileMatch[1]),
+                torrent_link: safeDecode(linkMatch[1]),
+                file_index: indexMatch ? parseInt(indexMatch[1], 10) : 0
+            };
+        }
+
+        function streamIdentity(url) {
+            var parsed = parseStreamUrl(url);
+
+            if (!parsed) {
+                return stripFragment(url || '');
+            }
+
+            return [
+                parsed.torrent_link || '',
+                parsed.file_index !== undefined ? parsed.file_index : '',
+                parsed.file_name || ''
+            ].join('|');
+        }
+
+        function extractSE(data) {
+            function parseText(text) {
+                if (!text || typeof text !== 'string') return null;
+
+                var m;
+
+                m = text.match(/S(?:eason)?\s*0?(\d{1,2})\s*[\.\-_: ]*\s*E(?:p(?:isode)?)?\s*0?(\d{1,3})/i);
+                if (m) {
+                    return {
+                        season: parseInt(m[1], 10),
+                        episode: parseInt(m[2], 10)
+                    };
+                }
+
+                m = text.match(/(\d{1,2})\s*[xх×]\s*0?(\d{1,3})/i);
+                if (m) {
+                    return {
+                        season: parseInt(m[1], 10),
+                        episode: parseInt(m[2], 10)
+                    };
+                }
+
+                m = text.match(/(\d{1,2})\s*сезон.*?(\d{1,3})\s*сер/i);
+                if (m) {
+                    return {
+                        season: parseInt(m[1], 10),
+                        episode: parseInt(m[2], 10)
+                    };
+                }
+
+                m = text.match(/сезон\s*0?(\d{1,2}).*?сер(?:ия|ии|и)?\s*0?(\d{1,3})/i);
+                if (m) {
+                    return {
+                        season: parseInt(m[1], 10),
+                        episode: parseInt(m[2], 10)
+                    };
+                }
+
+                return null;
+            }
+
+            if (data && data.season !== undefined && data.episode !== undefined) {
+                var s = Number(data.season || 0);
+                var e = Number(data.episode || 0);
+
+                if (s && e) {
+                    return {
+                        season: s,
+                        episode: e
+                    };
+                }
+            }
+
+            var fields = [];
+
+            if (data) {
+                fields.push(
+                    data.title,
+                    data.name,
+                    data.file_name,
+                    data.path,
+                    data.path_human,
+                    data.folder_name,
+                    data.episode_title
+                );
+            }
+
+            for (var i = 0; i < fields.length; i++) {
+                var parsed = parseText(fields[i]);
+                if (parsed) return parsed;
+            }
+
+            return {
+                season: 0,
+                episode: 0
+            };
+        }
+
+        return {
+            log: log,
+            warn: warn,
+            error: error,
+            noty: noty,
+            now: now,
+            stripFragment: stripFragment,
+            isStreamUrl: isStreamUrl,
+            encodeParams: encodeParams,
+            formatSeconds: formatSeconds,
+            msToSeconds: msToSeconds,
+            clamp: clamp,
+            safeJson: safeJson,
+            isExternalTorrentPlayer: isExternalTorrentPlayer,
+            shouldUseDDDLayer: shouldUseDDDLayer,
+            parseStreamUrl: parseStreamUrl,
+            streamIdentity: streamIdentity,
+            extractSE: extractSE
+        };
+    })();
 
     // ============================================================
-    // Bridge body handling
+    // StorageManager
     // ============================================================
 
-    function isBridgeUrl(url) {
-        url = String(url || '');
+    var StorageManager = (function () {
+        var memoryCache = null;
+        var activeStorageKey = null;
+        var syncedStorageKey = null;
+        var torrserverCache = null;
+        var accountReady = !!window.appready;
+        var saveTimer = null;
 
-        return (
-            url.indexOf('127.0.0.1:39677') !== -1 ||
-            url.indexOf('localhost:39677') !== -1
-        );
-    }
+        function getProfileId() {
+            try {
+                if (
+                    accountReady &&
+                    Lampa.Account &&
+                    Lampa.Account.Permit &&
+                    Lampa.Account.Permit.sync &&
+                    Lampa.Account.Permit.account &&
+                    Lampa.Account.Permit.account.profile &&
+                    Lampa.Account.Permit.account.profile.id !== undefined
+                ) {
+                    return Lampa.Account.Permit.account.profile.id;
+                }
+            } catch (e) {}
 
-    function collectBridgePayloads(value, out, depth) {
-        out = out || [];
-        depth = depth || 0;
+            return null;
+        }
 
-        if (!value || depth > 8) return out;
+        function getStorageKey() {
+            var profileId = getProfileId();
 
-        if (Array.isArray(value)) {
-            for (var i = 0; i < value.length; i++) {
-                collectBridgePayloads(value[i], out, depth + 1);
+            if (profileId !== null && profileId !== undefined) {
+                return CONFIG.storageBaseKey + '_' + profileId;
+            }
+
+            return CONFIG.storageBaseKey;
+        }
+
+        function getSessionStorageKey() {
+            var profileId = getProfileId();
+
+            if (profileId !== null && profileId !== undefined) {
+                return CONFIG.sessionStorageKey + '_' + profileId;
+            }
+
+            return CONFIG.sessionStorageKey;
+        }
+
+        function getActiveStorageKey() {
+            var key = getStorageKey();
+
+            if (activeStorageKey !== key) {
+                activeStorageKey = key;
+                memoryCache = null;
+            }
+
+            return key;
+        }
+
+        function ensureSync() {
+            var key = getActiveStorageKey();
+
+            if (syncedStorageKey === key) return;
+
+            try {
+                Lampa.Storage.sync(key, 'object_object');
+                syncedStorageKey = key;
+            } catch (e) {
+                Utils.error('Storage sync failed', e);
+            }
+        }
+
+        function getParams() {
+            ensureSync();
+
+            if (!memoryCache) {
+                try {
+                    memoryCache = Lampa.Storage.get(getActiveStorageKey(), {});
+                } catch (e) {
+                    Utils.error('Storage get failed', e);
+                    memoryCache = {};
+                }
+            }
+
+            if (!memoryCache || typeof memoryCache !== 'object') {
+                memoryCache = {};
+            }
+
+            return memoryCache;
+        }
+
+        function setParams(data, force) {
+            ensureSync();
+
+            memoryCache = data;
+
+            var key = getActiveStorageKey();
+
+            function save() {
+                try {
+                    Lampa.Storage.set(key, data);
+                } catch (e) {
+                    Utils.error('Storage set failed', e);
+                }
+            }
+
+            if (saveTimer) {
+                clearTimeout(saveTimer);
+                saveTimer = null;
+            }
+
+            if (force) {
+                save();
+            } else {
+                saveTimer = setTimeout(function () {
+                    saveTimer = null;
+                    save();
+                }, CONFIG.debounceDelayMs);
+            }
+        }
+
+        function getMovieKey(movie) {
+            if (!movie) return '';
+
+            var id = movie.id || movie.movie_id || '';
+            var title = movie.original_name || movie.original_title || movie.name || movie.title || '';
+
+            if (id) return 'id:' + id;
+            if (title) return 'title:' + Lampa.Utils.hash(title);
+
+            return '';
+        }
+
+        function getMovieKeyFromData(data) {
+            if (!data) return '';
+
+            if (data.movie_key) return data.movie_key;
+            if (data.movie_id) return 'id:' + data.movie_id;
+
+            var title = data.original_title || data.title || '';
+
+            if (title) return 'title:' + Lampa.Utils.hash(title);
+
+            return '';
+        }
+
+        function updateLastPointer(params, data, hash) {
+            if (!data || !hash) return;
+
+            if (!data.season || !data.episode) return;
+
+            var movieKey = getMovieKeyFromData(data);
+            if (!movieKey) return;
+
+            if (!params.__last_by_movie) {
+                params.__last_by_movie = {};
+            }
+
+            params.__last_by_movie[movieKey] = {
+                hash: hash,
+                season: Number(data.season || 0),
+                episode: Number(data.episode || 0),
+                timestamp: Utils.now()
+            };
+        }
+
+        function saveStreamParams(hash, data, forceTimestamp) {
+            if (!hash || !data) return false;
+
+            var params = getParams();
+
+            if (!params[hash]) params[hash] = {};
+
+            var old = params[hash];
+            var changed = false;
+
+            Object.keys(data).forEach(function (key) {
+                if (key === 'playlist') return;
+
+                if (old[key] !== data[key]) {
+                    old[key] = data[key];
+                    changed = true;
+                }
+            });
+
+            if (Array.isArray(data.playlist)) {
+                var oldJson = old.playlist ? Utils.safeJson(old.playlist) : '';
+                var newJson = Utils.safeJson(data.playlist);
+
+                if (oldJson !== newJson) {
+                    old.playlist = data.playlist;
+                    changed = true;
+                }
+            }
+
+            if (forceTimestamp || changed || !old.timestamp) {
+                old.timestamp = Utils.now();
+
+                if (!old.original_timestamp) {
+                    old.original_timestamp = old.timestamp;
+                }
+
+                updateLastPointer(params, old, hash);
+
+                setParams(params, true);
+
+                Utils.noty(
+                    'saved S' + (old.season || 0) +
+                    'E' + (old.episode || 0) +
+                    ' fi=' + (old.file_index !== undefined ? old.file_index : '-') +
+                    ' pi=' + (old.playlist_index !== undefined ? old.playlist_index : '-') +
+                    ' pl=' + (old.playlist ? old.playlist.length : 0),
+                    false,
+                    2
+                );
+
+                Utils.log(
+                    'Saved stream params',
+                    hash,
+                    'S' + (old.season || 0) + 'E' + (old.episode || 0),
+                    old.episode_title || old.title || ''
+                );
+
+                return true;
+            }
+
+            return false;
+        }
+
+        function clearTorrServerCache() {
+            torrserverCache = null;
+        }
+
+        function getTorrServerUrl() {
+            /**
+             * Не кэшируем навсегда: сервер может быть сменён в настройках.
+             * Лёгкий пересчёт безопаснее, чем запуск по старому host.
+             */
+            try {
+                var url1 = Lampa.Storage.get('torrserver_url');
+                var url2 = Lampa.Storage.get('torrserver_url_two');
+                var useTwo = Lampa.Storage.field('torrserver_use_link') === 'two';
+
+                var url = useTwo ? (url2 || url1) : (url1 || url2);
+
+                if (!url) {
+                    torrserverCache = null;
+                    return null;
+                }
+
+                url = String(url).trim();
+
+                if (!url.match(/^https?:\/\//)) {
+                    url = 'http://' + url;
+                }
+
+                url = url.replace(/\/$/, '');
+
+                if (!/^https?:\/\/[^/]+/.test(url)) {
+                    torrserverCache = null;
+                    return null;
+                }
+
+                torrserverCache = url;
+                return torrserverCache;
+            } catch (e) {
+                Utils.error('Invalid TorrServer URL', e);
+                torrserverCache = null;
+                return null;
+            }
+        }
+
+        function buildStreamUrl(params) {
+            if (!params || !params.file_name || !params.torrent_link) {
+                Utils.error('Missing stream params', params);
+                return null;
+            }
+
+            var server = getTorrServerUrl();
+
+            if (!server) {
+                try {
+                    Lampa.Noty.show('TorrServer не настроен');
+                } catch (e) {}
+                return null;
+            }
+
+            var file = encodeURIComponent(params.file_name);
+            var link = encodeURIComponent(params.torrent_link);
+            var index = params.file_index !== undefined ? params.file_index : 0;
+
+            return server + '/stream/' + file + '?link=' + link + '&index=' + index + '&play';
+        }
+
+        function rebuildStreamUrl(url) {
+            var parsed = Utils.parseStreamUrl(url);
+
+            if (!parsed) return Utils.stripFragment(url || '');
+
+            return buildStreamUrl(parsed) || Utils.stripFragment(url || '');
+        }
+
+        function generateTimelineHash(movie, season, episode) {
+            if (!movie) return '';
+
+            var originalTitle = movie.original_name || movie.original_title || movie.name || movie.title || '';
+
+            season = Number(season || 0);
+            episode = Number(episode || 0);
+
+            /**
+             * Критично:
+             * нельзя зависеть от movie.number_of_seasons.
+             * В Lampa не везде приходит полная карточка.
+             */
+            if (season > 0 && episode > 0) {
+                var separator = season > 10 ? ':' : '';
+                return Lampa.Utils.hash([season, separator, episode, originalTitle].join(''));
+            }
+
+            return Lampa.Utils.hash(originalTitle);
+        }
+
+        function getLastStreamParams(movie) {
+            if (!movie) return null;
+
+            var originalTitle = movie.original_name || movie.original_title || movie.name || movie.title;
+            var movieId = movie.id || movie.movie_id;
+            var params = getParams();
+            var movieKey = getMovieKey(movie);
+
+            /**
+             * Сначала используем явный указатель последней серии.
+             * Это снижает риск случайного выбора по timestamp.
+             */
+            if (
+                movieKey &&
+                params.__last_by_movie &&
+                params.__last_by_movie[movieKey] &&
+                params.__last_by_movie[movieKey].hash &&
+                params[params.__last_by_movie[movieKey].hash]
+            ) {
+                return params[params.__last_by_movie[movieKey].hash];
+            }
+
+            if (!originalTitle && !movieId) return null;
+
+            var episodes = Object.keys(params)
+                .map(function (key) {
+                    return params[key];
+                })
+                .filter(function (item) {
+                    if (!item || typeof item !== 'object') return false;
+                    if (!item.file_name || !item.torrent_link) return false;
+
+                    var sameId = false;
+                    var sameTitle = false;
+
+                    if (movieId && item.movie_id) {
+                        sameId = String(item.movie_id) === String(movieId);
+                    }
+
+                    if (originalTitle && item.original_title) {
+                        sameTitle = String(item.original_title) === String(originalTitle);
+                    }
+
+                    if (originalTitle && item.title) {
+                        sameTitle = sameTitle || String(item.title) === String(originalTitle);
+                    }
+
+                    return (sameId || sameTitle) && item.season && item.episode;
+                })
+                .sort(function (a, b) {
+                    return (b.timestamp || 0) - (a.timestamp || 0);
+                });
+
+            if (episodes.length) return episodes[0];
+
+            /**
+             * Fallback для фильмов / старых записей.
+             */
+            if (originalTitle) {
+                var hash = Lampa.Utils.hash(originalTitle);
+                return params[hash] || null;
+            }
+
+            return null;
+        }
+
+        function saveDDDSession(session) {
+            if (!session || !session.sid) return;
+
+            try {
+                Lampa.Storage.set(getSessionStorageKey(), session);
+            } catch (e) {
+                Utils.error('Save DDD session failed', e);
+            }
+        }
+
+        function getDDDSession() {
+            try {
+                return Lampa.Storage.get(getSessionStorageKey(), null);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function cleanupOld() {
+            try {
+                var params = getParams();
+                var current = Utils.now();
+                var changed = false;
+
+                Object.keys(params).forEach(function (hash) {
+                    if (hash === '__last_by_movie') return;
+
+                    var item = params[hash];
+
+                    if (item && item.timestamp && current - item.timestamp > CONFIG.cleanupAgeMs) {
+                        delete params[hash];
+                        changed = true;
+                    }
+                });
+
+                if (params.__last_by_movie) {
+                    Object.keys(params.__last_by_movie).forEach(function (key) {
+                        var pointer = params.__last_by_movie[key];
+
+                        if (!pointer || !pointer.hash || !params[pointer.hash]) {
+                            delete params.__last_by_movie[key];
+                            changed = true;
+                        }
+                    });
+                }
+
+                if (changed) {
+                    setParams(params, true);
+                    Utils.log('Old records cleaned');
+                }
+            } catch (e) {
+                Utils.error('Cleanup failed', e);
+            }
+        }
+
+        function setAccountReady(value) {
+            accountReady = !!value;
+        }
+
+        return {
+            getParams: getParams,
+            setParams: setParams,
+            saveStreamParams: saveStreamParams,
+            getLastStreamParams: getLastStreamParams,
+            buildStreamUrl: buildStreamUrl,
+            rebuildStreamUrl: rebuildStreamUrl,
+            getTorrServerUrl: getTorrServerUrl,
+            clearTorrServerCache: clearTorrServerCache,
+            generateTimelineHash: generateTimelineHash,
+            saveDDDSession: saveDDDSession,
+            getDDDSession: getDDDSession,
+            cleanupOld: cleanupOld,
+            ensureSync: ensureSync,
+            setAccountReady: setAccountReady,
+            getMovieKey: getMovieKey
+        };
+    })();
+
+    // ============================================================
+    // PlaylistManager
+    // ============================================================
+
+    var PlaylistManager = (function () {
+        function cloneItem(item) {
+            var normalized = {};
+
+            Object.keys(item).forEach(function (key) {
+                normalized[key] = item[key];
+            });
+
+            return normalized;
+        }
+
+        function normalize(list) {
+            if (!Array.isArray(list)) return null;
+
+            var out = [];
+
+            for (var i = 0; i < list.length; i++) {
+                var item = list[i];
+
+                if (!item || typeof item !== 'object') continue;
+                if (!item.url || typeof item.url !== 'string') continue;
+
+                var normalized = cloneItem(item);
+
+                normalized.url = StorageManager.rebuildStreamUrl(item.url);
+                normalized.title = item.title || item.name || '';
+
+                var parsed = Utils.parseStreamUrl(normalized.url);
+
+                if (parsed) {
+                    normalized.file_name = parsed.file_name;
+                    normalized.torrent_link = parsed.torrent_link;
+                    normalized.file_index = parsed.file_index;
+                }
+
+                if (item.season !== undefined) normalized.season = Number(item.season || 0);
+                if (item.episode !== undefined) normalized.episode = Number(item.episode || 0);
+
+                if (item.timeline && typeof item.timeline === 'object') {
+                    normalized.timeline = {};
+
+                    if (item.timeline.hash !== undefined) {
+                        normalized.timeline.hash = String(item.timeline.hash);
+                    }
+
+                    if (item.timeline.time !== undefined) {
+                        normalized.timeline.time = Number(item.timeline.time || 0);
+                    }
+
+                    if (item.timeline.duration !== undefined) {
+                        normalized.timeline.duration = Number(item.timeline.duration || 0);
+                    }
+
+                    if (item.timeline.percent !== undefined) {
+                        normalized.timeline.percent = Number(item.timeline.percent || 0);
+                    }
+                }
+
+                out.push(normalized);
+            }
+
+            return out.length ? out : null;
+        }
+
+        function clonePlaylist(list) {
+            if (!Array.isArray(list)) return null;
+
+            var out = [];
+
+            for (var i = 0; i < list.length; i++) {
+                out.push(cloneItem(list[i]));
             }
 
             return out;
         }
 
-        if (typeof value !== 'object') return out;
+        function findPlaylistIndexByUrl(playlist, url) {
+            if (!Array.isArray(playlist) || !url) return -1;
 
-        /*
-         * Основной формат:
-         * { client: "lampa", payload: { uri: "...", position: ... } }
-         */
-        if (value.payload && typeof value.payload === 'object') {
-            var payload = value.payload;
+            var cleanTarget = Utils.stripFragment(url);
+            var targetIdentity = Utils.streamIdentity(url);
 
-            if (payload.uri || payload.url) {
-                out.push({
-                    envelope: value,
-                    payload: payload
-                });
+            for (var i = 0; i < playlist.length; i++) {
+                var itemUrl = playlist[i] && playlist[i].url;
+
+                if (!itemUrl) continue;
+
+                if (Utils.stripFragment(itemUrl) === cleanTarget) {
+                    return i;
+                }
+
+                if (Utils.streamIdentity(itemUrl) === targetIdentity) {
+                    return i;
+                }
             }
 
-            /*
-             * Рекурсивно всё равно смотрим глубже, но текущий payload
-             * уже добавили только если у него есть uri/url.
+            return -1;
+        }
+
+        function saveIfBetter(hash, playlist) {
+            if (!hash || !Array.isArray(playlist) || playlist.length < 2) return false;
+
+            var normalized = normalize(playlist);
+            if (!normalized) return false;
+
+            var params = StorageManager.getParams();
+            var old = params[hash] || {};
+
+            var oldJson = old.playlist ? Utils.safeJson(old.playlist) : '';
+            var newJson = Utils.safeJson(normalized);
+
+            if (oldJson === newJson) return false;
+
+            StorageManager.saveStreamParams(hash, {
+                playlist: normalized
+            }, true);
+
+            Utils.noty('playlist saved len=' + normalized.length, false, 2);
+
+            return true;
+        }
+
+        function getForLaunch(params) {
+            if (!params || !Array.isArray(params.playlist) || params.playlist.length < 2) {
+                return null;
+            }
+
+            return normalize(params.playlist);
+        }
+
+        function itemToMeta(movie, item, index, selectedIndex, fallbackSeason, fallbackEpisode) {
+            item = item || {};
+
+            var season = Number(item.season || 0);
+            var episode = Number(item.episode || 0);
+
+            if (!season || !episode) {
+                var se = Utils.extractSE(item);
+
+                if (se.season && se.episode) {
+                    season = se.season;
+                    episode = se.episode;
+                }
+            }
+
+            /**
+             * Важно:
+             * fallback S/E разрешён только для реально выбранного элемента.
+             * Иначе весь playlistMeta получит один и тот же номер серии.
              */
-            collectBridgePayloads(payload, out, depth + 1);
-        }
-
-        /*
-         * Fallback, если DDD когда-нибудь отдаст payload без envelope.
-         */
-        if ((value.uri || value.url) && (value.position !== undefined || value.duration !== undefined || value.playlistSize !== undefined)) {
-            out.push({
-                envelope: null,
-                payload: value
-            });
-        }
-
-        Object.keys(value).forEach(function (key) {
-            if (key === 'payload') return;
-
-            var child = value[key];
-
-            if (child && typeof child === 'object') {
-                collectBridgePayloads(child, out, depth + 1);
+            if ((!season || !episode) && index === selectedIndex) {
+                season = Number(fallbackSeason || 0);
+                episode = Number(fallbackEpisode || 0);
             }
-        });
 
-        return out;
-    }
+            var timelineHash = '';
 
-    function parseBridgeBody(body) {
-        if (!body || typeof body !== 'string') return null;
-
-        var parsed = safeParseJson(body);
-
-        if (parsed) return parsed;
-
-        /*
-         * Иногда в лог может попасть текст вокруг JSON.
-         * Пытаемся вырезать первый JSON-массив или объект.
-         */
-        var startArray = body.indexOf('[');
-        var startObject = body.indexOf('{');
-
-        var start = -1;
-
-        if (startArray >= 0 && startObject >= 0) start = Math.min(startArray, startObject);
-        else if (startArray >= 0) start = startArray;
-        else if (startObject >= 0) start = startObject;
-
-        if (start < 0) return null;
-
-        var sliced = body.substring(start);
-        parsed = safeParseJson(sliced);
-
-        return parsed || null;
-    }
-
-    function selectBridgePlaybackPayload(body) {
-        var parsed = parseBridgeBody(body);
-
-        if (!parsed) return null;
-
-        var payloads = collectBridgePayloads(parsed, [], 0)
-            .filter(function (item) {
-                var payload = item && item.payload;
-                var uri = payload && (payload.uri || payload.url);
-
-                if (!uri) return false;
-                if (String(uri).indexOf('/stream/') === -1) return false;
-
-                return true;
-            });
-
-        if (!payloads.length) return null;
-
-        /*
-         * Берём последний валидный payload.
-         * Если есть payload с position > 0, он предпочтительнее.
-         */
-        var selected = payloads[payloads.length - 1];
-
-        for (var i = payloads.length - 1; i >= 0; i--) {
-            var p = payloads[i].payload;
-
-            if (toNumber(p.position) > 0 || toNumber(p.time) > 0) {
-                selected = payloads[i];
-                break;
+            if (item.timeline && item.timeline.hash !== undefined) {
+                timelineHash = String(item.timeline.hash);
             }
-        }
 
-        return selected;
-    }
+            if (!timelineHash && movie && season && episode) {
+                timelineHash = StorageManager.generateTimelineHash(movie, season, episode);
+            }
 
-    function normalizePositionToSeconds(payload) {
-        payload = payload || {};
-
-        var value = payload.position;
-
-        if (value === undefined) value = payload.time;
-        if (value === undefined) value = payload.currentTime;
-
-        value = toNumber(value);
-
-        /*
-         * DDD обычно отдаёт миллисекунды.
-         */
-        if (value > 10000) return value / 1000;
-
-        return value;
-    }
-
-    function normalizeDurationToSeconds(payload) {
-        payload = payload || {};
-
-        var value = payload.duration;
-
-        if (value === undefined) value = payload.length;
-
-        value = toNumber(value);
-
-        if (value > 10000) return value / 1000;
-
-        return value;
-    }
-
-    function buildCanonicalRecordFromBridgePayload(payload, envelope) {
-        payload = payload || {};
-
-        var uri = payload.uri || payload.url || '';
-        var identity = parseStreamUrl(uri);
-
-        if (!identity) return null;
-
-        var playlist = getSessionPlaylist();
-        var found = findPlaylistItemByIdentity(playlist, identity);
-        var item = found.item || {};
-        var playlistIndex = found.index;
-
-        /*
-         * Если в session/meta не нашли, не делаем episode-1/file_index-1.
-         * Это принципиально.
-         */
-        if (playlistIndex < 0 && hasNumber(payload.playlistIndex)) {
-            playlistIndex = toInt(payload.playlistIndex);
-        }
-
-        if (playlistIndex < 0 && hasNumber(payload.playlist_index)) {
-            playlistIndex = toInt(payload.playlist_index);
-        }
-
-        if (playlistIndex < 0 && hasNumber(payload.start_index)) {
-            playlistIndex = toInt(payload.start_index);
-        }
-
-        if (playlistIndex < 0 && state.activeSession && hasNumber(state.activeSession.start_index)) {
-            playlistIndex = toInt(state.activeSession.start_index);
-        }
-
-        if (playlistIndex < 0) playlistIndex = 0;
-
-        var fileName = (
-            identity.file_name ||
-            item.file_name ||
-            item.title ||
-            item.name ||
-            item.episode_title ||
-            ''
-        );
-
-        var parsedSE = parseSeasonEpisodeFromFileName(fileName);
-        var itemSE = getItemSeasonEpisode(item);
-
-        var season = parsedSE.season || itemSE.season || 0;
-        var episode = parsedSE.episode || itemSE.episode || 0;
-        var seSource = parsedSE.source || itemSE.source || '';
-
-        /*
-         * Только если есть episode, но нет season,
-         * season можно брать из item/session/record.
-         */
-        if (episode && !season) {
-            season = (
-                itemSE.season ||
-                toInt(item.season) ||
-                toInt(item.season_number) ||
-                toInt(payload.season) ||
-                1
-            );
-
-            seSource = seSource || 'episode_with_fallback_season';
-        }
-
-        /*
-         * Не используем file_index как episode.
-         * Для anime/torrent это как раз ломало второй сезон.
-         */
-        if (!season || !episode) {
             return {
-                skipped: true,
-                reason: 'no_season_episode_from_file_or_item',
-                identity: identity,
-                item: item,
-                playlistIndex: playlistIndex,
-                payload: payload
+                index: index,
+                title: item.title || item.name || '',
+                season: season,
+                episode: episode,
+                timelineHash: timelineHash,
+                url: Utils.stripFragment(item.url || '')
             };
         }
 
-        var movie = getActiveMovie() || {};
-        var lang = getOriginalLanguage(movie) || getOriginalLanguage(payload);
+        function buildMeta(movie, playlist, selectedIndex, fallbackSeason, fallbackEpisode) {
+            var meta = [];
 
-        var originalTitle = getMovieTitle(movie);
+            if (!Array.isArray(playlist)) return meta;
 
-        if (!originalTitle) {
-            originalTitle = (
-                payload.original_title ||
-                payload.original_name ||
-                payload.title ||
-                payload.name ||
-                ''
-            );
+            for (var i = 0; i < playlist.length; i++) {
+                meta.push(
+                    itemToMeta(
+                        movie,
+                        playlist[i],
+                        i,
+                        selectedIndex,
+                        fallbackSeason,
+                        fallbackEpisode
+                    )
+                );
+            }
+
+            return meta;
         }
 
-        if (!originalTitle) {
-            return {
-                skipped: true,
-                reason: 'no_movie_title_for_hash',
-                identity: identity,
-                item: item,
-                playlistIndex: playlistIndex,
-                payload: payload
-            };
-        }
+        function findMetaByIndexOrUrl(session, index, url) {
+            if (!session || !Array.isArray(session.playlistMeta)) return null;
 
-        var movieId = getMovieId(movie) || payload.movie_id || payload.id || '';
-        var movieKey = getMovieKey(movie);
-
-        if (!movieKey) {
-            if (movieId) movieKey = 'id:' + movieId;
-            else movieKey = 'title:' + getHash(originalTitle);
-        }
-
-        var position = normalizePositionToSeconds(payload);
-        var duration = normalizeDurationToSeconds(payload);
-        var percent = 0;
-
-        if (duration > 0 && position > 0) {
-            percent = Math.round((position / duration) * 100);
-            if (percent < 0) percent = 0;
-            if (percent > 100) percent = 100;
-        }
-
-        var normalizedPlaylist = playlist.length ? playlist : [];
-
-        var record = {
-            source: 'ddd',
-            ddd_canonical_source: 'bridge_payload_uri',
-            ddd_canonical_reason: 'ja_bridge_uri_to_playlist',
-            ddd_se_source: seSource,
-
-            movie_id: movieId,
-            movie_key: movieKey,
-
-            title: movie.title || movie.name || originalTitle,
-            original_title: originalTitle,
-            original_name: movie.original_name || movie.originalName || '',
-            original_language: lang || 'ja',
-
-            season: season,
-            episode: episode,
-            episode_title: (
-                item.episode_title ||
-                item.title ||
-                item.name ||
-                payload.episode_title ||
-                fileName ||
-                ''
-            ),
-
-            file_name: identity.file_name || fileName,
-            torrent_link: identity.torrent_link || item.torrent_link || '',
-            file_index: hasNumber(identity.file_index) ? toInt(identity.file_index) : toInt(item.file_index),
-
-            url: uri,
-            uri: uri,
-
-            playlist_index: playlistIndex,
-            ddd_start_index: playlistIndex,
-            start_index: playlistIndex,
-
-            playlist: normalizedPlaylist,
-
-            time: position,
-            duration: duration,
-            percent: percent,
-
-            hasNext: !!payload.hasNext,
-            hasPrevious: !!payload.hasPrevious,
-            isPlaying: !!payload.isPlaying,
-            isBuffering: !!payload.isBuffering,
-
-            timestamp: now()
-        };
-
-        return {
-            skipped: false,
-            record: record,
-            movie: movie,
-            identity: identity,
-            item: item,
-            playlistIndex: playlistIndex,
-            payload: payload,
-            envelope: envelope
-        };
-    }
-
-    function handleBridgeBody(url, body) {
-        try {
-            if (!body) return false;
-
-            if (SHOW_BRIDGE_BODY_IN_NOTY) {
-                noty('bridge body ' + compact(body, 700), false);
-            }
-
-            try {
-                console.log('[DDD DBG bridge body full]', url, body);
-            } catch (e) {}
-
-            var selected = selectBridgePlaybackPayload(body);
-
-            if (!selected || !selected.payload) {
-                try {
-                    console.log('[DDD DBG bridge no playback payload]', url, body);
-                } catch (e) {}
-
-                return false;
-            }
-
-            var built = buildCanonicalRecordFromBridgePayload(selected.payload, selected.envelope);
-
-            if (!built) {
-                noty('bridge skip no canonical build', false);
-                return false;
-            }
-
-            if (built.skipped) {
-                noty('bridge skip ' + built.reason, false);
-
-                try {
-                    console.log('[DDD DBG bridge canonical skipped]', built);
-                } catch (e) {}
-
-                return false;
-            }
-
-            var record = built.record;
-
-            if (!isJapaneseAnimeContext(record, selected.payload)) {
-                noty('bridge skip non-ja lang=' + compact(getRecordLanguage(record) || getOriginalLanguage(getActiveMovie()) || '-', 8), false);
-
-                try {
-                    console.log('[DDD DBG bridge skip non-ja]', record, selected);
-                } catch (e) {}
-
-                return false;
-            }
-
-            /*
-             * Защита от многократной записи одной и той же точки за один polling.
+            /**
+             * Сначала URL/stream identity.
+             * Индекс внешнего плеера может не совпадать с индексом Lampa playlist.
              */
-            var bridgeKey = [
-                record.movie_key,
-                record.season,
-                record.episode,
-                record.file_index,
-                Math.floor(toNumber(record.time || 0) / 2)
-            ].join('|');
+            if (url) {
+                var clean = Utils.stripFragment(url);
+                var targetIdentity = Utils.streamIdentity(url);
+
+                for (var i = 0; i < session.playlistMeta.length; i++) {
+                    var metaUrl = session.playlistMeta[i].url;
+
+                    if (!metaUrl) continue;
+
+                    if (Utils.stripFragment(metaUrl) === clean) {
+                        return session.playlistMeta[i];
+                    }
+
+                    if (Utils.streamIdentity(metaUrl) === targetIdentity) {
+                        return session.playlistMeta[i];
+                    }
+                }
+            }
 
             if (
-                bridgeKey === state.lastBridgeCanonicalKey &&
-                now() - state.lastBridgeCanonicalAt < 1200
+                index !== undefined &&
+                index !== null &&
+                index >= 0 &&
+                session.playlistMeta[index]
+            ) {
+                return session.playlistMeta[index];
+            }
+
+            return null;
+        }
+
+        return {
+            normalize: normalize,
+            clonePlaylist: clonePlaylist,
+            saveIfBetter: saveIfBetter,
+            getForLaunch: getForLaunch,
+            buildMeta: buildMeta,
+            findMetaByIndexOrUrl: findMetaByIndexOrUrl,
+            findPlaylistIndexByUrl: findPlaylistIndexByUrl
+        };
+    })();
+
+    // ============================================================
+    // DDDLayer
+    // ============================================================
+
+    var DDDLayer = (function () {
+        var activeSession = null;
+        var lastSavedByHash = {};
+        var lastEventTsBySession = {};
+        var pollTimer = null;
+        var host = CONFIG.dddHost + ':' + CONFIG.dddPort;
+
+        function makeSid(movie, timelineHash, season, episode) {
+            var base = timelineHash;
+
+            if (!base) {
+                var title = '';
+
+                try {
+                    title = movie.original_name || movie.original_title || movie.name || movie.title || '';
+                } catch (e) {}
+
+                base = title
+                    ? Lampa.Utils.hash([title, season || 0, episode || 0].join(':'))
+                    : 'unknown';
+            }
+
+            return 'ddd_' + base + '_' + Utils.now() + '_' + Math.floor(Math.random() * 100000);
+        }
+
+        function makeToken(sid) {
+            return sid;
+        }
+
+        function appendFragment(url, session, index, startIndex) {
+            if (!Utils.isStreamUrl(url)) return url;
+
+            var clean = Utils.stripFragment(url);
+
+            var fragment = Utils.encodeParams({
+                ddd_mode: 'local',
+                ddd_client: CONFIG.dddClient,
+                ddd_sid: session.sid,
+                ddd_port: CONFIG.dddPort,
+                ddd_token: session.token,
+                ddd_i: index || 0,
+                ddd_start: startIndex || 0
+            });
+
+            return clean + '#' + fragment;
+        }
+
+        function chooseStartIndex(params, playlist, fallbackParams) {
+            var index = -1;
+
+            if (params && params.playlist_index !== undefined) {
+                index = Number(params.playlist_index || 0);
+            }
+
+            if (index < 0 && params && params.ddd_start_index !== undefined) {
+                index = Number(params.ddd_start_index || 0);
+            }
+
+            if (index < 0 && params && params.start_index !== undefined) {
+                index = Number(params.start_index || 0);
+            }
+
+            if (index < 0 && params && params.url) {
+                index = PlaylistManager.findPlaylistIndexByUrl(playlist, params.url);
+            }
+
+            if (index < 0 && fallbackParams && fallbackParams.url) {
+                index = PlaylistManager.findPlaylistIndexByUrl(playlist, fallbackParams.url);
+            }
+
+            /**
+             * Критично:
+             * params.file_index — это индекс файла TorrServer.
+             * Его нельзя использовать как playlist index.
+             */
+            if (index < 0) index = 0;
+
+            if (Array.isArray(playlist) && playlist.length) {
+                if (index < 0) index = 0;
+                if (index >= playlist.length) index = 0;
+            }
+
+            return index;
+        }
+
+        function attach(params, movie, timelineHash, fallbackParams) {
+            if (!Utils.shouldUseDDDLayer()) return params;
+            if (!params || !params.url || !Utils.isStreamUrl(params.url)) return params;
+
+            var originalUrl = Utils.stripFragment(params.url);
+
+            var season = Number(params.season || (fallbackParams && fallbackParams.season) || 0);
+            var episode = Number(params.episode || (fallbackParams && fallbackParams.episode) || 0);
+
+            if (!season || !episode) {
+                var se = Utils.extractSE(params);
+
+                if (se.season && se.episode) {
+                    season = se.season;
+                    episode = se.episode;
+                }
+            }
+
+            var playlist = null;
+
+            if (Array.isArray(params.playlist)) {
+                playlist = PlaylistManager.normalize(params.playlist);
+            }
+
+            if (!playlist && fallbackParams && Array.isArray(fallbackParams.playlist)) {
+                playlist = PlaylistManager.normalize(fallbackParams.playlist);
+            }
+
+            var matchedIndex = playlist
+                ? PlaylistManager.findPlaylistIndexByUrl(playlist, originalUrl)
+                : -1;
+
+            var startIndex = chooseStartIndex(params, playlist, fallbackParams);
+
+            var sid = makeSid(movie, timelineHash, season, episode);
+
+            var session = {
+                sid: sid,
+                token: makeToken(sid),
+                host: host,
+                port: CONFIG.dddPort,
+                ts: Utils.now(),
+
+                movie: movie || null,
+                movie_id: movie ? (movie.id || movie.movie_id) : null,
+                movie_key: movie ? StorageManager.getMovieKey(movie) : '',
+                original_title: movie ? (movie.original_name || movie.original_title || movie.name || movie.title || '') : '',
+
+                title: params.title || '',
+                season: season,
+                episode: episode,
+                startIndex: startIndex,
+                timelineHash: timelineHash || '',
+                playlistMeta: [],
+                playlistClean: null
+            };
+
+            if (playlist && playlist.length) {
+                var cleanPlaylist = PlaylistManager.clonePlaylist(playlist);
+
+                session.playlistClean = cleanPlaylist;
+                session.playlistMeta = PlaylistManager.buildMeta(
+                    movie,
+                    cleanPlaylist,
+                    startIndex,
+                    season,
+                    episode
+                );
+
+                for (var i = 0; i < playlist.length; i++) {
+                    playlist[i].url = appendFragment(playlist[i].url, session, i, startIndex);
+                }
+
+                params.playlist = playlist;
+
+                var hasExplicitPlaylistIndex =
+                    params.playlist_index !== undefined ||
+                    params.ddd_start_index !== undefined ||
+                    params.start_index !== undefined;
+
+                var canReplaceUrlByPlaylist =
+                    hasExplicitPlaylistIndex ||
+                    matchedIndex >= 0;
+
+                if (
+                    canReplaceUrlByPlaylist &&
+                    playlist[startIndex] &&
+                    playlist[startIndex].url
+                ) {
+                    params.url = playlist[startIndex].url;
+
+                    if (playlist[startIndex].title) {
+                        params.title = playlist[startIndex].title;
+                    }
+                } else {
+                    params.url = appendFragment(originalUrl, session, startIndex, startIndex);
+                }
+            } else {
+                session.playlistMeta = [
+                    {
+                        index: startIndex,
+                        title: params.title || '',
+                        season: season,
+                        episode: episode,
+                        timelineHash: timelineHash || '',
+                        url: Utils.stripFragment(params.url)
+                    }
+                ];
+
+                params.url = appendFragment(params.url, session, startIndex, startIndex);
+            }
+
+            params.playlist_index = startIndex;
+            params.ddd_session = {
+                sid: session.sid,
+                port: session.port,
+                startIndex: session.startIndex
+            };
+
+            activeSession = session;
+            StorageManager.saveDDDSession(session);
+
+            Utils.noty(
+                'attach pl=' + session.playlistMeta.length +
+                ' start=' + startIndex +
+                ' S' + season +
+                'E' + episode,
+                false,
+                2
+            );
+
+            Utils.log('DDD attached', session);
+
+            return params;
+        }
+
+        function getSession() {
+            if (activeSession) return activeSession;
+
+            activeSession = StorageManager.getDDDSession();
+
+            return activeSession;
+        }
+
+        function fetchJson(url, timeoutMs) {
+            timeoutMs = timeoutMs || CONFIG.dddFetchTimeoutMs;
+
+            var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+
+            var timer = controller
+                ? setTimeout(function () {
+                    try {
+                        controller.abort();
+                    } catch (e) {}
+                }, timeoutMs)
+                : null;
+
+            return fetch(url, {
+                method: 'GET',
+                cache: 'no-store',
+                mode: 'cors',
+                signal: controller ? controller.signal : undefined
+            }).then(function (response) {
+                return response.text().then(function (text) {
+                    if (!response.ok) {
+                        throw new Error('HTTP ' + response.status + ': ' + text);
+                    }
+
+                    try {
+                        return JSON.parse(text);
+                    } catch (e) {
+                        return text;
+                    }
+                });
+            }).finally(function () {
+                if (timer) clearTimeout(timer);
+            });
+        }
+
+        function normalizeEvents(data) {
+            if (Array.isArray(data)) return data;
+            if (data && Array.isArray(data.value)) return data.value;
+            if (data && Array.isArray(data.Value)) return data.Value;
+
+            return [];
+        }
+
+        function hasPosition(event) {
+            return !!(
+                event &&
+                event.payload &&
+                (
+                    event.payload.position !== undefined ||
+                    event.payload.positionSec !== undefined
+                )
+            );
+        }
+
+        function eventTs(event, fallbackIndex) {
+            if (!event) return fallbackIndex || 0;
+
+            return Number(
+                event.ts ||
+                (event.payload && event.payload.ts) ||
+                fallbackIndex ||
+                0
+            );
+        }
+
+        function chooseBestEvent(state, eventsRaw) {
+            var events = normalizeEvents(eventsRaw);
+            var candidates = [];
+
+            for (var i = 0; i < events.length; i++) {
+                if (events[i] && events[i].payload && hasPosition(events[i])) {
+                    events[i].__order = i + 1;
+                    candidates.push(events[i]);
+                }
+            }
+
+            if (state && state.payload && hasPosition(state)) {
+                state.__order = events.length + 1;
+                candidates.push(state);
+            }
+
+            candidates.sort(function (a, b) {
+                return eventTs(b, b.__order) - eventTs(a, a.__order);
+            });
+
+            return candidates[0] || state || null;
+        }
+
+        function readPayloadIndex(payload, session) {
+            payload = payload || {};
+
+            var fields = [
+                'ddd_i',
+                'playlistIndex',
+                'playlist_index',
+                'windowIndex',
+                'mediaItemIndex',
+                'itemIndex',
+                'index'
+            ];
+
+            for (var i = 0; i < fields.length; i++) {
+                var key = fields[i];
+
+                if (payload[key] !== undefined && payload[key] !== null) {
+                    return Number(payload[key] || 0);
+                }
+            }
+
+            return Number(session.startIndex || 0);
+        }
+
+        function resolveMeta(session, payload) {
+            payload = payload || {};
+
+            var index = readPayloadIndex(payload, session);
+            var uri = payload.uri || payload.url || payload.src || '';
+
+            var meta = PlaylistManager.findMetaByIndexOrUrl(session, index, uri);
+
+            if (meta) return meta;
+
+            var se = Utils.extractSE(payload);
+
+            return {
+                index: index,
+                title: payload.title || session.title || '',
+                season: se.season || session.season || 0,
+                episode: se.episode || session.episode || 0,
+                timelineHash: session.timelineHash || '',
+                url: Utils.stripFragment(uri || '')
+            };
+        }
+
+        function updateStreamTimestampFromDDD(session, meta, payload) {
+            if (!session || !session.movie || !meta || !meta.timelineHash) return;
+
+            try {
+                var uri = meta.url || payload.uri || payload.url || payload.src || '';
+                var parsed = Utils.parseStreamUrl(uri);
+
+                if (!parsed) return;
+
+                StorageManager.saveStreamParams(meta.timelineHash, {
+                    file_name: parsed.file_name,
+                    torrent_link: parsed.torrent_link,
+                    file_index: parsed.file_index,
+
+                    playlist_index: meta.index,
+                    title: session.movie.name || session.movie.title || session.title || '',
+                    original_title: session.movie.original_name || session.movie.original_title || session.original_title || '',
+                    movie_id: session.movie.id || session.movie.movie_id || session.movie_id,
+                    movie_key: session.movie_key,
+
+                    season: meta.season,
+                    episode: meta.episode,
+                    episode_title: meta.title || payload.title || '',
+
+                    playlist: session.playlistClean || undefined
+                }, true);
+            } catch (e) {
+                Utils.warn('updateStreamTimestampFromDDD failed', e);
+            }
+        }
+
+        function updateTimelineFromEvent(session, event) {
+            if (!session || !event || !event.payload) return false;
+
+            var payload = event.payload;
+            var sessionId = session.sid || event.sessionId || payload.sessionId || 'default';
+            var eventTime = eventTs(event, 0);
+
+            if (
+                eventTime &&
+                lastEventTsBySession[sessionId] &&
+                eventTime < lastEventTsBySession[sessionId]
             ) {
                 return false;
             }
 
-            state.lastBridgeCanonicalKey = bridgeKey;
-            state.lastBridgeCanonicalAt = now();
+            if (eventTime) {
+                lastEventTsBySession[sessionId] = eventTime;
+            }
 
-            var hash = generateTimelineHash(getActiveMovie() || record, record.season, record.episode);
+            var positionSec = Utils.msToSeconds(payload.position);
+            var durationSec = Utils.msToSeconds(payload.duration);
 
-            if (!hash) {
-                noty('bridge skip no hash S' + record.season + 'E' + record.episode, true);
+            if (!positionSec && payload.positionSec !== undefined) {
+                positionSec = Number(payload.positionSec || 0);
+            }
+
+            if (!durationSec && payload.durationSec !== undefined) {
+                durationSec = Number(payload.durationSec || 0);
+            }
+
+            if (positionSec < CONFIG.minSaveSeconds) return false;
+            if (durationSec < CONFIG.minDurationSeconds) return false;
+
+            var meta = resolveMeta(session, payload);
+
+            if (!meta.timelineHash && session.movie && meta.season && meta.episode) {
+                meta.timelineHash = StorageManager.generateTimelineHash(
+                    session.movie,
+                    meta.season,
+                    meta.episode
+                );
+            }
+
+            if (!meta.timelineHash) {
+                Utils.warn('No timeline hash for DDD event');
                 return false;
             }
 
-            return saveCanonicalRecord(hash, record, 'bridge');
-
-        } catch (e) {
-            warn('handleBridgeBody failed', e);
-            return false;
-        }
-    }
-
-    // ============================================================
-    // Storage canonicalization for existing records
-    // ============================================================
-
-    function summarizeRecord(record) {
-        if (!record || typeof record !== 'object') return 'null';
-
-        return [
-            'S' + compact(record.season || 0) + 'E' + compact(record.episode || 0),
-            'fi=' + compact(record.file_index),
-            'pi=' + compact(record.playlist_index),
-            'pl=' + (Array.isArray(record.playlist) ? record.playlist.length : 0),
-            't=' + compact(record.timestamp),
-            'title=' + compact(record.title || record.original_title || '', 18),
-            'ep=' + compact(record.episode_title || '', 18)
-        ].join(' ');
-    }
-
-    function summarizePointer(pointer) {
-        if (!pointer || typeof pointer !== 'object') return 'null';
-
-        return [
-            'hash=' + compact(pointer.hash, 10),
-            'S' + compact(pointer.season || 0) + 'E' + compact(pointer.episode || 0),
-            't=' + compact(pointer.timestamp)
-        ].join(' ');
-    }
-
-    function getLatestRecordInfo(map) {
-        var latest = null;
-        var latestHash = '';
-
-        if (!map || typeof map !== 'object') return null;
-
-        Object.keys(map).forEach(function (hash) {
-            if (hash === '__last_by_movie') return;
-
-            var item = map[hash];
-
-            if (!item || typeof item !== 'object') return;
-            if (!item.file_name && !item.torrent_link && !item.playlist && !item.url && !item.uri) return;
-
-            if (!latest || toInt(item.timestamp) > toInt(latest.timestamp)) {
-                latest = item;
-                latestHash = hash;
-            }
-        });
-
-        return latest ? {
-            hash: latestHash,
-            record: latest
-        } : null;
-    }
-
-    function getPointerPreview(map) {
-        if (!map || typeof map !== 'object' || !map.__last_by_movie) return 'ptr=none';
-
-        var keys = Object.keys(map.__last_by_movie);
-
-        if (!keys.length) return 'ptr=empty';
-
-        var lastKey = keys[keys.length - 1];
-
-        return 'ptrs=' + keys.length +
-            ' lastKey=' + compact(lastKey, 16) +
-            ' ' + summarizePointer(map.__last_by_movie[lastKey]);
-    }
-
-    function canonicalizeJapaneseAnimeDddRecord(record, hash) {
-        if (!record || typeof record !== 'object') return false;
-
-        rememberMovieContext(record, 'storage-record');
-
-        if (!isJapaneseAnimeContext(record, null)) return false;
-
-        var playlist = normalizePlaylist(record.playlist || []);
-        var recordIdentity = parseStreamIdentityFromObject(record);
-
-        var found = findPlaylistItemByIdentity(playlist, recordIdentity);
-        var item = found.item || {};
-        var exactPlaylistIndex = found.index;
-
-        var fileName = (
-            record.file_name ||
-            (recordIdentity && recordIdentity.file_name) ||
-            item.file_name ||
-            item.title ||
-            item.name ||
-            record.episode_title ||
-            ''
-        );
-
-        var parsedSE = parseSeasonEpisodeFromFileName(fileName);
-        var itemSE = getItemSeasonEpisode(item);
-
-        var season = parsedSE.season || itemSE.season || toInt(record.season);
-        var episode = parsedSE.episode || itemSE.episode || toInt(record.episode);
-        var source = parsedSE.source || itemSE.source || 'old_record';
-
-        if (episode && !season) {
-            season = itemSE.season || toInt(record.season) || 1;
-            source = source + '+fallback_season';
-        }
-
-        /*
-         * Важно:
-         * file_index и episode-1 НЕ используются для вычисления playlist_index.
-         */
-        var changed = false;
-
-        if (season && toInt(record.season) !== season) {
-            record.season = season;
-            changed = true;
-        }
-
-        if (episode && toInt(record.episode) !== episode) {
-            record.episode = episode;
-            changed = true;
-        }
-
-        if (recordIdentity) {
-            if (recordIdentity.file_name && record.file_name !== recordIdentity.file_name) {
-                record.file_name = recordIdentity.file_name;
-                changed = true;
-            }
-
-            if (recordIdentity.torrent_link && record.torrent_link !== recordIdentity.torrent_link) {
-                record.torrent_link = recordIdentity.torrent_link;
-                changed = true;
-            }
-
-            if (hasNumber(recordIdentity.file_index) && toInt(record.file_index) !== toInt(recordIdentity.file_index)) {
-                record.file_index = toInt(recordIdentity.file_index);
-                changed = true;
-            }
-        }
-
-        if (exactPlaylistIndex >= 0 && toInt(record.playlist_index) !== exactPlaylistIndex) {
-            record.playlist_index = exactPlaylistIndex;
-            record.ddd_start_index = exactPlaylistIndex;
-            record.start_index = exactPlaylistIndex;
-            changed = true;
-        }
-
-        if (!record.episode_title) {
-            record.episode_title = item.episode_title || item.title || item.name || fileName || '';
-            if (record.episode_title) changed = true;
-        }
-
-        if (record.source !== 'ddd') {
-            record.source = 'ddd';
-            changed = true;
-        }
-
-        if (record.ddd_canonical_source !== source) {
-            record.ddd_canonical_source = source;
-            changed = true;
-        }
-
-        if (changed) {
-            noty(
-                'storage canonical ' +
-                'S' + record.season + 'E' + record.episode +
-                ' src=' + source +
-                ' fi=' + compact(record.file_index) +
-                ' pi=' + compact(record.playlist_index) +
-                ' hash=' + compact(hash, 8),
-                true
+            var percent = Utils.clamp(
+                Math.round((positionSec / durationSec) * 100),
+                0,
+                100
             );
 
+            if (percent >= CONFIG.finishPercent) {
+                percent = 100;
+                positionSec = durationSec;
+            }
+
+            var current = Utils.now();
+            var lastSave = lastSavedByHash[meta.timelineHash] || 0;
+
+            if (percent < 100 && current - lastSave < CONFIG.dddTimelineSaveIntervalMs) {
+                return false;
+            }
+
+            lastSavedByHash[meta.timelineHash] = current;
+
             try {
-                console.log('[DDD DBG storage anime canonical]', hash, record, {
-                    source: source,
-                    recordIdentity: recordIdentity,
-                    exactPlaylistIndex: exactPlaylistIndex,
-                    item: item
+                if (Lampa.Timeline && Lampa.Timeline.update) {
+                    Lampa.Timeline.update({
+                        hash: meta.timelineHash,
+                        percent: percent,
+                        time: positionSec,
+                        duration: durationSec
+                    });
+                } else {
+                    Utils.warn('Lampa.Timeline.update not found');
+                    return false;
+                }
+            } catch (e) {
+                Utils.error('Timeline update failed', e);
+                return false;
+            }
+
+            updateStreamTimestampFromDDD(session, meta, payload);
+
+            if (CONFIG.debugNotyPollSuccess || CONFIG.debugNotyLevel >= 3) {
+                Utils.noty(
+                    'tl S' + (meta.season || 0) +
+                    'E' + (meta.episode || 0) +
+                    ' i=' + meta.index +
+                    ' ' + Utils.formatSeconds(positionSec) +
+                    '/' + Utils.formatSeconds(durationSec) +
+                    ' ' + percent + '%',
+                    false,
+                    3
+                );
+            }
+
+            return true;
+        }
+
+        function probe(showFail) {
+            var session = getSession();
+
+            if (!session || !session.sid || !session.token) {
+                if (showFail) Utils.noty('no session', true, 0);
+                return Promise.resolve(false);
+            }
+
+            var pingUrl = host + '/ping';
+            var stateUrl = host + '/state?sid=' + encodeURIComponent(session.sid) + '&token=' + encodeURIComponent(session.token);
+            var eventsUrl = host + '/events?sid=' + encodeURIComponent(session.sid) + '&token=' + encodeURIComponent(session.token);
+
+            var stateData = null;
+
+            return fetchJson(pingUrl, CONFIG.dddFetchTimeoutMs)
+                .then(function () {
+                    return fetchJson(stateUrl, CONFIG.dddFetchTimeoutMs);
+                })
+                .then(function (state) {
+                    stateData = state;
+                    return fetchJson(eventsUrl, CONFIG.dddFetchTimeoutMs);
+                })
+                .then(function (events) {
+                    var best = chooseBestEvent(stateData, events);
+
+                    if (!best || !best.payload) {
+                        if (showFail) Utils.noty('no payload', true, 0);
+                        return false;
+                    }
+
+                    return updateTimelineFromEvent(session, best);
+                })
+                .catch(function (e) {
+                    Utils.log('DDD probe failed', e);
+
+                    if (
+                        showFail ||
+                        (
+                            CONFIG.debugNotyPollFail &&
+                            CONFIG.debugNotyLevel >= 3
+                        )
+                    ) {
+                        Utils.noty(
+                            'bridge fail: ' + String(e.message || e).slice(0, 90),
+                            showFail,
+                            showFail ? 0 : 3
+                        );
+                    }
+
+                    return false;
+                });
+        }
+
+        function startPolling() {
+            if (pollTimer) return;
+
+            pollTimer = setInterval(function () {
+                probe(false);
+            }, CONFIG.dddPollIntervalMs);
+        }
+
+        function installWakeHooks() {
+            try {
+                document.addEventListener('visibilitychange', function () {
+                    if (!document.hidden) {
+                        setTimeout(function () {
+                            probe(true);
+                        }, 800);
+                    }
+                });
+            } catch (e) {}
+
+            try {
+                window.addEventListener('focus', function () {
+                    setTimeout(function () {
+                        probe(true);
+                    }, 800);
+                });
+            } catch (e) {}
+
+            try {
+                Lampa.Listener.follow('app', function (event) {
+                    if (event && (event.type === 'ready' || event.type === 'resume')) {
+                        setTimeout(function () {
+                            probe(true);
+                        }, 1000);
+                    }
                 });
             } catch (e) {}
         }
 
-        return changed;
-    }
+        function exposeDebugApi() {
+            window.ContinueWatchDDD = {
+                version: PLUGIN_VERSION,
+                config: CONFIG,
+                probe: function () {
+                    return probe(true);
+                },
+                session: function () {
+                    return getSession();
+                },
+                host: host,
+                storage: function () {
+                    return StorageManager.getParams();
+                }
+            };
+        }
 
-    function canonicalizeJapaneseAnimeStorageMap(map) {
-        if (!map || typeof map !== 'object') return false;
+        function init() {
+            if (!CONFIG.dddEnabled) return;
 
-        var changed = false;
+            startPolling();
+            installWakeHooks();
+            exposeDebugApi();
 
-        Object.keys(map).forEach(function (hash) {
-            if (hash === '__last_by_movie') return;
+            setTimeout(function () {
+                probe(false);
+            }, 1500);
+        }
 
-            var record = map[hash];
-
-            if (!record || typeof record !== 'object') return;
-
-            if (canonicalizeJapaneseAnimeDddRecord(record, hash)) {
-                changed = true;
-                if (updateLastPointer(map, hash, record)) changed = true;
-            }
-        });
-
-        return changed;
-    }
+        return {
+            init: init,
+            attach: attach,
+            probe: probe,
+            getSession: getSession
+        };
+    })();
 
     // ============================================================
-    // Diagnostics inspectors
+    // PlayerManager
     // ============================================================
 
-    function inspectStorageSet(key, value) {
-        if (typeof key !== 'string') return;
+    var PlayerManager = (function () {
+        var patched = false;
+        var listenersReady = false;
 
-        if (isSessionStorageKey(key)) {
-            rememberSession(value, key, 'storage-set');
+        var currentEpisodeHash = null;
+        var lastSavedHash = null;
+        var lastKnownMovie = null;
 
-            noty(
-                'session set key=' + key +
-                ' sid=' + compact(value && value.sid, 10) +
-                ' start=' + compact(value && (value.start_index || value.ddd_start_index || 0)) +
-                ' meta=' + (
-                    value &&
-                    (
-                        value.meta && value.meta.length ||
-                        value.playlist && value.playlist.length ||
-                        value.items && value.items.length ||
-                        0
-                    )
-                ) +
-                ' lang=' + compact(getOriginalLanguage(value && value.movie || value) || '-', 8),
-                true
-            );
+        var GLOBAL_MOVIE_KEY = '__continuewatch_ddd_last_movie';
+
+        function cacheMovie(movie) {
+            if (!movie) return;
 
             try {
-                console.log('[DDD DBG session set full]', key, value);
+                window[GLOBAL_MOVIE_KEY] = movie;
+            } catch (e) {}
+        }
+
+        function getCachedMovie() {
+            try {
+                return window[GLOBAL_MOVIE_KEY] || null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function getMovieFromParams(params) {
+            var movie = null;
+
+            if (params) {
+                movie = params.card || params.movie || null;
+            }
+
+            if (!movie) {
+                try {
+                    var activity = Lampa.Activity.active();
+
+                    if (activity && activity.movie) {
+                        movie = activity.movie;
+                    }
+                } catch (e) {}
+            }
+
+            if (!movie && lastKnownMovie) movie = lastKnownMovie;
+            if (!movie) movie = getCachedMovie();
+
+            if (movie) {
+                lastKnownMovie = movie;
+                cacheMovie(movie);
+            }
+
+            return movie;
+        }
+
+        function getTimelineView(hash) {
+            try {
+                if (Lampa.Timeline && Lampa.Timeline.view) {
+                    return Lampa.Timeline.view(hash);
+                }
             } catch (e) {}
 
-            return;
+            return null;
         }
 
-        if (!isParamsStorageKey(key)) return;
+        function saveFromPlayerParams(params, movie) {
+            if (!params || !movie) return null;
 
-        state.activeParamsStorageKey = key;
+            if (!params.url || !Utils.isStreamUrl(params.url)) return null;
 
-        if (value && typeof value === 'object') {
-            canonicalizeJapaneseAnimeStorageMap(value);
-        }
+            var se = Utils.extractSE(params);
+            var season = se.season || Number(params.season || 0);
+            var episode = se.episode || Number(params.episode || 0);
 
-        var latest = getLatestRecordInfo(value);
-        var latestText = latest
-            ? ('latestHash=' + compact(latest.hash, 10) + ' ' + summarizeRecord(latest.record))
-            : 'latest=none';
+            var timelineHash = StorageManager.generateTimelineHash(movie, season, episode);
 
-        noty(
-            'storage set key=' + key +
-            ' keys=' + (value && typeof value === 'object' ? Object.keys(value).length : 0) +
-            ' ' + latestText,
-            true
-        );
+            if (!timelineHash) return null;
 
-        noty(getPointerPreview(value), false);
+            var parsed = Utils.parseStreamUrl(params.url);
 
-        try {
-            console.log('[DDD DBG storage set full]', key, value);
-            if (latest) console.log('[DDD DBG storage latest]', latest.hash, latest.record);
-            if (value && value.__last_by_movie) console.log('[DDD DBG storage pointers]', value.__last_by_movie);
-        } catch (e) {}
-    }
+            if (!parsed) return timelineHash;
 
-    function inspectStorageGet(key, value) {
-        if (typeof key !== 'string') return;
+            var playlistToSave = null;
+            var playlistIndex = -1;
 
-        if (isSessionStorageKey(key)) {
-            rememberSession(value, key, 'storage-get');
-            return;
-        }
-
-        if (!isParamsStorageKey(key)) return;
-
-        state.activeParamsStorageKey = key;
-
-        if (value && typeof value === 'object') {
-            canonicalizeJapaneseAnimeStorageMap(value);
-        }
-
-        try {
-            console.log('[DDD DBG storage get]', key, value);
-        } catch (e) {}
-
-        var latest = getLatestRecordInfo(value);
-        var text = latest ? summarizeRecord(latest.record) : 'none';
-
-        noty('storage get key=' + key + ' latest=' + text, false);
-    }
-
-    function inspectPlayerParams(params) {
-        if (!params || typeof params !== 'object') return;
-
-        rememberMovieContext(params, 'player-params');
-
-        var playlist = normalizePlaylist(params.playlist || []);
-        var pi = 0;
-
-        if (hasNumber(params.playlist_index)) pi = toInt(params.playlist_index);
-        else if (hasNumber(params.ddd_start_index)) pi = toInt(params.ddd_start_index);
-        else if (hasNumber(params.start_index)) pi = toInt(params.start_index);
-        else if (hasNumber(params.playlistIndex)) pi = toInt(params.playlistIndex);
-
-        var item = playlist[pi] || null;
-        var identity = parseStreamIdentityFromObject(item || params);
-        var se = getItemSeasonEpisode(item || params);
-
-        var text = [
-            'play',
-            'pi=' + pi,
-            'pl=' + playlist.length,
-            'pS=' + compact(params.season || 0) + ' pE=' + compact(params.episode || 0),
-            'iS=' + compact(se.season || 0),
-            'iE=' + compact(se.episode || 0),
-            'fi=' + compact(identity && identity.file_index),
-            'lang=' + compact(getOriginalLanguage(params) || getOriginalLanguage(getActiveMovie()) || '-', 8),
-            'it=' + compact(item && (item.title || item.name || item.episode_title || ''), 18)
-        ].join(' ');
-
-        noty(text, true);
-
-        try {
-            console.log('[DDD DBG Player.play params]', params, 'selectedItem', item, 'identity', identity, 'se', se);
-        } catch (e) {}
-    }
-
-    // ============================================================
-    // Patches
-    // ============================================================
-
-    function patchStorage() {
-        try {
-            if (!window.Lampa || !Lampa.Storage || Lampa.Storage.__ddd_diag_patch) return;
-
-            var originalSet = Lampa.Storage.set;
-            var originalGet = Lampa.Storage.get;
-            var originalSync = Lampa.Storage.sync;
-
-            if (typeof originalSet === 'function') {
-                Lampa.Storage.set = function (key, value) {
-                    if (!state.suppressStoragePatch && isDddStorageKey(key)) {
-                        inspectStorageSet(key, value);
-                    }
-
-                    return originalSet.apply(this, arguments);
-                };
+            if (Array.isArray(params.playlist)) {
+                playlistToSave = PlaylistManager.normalize(params.playlist);
             }
 
-            if (typeof originalGet === 'function') {
-                Lampa.Storage.get = function (key) {
-                    var value = originalGet.apply(this, arguments);
+            if (playlistToSave) {
+                playlistIndex = PlaylistManager.findPlaylistIndexByUrl(playlistToSave, params.url);
 
-                    if (!state.suppressStoragePatch && isDddStorageKey(key)) {
-                        inspectStorageGet(key, value);
-                    }
+                if (playlistIndex < 0 && params.playlist_index !== undefined) {
+                    playlistIndex = Number(params.playlist_index || 0);
+                }
 
-                    return value;
-                };
+                if (playlistIndex < 0 && params.ddd_start_index !== undefined) {
+                    playlistIndex = Number(params.ddd_start_index || 0);
+                }
+
+                if (playlistIndex < 0) playlistIndex = 0;
+
+                PlaylistManager.saveIfBetter(timelineHash, playlistToSave);
             }
 
-            if (typeof originalSync === 'function') {
-                Lampa.Storage.sync = function (key) {
-                    if (!state.suppressStoragePatch && isDddStorageKey(key)) {
-                        noty('storage sync key=' + key, false);
-                    }
+            StorageManager.saveStreamParams(timelineHash, {
+                file_name: parsed.file_name,
+                torrent_link: parsed.torrent_link,
+                file_index: parsed.file_index,
 
-                    return originalSync.apply(this, arguments);
-                };
-            }
+                playlist_index: playlistIndex >= 0 ? playlistIndex : undefined,
 
-            Lampa.Storage.__ddd_diag_patch = true;
+                title: movie.name || movie.title || '',
+                original_title: movie.original_name || movie.original_title || movie.name || movie.title || '',
+                movie_id: movie.id || movie.movie_id,
+                movie_key: StorageManager.getMovieKey(movie),
 
-            noty('storage patch ready ' + PLUGIN_VERSION, true);
-        } catch (e) {
-            warn('storage patch failed', e);
+                season: season,
+                episode: episode,
+                episode_title: params.episode_title || params.title || '',
+
+                playlist: playlistToSave || undefined
+            }, true);
+
+            currentEpisodeHash = timelineHash;
+            lastSavedHash = timelineHash;
+
+            return timelineHash;
         }
-    }
 
-    function patchPlayer() {
-        try {
-            if (!window.Lampa || !Lampa.Player || !Lampa.Player.play || Lampa.Player.__ddd_diag_patch) return;
+        function patchPlayer() {
+            if (patched) return;
+
+            if (!Lampa.Player || !Lampa.Player.play) {
+                setTimeout(patchPlayer, 500);
+                return;
+            }
+
+            if (Lampa.Player.__continue_watch_ddd_patched_v3) {
+                patched = true;
+                return;
+            }
 
             var originalPlay = Lampa.Player.play;
 
             Lampa.Player.play = function (params) {
-                inspectPlayerParams(params);
-                return originalPlay.apply(this, arguments);
-            };
+                try {
+                    if (params && params.url && Utils.isStreamUrl(params.url)) {
+                        var movie = getMovieFromParams(params);
+                        var timelineHash = movie ? saveFromPlayerParams(params, movie) : null;
 
-            Lampa.Player.__ddd_diag_patch = true;
-
-            noty('player patch ready', false);
-        } catch (e) {
-            warn('player patch failed', e);
-        }
-    }
-
-    function patchFetch() {
-        try {
-            if (!window.fetch || window.fetch.__ddd_diag_patch) return;
-
-            var originalFetch = window.fetch;
-
-            var patchedFetch = function () {
-                var input = arguments[0];
-                var url = typeof input === 'string' ? input : (input && input.url) || '';
-                var bridge = isBridgeUrl(url);
-                var started = now();
-
-                if (bridge) {
-                    noty('bridge req ' + compact(url, 90), true);
-
-                    try {
-                        console.log('[DDD DBG bridge fetch request]', url, arguments);
-                    } catch (e) {}
-                }
-
-                return originalFetch.apply(this, arguments).then(function (response) {
-                    if (!bridge) return response;
-
-                    noty('bridge res ' + response.status + ' ' + compact(url, 70), true);
-
-                    try {
-                        var clone = response.clone();
-
-                        clone.text().then(function (body) {
-                            try {
-                                console.log(
-                                    '[DDD DBG bridge fetch response]',
-                                    url,
-                                    'status=' + response.status,
-                                    'ms=' + (now() - started),
-                                    body
-                                );
-                            } catch (e) {}
-
-                            if (SHOW_BRIDGE_BODY_IN_NOTY) {
-                                noty('bridge body ' + compact(body || '', 700), false);
-                            }
-
-                            handleBridgeBody(url, body);
-                        }).catch(function (e) {
-                            warn('bridge body read failed', e, isAbortError(e));
-                        });
-                    } catch (e) {
-                        warn('bridge clone/read setup failed', e, isAbortError(e));
-                    }
-
-                    return response;
-                }).catch(function (e) {
-                    if (bridge) {
-                        /*
-                         * AbortError от polling/fetch timeout не считаем причиной бага.
-                         */
-                        if (isAbortError(e)) {
-                            try {
-                                console.warn('[DDD DBG] bridge aborted', url, e);
-                            } catch (ee) {}
-
-                            noty('bridge aborted', false);
-                        } else {
-                            warn('bridge fail ' + (e && e.message || e), e);
+                        if (movie && timelineHash) {
+                            params = DDDLayer.attach(params, movie, timelineHash, {
+                                season: params.season,
+                                episode: params.episode,
+                                file_index: params.file_index,
+                                playlist_index: params.playlist_index,
+                                url: params.url,
+                                playlist: params.playlist
+                            });
                         }
                     }
+                } catch (e) {
+                    Utils.error('Player.play patch failed', e);
+                }
 
-                    throw e;
-                });
+                return originalPlay.call(this, params);
             };
 
-            patchedFetch.__ddd_diag_patch = true;
-            window.fetch = patchedFetch;
+            Lampa.Player.__continue_watch_ddd_patched_v3 = true;
+            patched = true;
 
-            noty('fetch patch ready', false);
-        } catch (e) {
-            warn('fetch patch failed', e);
+            Utils.noty('player patched', false, 1);
+            Utils.log('Player.play patched');
+        }
+
+        function handlePlayerEvent(data) {
+            if (!data) return;
+
+            var movie = getMovieFromParams(data);
+
+            if (!movie) return;
+
+            var timelineHash = saveFromPlayerParams(data, movie);
+
+            if (timelineHash && timelineHash === lastSavedHash) {
+                currentEpisodeHash = timelineHash;
+            }
+        }
+
+        function setupListeners() {
+            if (listenersReady) return;
+
+            if (!Lampa.Player || !Lampa.Player.listener) {
+                setTimeout(setupListeners, 500);
+                return;
+            }
+
+            try {
+                Lampa.Player.listener.follow('start', function (data) {
+                    try {
+                        handlePlayerEvent(data);
+                    } catch (e) {
+                        Utils.error('Player start handler failed', e);
+                    }
+                });
+
+                Lampa.Player.listener.follow('change', function (data) {
+                    try {
+                        handlePlayerEvent(data);
+                    } catch (e) {
+                        Utils.error('Player change handler failed', e);
+                    }
+                });
+
+                Lampa.Player.listener.follow('destroy', function () {
+                    try {
+                        DDDLayer.probe(true);
+                    } catch (e) {}
+
+                    currentEpisodeHash = null;
+                });
+
+                listenersReady = true;
+
+                Utils.noty('listeners installed', false, 1);
+                Utils.log('Player listeners installed');
+            } catch (e) {
+                Utils.error('Player listeners setup failed', e);
+            }
+        }
+
+        function launchFromContinue(movie, params) {
+            if (!movie || !params) return;
+
+            var url = StorageManager.buildStreamUrl(params);
+
+            if (!url) return;
+
+            var timelineHash = StorageManager.generateTimelineHash(movie, params.season, params.episode);
+            var timeline = getTimelineView(timelineHash);
+
+            var restoreTime = 0;
+            var restorePercent = 0;
+
+            if (timeline && timeline.time > 0) {
+                restoreTime = timeline.time;
+                restorePercent = timeline.percent || 0;
+            }
+
+            var playlist = PlaylistManager.getForLaunch(params);
+            var playlistIndex = -1;
+
+            if (playlist) {
+                if (params.playlist_index !== undefined) {
+                    playlistIndex = Number(params.playlist_index || 0);
+                }
+
+                if (playlistIndex < 0) {
+                    playlistIndex = PlaylistManager.findPlaylistIndexByUrl(playlist, url);
+                }
+
+                if (playlistIndex < 0) playlistIndex = 0;
+                if (playlistIndex >= playlist.length) playlistIndex = 0;
+            } else {
+                playlistIndex = 0;
+            }
+
+            StorageManager.saveStreamParams(timelineHash, {
+                file_name: params.file_name,
+                torrent_link: params.torrent_link,
+                file_index: params.file_index || 0,
+
+                playlist_index: playlistIndex,
+
+                title: movie.name || movie.title || '',
+                original_title: movie.original_name || movie.original_title || movie.name || movie.title || '',
+                movie_id: movie.id || movie.movie_id,
+                movie_key: StorageManager.getMovieKey(movie),
+
+                season: params.season || 0,
+                episode: params.episode || 0,
+                episode_title: params.episode_title || params.title || '',
+
+                playlist: playlist || undefined
+            }, true);
+
+            lastKnownMovie = movie;
+            cacheMovie(movie);
+
+            var playerData = {
+                url: url,
+                title: params.episode_title || params.title || movie.title || movie.name,
+                card: movie,
+
+                torrent_hash: params.torrent_link,
+
+                season: params.season,
+                episode: params.episode,
+
+                /**
+                 * file_index — индекс файла внутри TorrServer.
+                 */
+                file_index: params.file_index || 0,
+
+                /**
+                 * playlist_index — индекс элемента внутри Lampa playlist.
+                 */
+                playlist_index: playlistIndex,
+                ddd_start_index: playlistIndex,
+                start_index: playlistIndex,
+
+                timeline: timeline || {
+                    hash: timelineHash,
+                    percent: restorePercent,
+                    time: restoreTime,
+                    duration: 0
+                },
+
+                position: restoreTime > 10 ? restoreTime : -1,
+                playlist: playlist || undefined
+            };
+
+            Utils.noty(
+                'launch S' + (params.season || 0) +
+                'E' + (params.episode || 0) +
+                ' pi=' + playlistIndex +
+                ' fi=' + (params.file_index || 0) +
+                ' pl=' + (playlist ? playlist.length : 0) +
+                ' t=' + Utils.formatSeconds(restoreTime),
+                true,
+                1
+            );
+
+            if (restoreTime > 10) {
+                try {
+                    Lampa.Noty.show('Восстанавливаем: ' + Utils.formatSeconds(restoreTime));
+                } catch (e) {}
+            }
+
+            currentEpisodeHash = timelineHash;
+            lastSavedHash = timelineHash;
+
+            try {
+                Lampa.Player.play(playerData);
+
+                Lampa.Player.callback(function () {
+                    try {
+                        DDDLayer.probe(true);
+                    } catch (e) {}
+
+                    try {
+                        Lampa.Controller.toggle('content');
+                    } catch (e) {}
+                });
+            } catch (e) {
+                Utils.error('Continue launch failed', e);
+            }
+        }
+
+        return {
+            patchPlayer: patchPlayer,
+            setupListeners: setupListeners,
+            launchFromContinue: launchFromContinue
+        };
+    })();
+
+    // ============================================================
+    // UIManager
+    // ============================================================
+
+    var UIManager = (function () {
+        var debounceTimer = null;
+
+        function getTimelineView(hash) {
+            try {
+                if (Lampa.Timeline && Lampa.Timeline.view) {
+                    return Lampa.Timeline.view(hash);
+                }
+            } catch (e) {}
+
+            return null;
+        }
+
+function renderButtonContent(movie, params) {
+    params = params || {};
+
+    var timelineHash = StorageManager.generateTimelineHash(
+        movie,
+        params.season,
+        params.episode
+    );
+
+    var timeline = getTimelineView(timelineHash);
+
+    var percent = 0;
+    var timeText = '';
+
+    if (timeline && timeline.percent > 0) {
+        percent = Number(timeline.percent || 0);
+        timeText = Utils.formatSeconds(timeline.time || 0);
+    }
+
+    var season = Number(params.season || 0);
+    var episode = Number(params.episode || 0);
+
+    var label = 'Продолжить';
+
+    /**
+     * Сериал:
+     * Продолжить S1.E5 · 12:34
+     */
+    if (season > 0 && episode > 0) {
+        label += ' S' + season + '.E' + episode;
+
+        if (timeText) {
+            label += ' <span style="opacity:0.7;font-size:0.9em">· ' + timeText + '</span>';
         }
     }
 
-    function patchErrors() {
-        try {
-            if (window.__ddd_diag_errors_patch) return;
+    /**
+     * Фильм:
+     * Продолжить · 1:12:44
+     */
+    else if (timeText) {
+        label += ' <span style="opacity:0.7;font-size:0.9em">· ' + timeText + '</span>';
+    }
 
-            window.__ddd_diag_errors_patch = true;
+    var dash = (percent * 65.97 / 100).toFixed(2);
 
-            window.addEventListener('error', function (event) {
-                warn('script error ' + compact(event && event.message, 90), event);
-            });
+    return {
+        label: label,
+        dash: dash
+    };
+}
 
-            window.addEventListener('unhandledrejection', function (event) {
-                var reason = event && event.reason;
+        function createButton(movie, params) {
+            var content = renderButtonContent(movie, params);
+        
+            var html =
+                '<div class="full-start__button selector button--continue-watch-ddd" style="margin-top:0.5em;position:relative;max-width:100%;overflow:hidden;">' +
+                    '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" style="margin-right:0.5em;flex-shrink:0;">' +
+                        '<path d="M8 5v14l11-7L8 5z" fill="currentColor"></path>' +
+                        '<circle class="continue-watch-ddd-progress" cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="1.5" fill="none" ' +
+                            'stroke-dasharray="' + content.dash + ' 65.97" transform="rotate(-90 12 12)" style="opacity:0.5"></circle>' +
+                    '</svg>' +
+                    '<div class="continue-watch-ddd-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;">' + content.label + '</div>' +
+                '</div>';
+        
+            return $(html);
+        }
 
-                if (isAbortError(reason)) {
-                    try {
-                        console.warn('[DDD DBG] promise abort', reason);
-                    } catch (e) {}
+        function updateButton(button, movie, params) {
+            var content = renderButtonContent(movie, params);
 
+            button.find('.continue-watch-ddd-label').html(content.label);
+            button.find('.continue-watch-ddd-progress')
+                .attr('stroke-dasharray', content.dash + ' 65.97');
+        }
+
+        function handleClick(movie, button) {
+            if (debounceTimer) return;
+
+            var params = StorageManager.getLastStreamParams(movie);
+
+            if (!params) {
+                try {
+                    Lampa.Noty.show('Нет истории просмотров');
+                } catch (e) {}
+                return;
+            }
+
+            if (button) {
+                $(button).css('opacity', 0.5);
+            }
+
+            debounceTimer = setTimeout(function () {
+                debounceTimer = null;
+
+                if (button) {
+                    $(button).css('opacity', 1);
+                }
+            }, CONFIG.debounceDelayMs);
+
+            PlayerManager.launchFromContinue(movie, params);
+        }
+
+        function createStatusButton(movie) {
+            var html =
+                '<div class="full-start__button selector button--continue-watch-ddd-debug" style="margin-top:0.5em;position:relative;max-width:100%;overflow:hidden;">' +
+                    '<div>DDD статус</div>' +
+                '</div>';
+        
+            var button = $(html);
+        
+            bindStatusButton(button, movie);
+        
+            return button;
+        }
+
+        function bindStatusButton(button, movie) {
+            button.off('hover:enter').on('hover:enter', function () {
+                var params = StorageManager.getLastStreamParams(movie);
+                var session = DDDLayer.getSession();
+
+                if (!params) {
+                    Utils.noty('status: no history', true, 0);
                     return;
                 }
 
-                warn('promise rejection ' + compact(reason && reason.message || reason, 90), reason);
+                Utils.noty(
+                    'hist S' + (params.season || 0) +
+                    'E' + (params.episode || 0) +
+                    ' fi=' + (params.file_index !== undefined ? params.file_index : '-') +
+                    ' pi=' + (params.playlist_index !== undefined ? params.playlist_index : '-') +
+                    ' pl=' + (params.playlist ? params.playlist.length : 0),
+                    true,
+                    0
+                );
+
+                if (session) {
+                    setTimeout(function () {
+                        Utils.noty(
+                            'sess start=' + session.startIndex +
+                            ' meta=' + ((session.playlistMeta && session.playlistMeta.length) || 0),
+                            true,
+                            0
+                        );
+                    }, 700);
+                } else {
+                    setTimeout(function () {
+                        Utils.noty('sess: none', true, 0);
+                    }, 700);
+                }
+
+                try {
+                    DDDLayer.probe(true);
+                } catch (e) {}
             });
-        } catch (e) {}
-    }
-
-    // ============================================================
-    // Core loader
-    // ============================================================
-
-    function evalCore(text) {
-        var patched = String(text || '');
-
-        patched = patched.replace('var DDD_DEBUG = false;', 'var DDD_DEBUG = true;');
-        patched += '\n//# sourceURL=ContinueWatching.diag.loaded.js';
-
-        (new Function(patched))();
-    }
-
-    function loadCore() {
-        if (window.__CONTINUE_WATCH_DDD_LAYER_V3__) {
-            noty('core already loaded; only diagnostics active', true);
-            return;
         }
 
-        noty('loading ContinueWatching diagnostic core', true);
+        function insertAfterBestPlace(render, button) {
+            var torrentButton = render.find('.view--torrent').last();
+            var buttonsContainer = render.find('.full-start-new__buttons, .full-start__buttons').first();
 
-        fetch(CORE_URL, {
-            cache: 'no-store'
-        })
-            .then(function (response) {
-                if (!response.ok) throw new Error('HTTP ' + response.status);
-                return response.text();
-            })
-            .then(function (text) {
-                evalCore(text);
-                noty('core loaded with DDD_DEBUG=true', true);
-            })
-            .catch(function (e) {
-                warn('core fetch/eval failed, fallback script load: ' + (e && e.message || e), e);
-
-                var script = document.createElement('script');
-
-                script.src = CORE_URL;
-                script.async = true;
-
-                script.onload = function () {
-                    noty('core fallback script loaded', true);
-                };
-
-                script.onerror = function () {
-                    warn('core fallback script failed');
-                };
-
-                document.head.appendChild(script);
-            });
-    }
-
-    // ============================================================
-    // Public debug API
-    // ============================================================
-
-    window.DDDDiagnostic = {
-        version: PLUGIN_VERSION,
-
-        state: state,
-
-        parseStreamUrl: parseStreamUrl,
-        parseSeasonEpisodeFromFileName: parseSeasonEpisodeFromFileName,
-
-        getParamsStorageKey: getParamsStorageKey,
-        getSessionStorageKey: getSessionStorageKey,
-
-        getSessionPlaylist: getSessionPlaylist,
-        findPlaylistIndexByIdentity: findPlaylistIndexByIdentity,
-
-        handleBridgeBody: handleBridgeBody,
-        buildCanonicalRecordFromBridgePayload: buildCanonicalRecordFromBridgePayload,
-
-        canonicalizeJapaneseAnimeDddRecord: canonicalizeJapaneseAnimeDddRecord,
-        canonicalizeJapaneseAnimeStorageMap: canonicalizeJapaneseAnimeStorageMap,
-
-        inspectStorageSet: inspectStorageSet,
-        inspectStorageGet: inspectStorageGet,
-        inspectPlayerParams: inspectPlayerParams
-    };
-
-    // ============================================================
-    // Boot
-    // ============================================================
-
-    function installPatchesLoop() {
-        patchStorage();
-        patchFetch();
-        patchErrors();
-
-        var started = now();
-
-        var timer = setInterval(function () {
-            patchStorage();
-            patchPlayer();
-
-            if (now() - started > 30000) {
-                clearInterval(timer);
+            if (torrentButton.length) {
+                torrentButton.after(button);
+            } else if (buttonsContainer.length) {
+                buttonsContainer.append(button);
+            } else {
+                render.find('.full-start__button').last().after(button);
             }
-        }, 500);
+        }
+
+        function install() {
+            Lampa.Listener.follow('full', function (event) {
+                if (!event || event.type !== 'complite') return;
+
+                requestAnimationFrame(function () {
+                    try {
+                        var activity = event.object.activity;
+                        var render = activity.render();
+                        var movie = event.data.movie;
+
+                        if (!render || !movie) return;
+
+                        var params = StorageManager.getLastStreamParams(movie);
+
+                        if (!params) return;
+
+                        var existing = render.find('.button--continue-watch-ddd');
+
+                        if (existing.length) {
+                            updateButton(existing, movie, params);
+
+                            existing.off('hover:enter').on('hover:enter', function () {
+                                handleClick(movie, this);
+                            });
+                        } else {
+                            var button = createButton(movie, params);
+
+                            button.on('hover:enter', function () {
+                                handleClick(movie, this);
+                            });
+
+                            insertAfterBestPlace(render, button);
+                        }
+
+                        if (CONFIG.debugStatusButton && CONFIG.debugNoty) {
+                            var debugExisting = render.find('.button--continue-watch-ddd-debug');
+
+                            if (debugExisting.length) {
+                                bindStatusButton(debugExisting, movie);
+                            } else {
+                                var debugButton = createStatusButton(movie);
+                                render.find('.button--continue-watch-ddd').after(debugButton);
+                            }
+                        }
+                    } catch (e) {
+                        Utils.error('Button render failed', e);
+                    }
+                });
+            });
+        }
+
+        return {
+            install: install
+        };
+    })();
+
+    // ============================================================
+    // Init
+    // ============================================================
+
+    function init() {
+        try {
+            Utils.noty('loaded ' + PLUGIN_VERSION, false, 1);
+            Utils.log('Init', PLUGIN_VERSION);
+
+            StorageManager.ensureSync();
+
+            DDDLayer.init();
+
+            PlayerManager.patchPlayer();
+            PlayerManager.setupListeners();
+
+            UIManager.install();
+
+            setTimeout(function () {
+                StorageManager.cleanupOld();
+            }, 10000);
+        } catch (e) {
+            Utils.error('Init failed', e);
+        }
     }
 
-    installPatchesLoop();
-    loadCore();
-
+    if (window.appready) {
+        init();
+    } else {
+        Lampa.Listener.follow('app', function (event) {
+            if (event && event.type === 'ready') {
+                StorageManager.setAccountReady(true);
+                init();
+            }
+        });
+    }
 })();
