@@ -11,6 +11,30 @@
     window.__combinedLogoLoaderInitialized = window.__combinedLogoLoaderInitialized || false;
     window.__combinedLogoRequestToken = window.__combinedLogoRequestToken || 0;
     window.__combinedLogoCache = window.__combinedLogoCache || {};
+    const COMBINED_LOGO_STORAGE_KEY = 'combined_logo_cache_v1';
+    const COMBINED_LOGO_IMAGE_SIZE = 'w500';
+    
+    function loadPersistLogoCache() {
+        try {
+            const saved = Lampa.Storage.get(COMBINED_LOGO_STORAGE_KEY, '{}');
+            const parsed = typeof saved === 'string' ? JSON.parse(saved) : saved;
+    
+            if (parsed && typeof parsed === 'object') {
+                window.__combinedLogoCache = Object.assign({}, parsed, window.__combinedLogoCache || {});
+            }
+        } catch (err) {
+            window.__combinedLogoCache = window.__combinedLogoCache || {};
+        }
+    }
+    
+    function savePersistLogoCache() {
+        try {
+            Lampa.Storage.set(COMBINED_LOGO_STORAGE_KEY, JSON.stringify(window.__combinedLogoCache || {}));
+        } catch (err) {}
+    }
+    
+    loadPersistLogoCache();
+    
     
     // ===== СТИЛИ (через Lampa.Template) =====
     function injectStyles() {
@@ -301,70 +325,73 @@
                 );
             }
     
-            function applyLogo(logoUrl) {
+            function applyLogo(logoUrl, instant) {
                 if (!logoUrl) {
                     const titleBlock = getTitleBlock();
                     if (titleBlock.length) setMissing(titleBlock);
                     return;
                 }
-    
+            
                 let titleBlock = getTitleBlock();
                 if (!titleBlock.length) return;
                 if (!isNodeAlive(titleBlock)) return;
-    
+            
                 ensureTitleSlot(titleBlock);
-    
+            
                 if (isSameLogoAlreadyApplied(titleBlock, logoUrl)) {
                     return;
                 }
-    
+            
                 setPending(titleBlock);
-    
-                const preload = new Image();
-    
-                preload.onload = function() {
-                    if (requestToken !== window.__combinedLogoRequestToken) return;
-    
+            
+                function commitLogo() {
                     const fresh = getTitleBlock();
                     if (!fresh.length) return;
                     if (!isNodeAlive(fresh)) return;
-    
+            
                     ensureTitleSlot(fresh);
-    
+            
                     if (isSameLogoAlreadyApplied(fresh, logoUrl)) {
                         return;
                     }
-    
+            
                     const container = $('<div class="combined-logo-container"></div>');
-                    const img = $('<img data-combined-logo="1" />');
-    
+                    const img = $('<img data-combined-logo="1" decoding="async" loading="eager" fetchpriority="high" />');
+            
                     img.attr('src', logoUrl);
                     container.append(img);
-    
-                    /*
-                     * Важно:
-                     * здесь мы больше не показываем текстовое название перед логотипом.
-                     * title-слот уже был скрыт через combined-logo-pending.
-                     */
+            
                     fresh.empty();
                     fresh.append(container);
-    
+            
                     fresh
                         .attr('data-combined-logo-key', requestKey)
                         .attr('data-combined-logo-url', logoUrl)
                         .removeClass('combined-logo-pending combined-logo-missing')
                         .addClass('combined-logo-ready');
+                }
+            
+                if (instant) {
+                    commitLogo();
+                    return;
+                }
+            
+                const preload = new Image();
+            
+                preload.onload = function() {
+                    if (requestToken !== window.__combinedLogoRequestToken) return;
+                    commitLogo();
                 };
-    
+            
                 preload.onerror = function() {
                     const fresh = getTitleBlock();
                     if (!fresh.length) return;
                     if (!isNodeAlive(fresh)) return;
-    
+            
                     ensureTitleSlot(fresh);
                     setMissing(fresh);
                 };
-    
+            
                 preload.src = logoUrl;
             }
     
@@ -387,11 +414,11 @@
              * Если логотип уже есть в кэше, ставим его без похода в TMDB.
              */
             if (typeof cached === 'string' && cached) {
-                if (isSameLogoAlreadyApplied(titleBlock, cached)) return;
-    
-                applyLogo(cached);
-                return;
-            }
+            if (isSameLogoAlreadyApplied(titleBlock, cached)) return;
+        
+            applyLogo(cached, true);
+            return;
+        }
     
             /*
              * Первый заход на карточку:
@@ -426,7 +453,8 @@
                     if (requestToken !== window.__combinedLogoRequestToken) return;
     
                     if (!resp || !resp.logos || !resp.logos[0] || !resp.logos[0].file_path) {
-                        window.__combinedLogoCache[requestKey] = false;
+                       window.__combinedLogoCache[requestKey] = false;
+                       savePersistLogoCache();
     
                         const fresh = getTitleBlock();
                         if (fresh.length) {
@@ -441,8 +469,9 @@
                     const logoUrl = Lampa.TMDB.image('/t/p/original' + logoPath.replace('.svg', '.png'));
     
                     window.__combinedLogoCache[requestKey] = logoUrl;
-    
-                    applyLogo(logoUrl);
+                    savePersistLogoCache();
+
+                    applyLogo(logoUrl, false);
                 })
                 .fail(function() {
                     clearTimeout(fallbackTimer);
