@@ -18,7 +18,7 @@
      */
 
     var PLUGIN_NAME = 'ContinueWatchDDD';
-    var PLUGIN_VERSION = 'v3.1.1-button-dedup-20260511';
+    var PLUGIN_VERSION = 'v3.1.2-button-global-dedup-20260511';
 
     /**
      * Диагностика.
@@ -2780,4 +2780,45 @@
             }
         });
     }
+    // ==========================================================
+    // ContinueWatchDDD global button dedup
+    // =========================================================
+
+    (function () {
+        var scheduled = false;
+
+        function dedupContinueWatchButtons() {
+            try {
+                var buttons = $('.button--continue-watch-ddd');
+
+                if (buttons.length <= 1) return;
+
+                buttons.slice(1).remove();
+            } catch (e) {}
+        }
+
+        function scheduleDedup() {
+            if (scheduled) return;
+
+            scheduled = true;
+
+            requestAnimationFrame(function () {
+                scheduled = false;
+                dedupContinueWatchButtons();
+            });
+        }
+
+        try {
+            Lampa.Listener.follow('full', function (event) {
+                if (!event || event.type !== 'complite') return;
+
+                scheduleDedup();
+
+                setTimeout(function () {
+                    dedupContinueWatchButtons();
+                }, 300);
+            });
+        } catch (e) {}
+    })();
+
 })();
