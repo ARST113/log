@@ -28,24 +28,67 @@ jobs:
           s = p.read_text(encoding='utf-8')
           old = s
 
-          s = s.replace("var PLUGIN_VERSION = 'v3.1.0-anime-playlist-fixed-20260507';", "var PLUGIN_VERSION = 'v3.1.1-button-dedup-20260511';")
-          s = s.replace("var UIManager = (function () {\n        var debounceTimer = null;", "var UIManager = (function () {\n        var debounceTimer = null;\n        var installed = false;", 1)
-          s = s.replace("        function install() {\n            Lampa.Listener.follow('full', function (event) {", "        function install() {\n            if (installed) return;\n            installed = true;\n\n            Lampa.Listener.follow('full', function (event) {", 1)
+          s = s.replace("var PLUGIN_VERSION = 'v3.1.1-button-dedup-20260511';", "var PLUGIN_VERSION = 'v3.1.2-button-global-dedup-20260511';")
 
-          a = "                var existing = render.find('.button--continue-watch-ddd');\n\n                if (existing.length) {"
-          b = "                var existing = render.find('.button--continue-watch-ddd');\n\n                if (existing.length > 1) {\n                    existing.slice(1).remove();\n                    existing = existing.eq(0);\n                }\n\n                if (existing.length) {"
-          s = s.replace(a, b, 1)
+          marker = 'CONTINUE_WATCH_DDD_GLOBAL_BUTTON_DEDUP'
 
-          s = s.replace("                    updateButton(existing, movie, params);", "                    var existingButton = existing.eq(0);\n                    updateButton(existingButton, movie, params);", 1)
-          s = s.replace("                    existing.off('hover:enter').on('hover:enter', function () {", "                    existingButton.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {", 1)
-          s = s.replace("                    button.on('hover:enter', function () {", "                    button.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {", 1)
+          if marker not in s:
+              patch = """
 
-          if 'var installed = false;' not in s:
-              raise SystemExit('install guard not inserted')
+    // ============================================================
+    // CONTINUE_WATCH_DDD_GLOBAL_BUTTON_DEDUP
+    // Убирает дубли кнопки ContinueWatchDDD, если Lampa отрисовала
+    // одну и ту же full-карточку в нескольких DOM-зонах.
+    // ============================================================
+
+    (function () {
+        var scheduled = false;
+
+        function dedupContinueWatchButtons() {
+            try {
+                var buttons = $('.button--continue-watch-ddd');
+
+                if (buttons.length <= 1) return;
+
+                buttons.slice(1).remove();
+            } catch (e) {}
+        }
+
+        function scheduleDedup() {
+            if (scheduled) return;
+
+            scheduled = true;
+
+            requestAnimationFrame(function () {
+                scheduled = false;
+                dedupContinueWatchButtons();
+            });
+        }
+
+        try {
+            Lampa.Listener.follow('full', function (event) {
+                if (!event || event.type !== 'complite') return;
+
+                scheduleDedup();
+
+                setTimeout(function () {
+                    dedupContinueWatchButtons();
+                }, 300);
+            });
+        } catch (e) {}
+    })();
+"""
+
+              idx = s.rfind('\n})();')
+
+              if idx == -1:
+                  raise SystemExit('final plugin close not found')
+
+              s = s[:idx] + patch + s[idx:]
 
           if s != old:
               p.write_text(s, encoding='utf-8')
-              print('patched')
+              print('global dedup patched')
           else:
               print('no changes')
           PY
@@ -60,7 +103,7 @@ jobs:
             echo "No changes"
             exit 0
           fi
-          git commit -m "Fix duplicate ContinueWatching button"
+          git commit -m "Add global ContinueWatching button dedup guard"
           git push
 
-# trigger: 2026-05-11T16:20:00Z
+# trigger: 2026-05-11T16:40:00Z
