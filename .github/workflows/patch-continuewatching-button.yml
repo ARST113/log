@@ -1,6 +1,11 @@
 name: Patch ContinueWatching button
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/patch-continuewatching-button.yml
   workflow_dispatch:
 
 permissions:
@@ -57,3 +62,5 @@ jobs:
           fi
           git commit -m "Fix duplicate ContinueWatching button"
           git push
+
+# trigger: 2026-05-11T16:20:00Z
