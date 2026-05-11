@@ -28,7 +28,6 @@ jobs:
 
           path = Path('ContinueWatching.js')
           text = path.read_text(encoding='utf-8')
-
           original = text
 
           text = text.replace(
@@ -151,3 +150,5 @@ jobs:
           fi
           git commit -m "Fix duplicate ContinueWatching button"
           git push
+
+# trigger: 2026-05-11T15:55:00Z
