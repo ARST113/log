@@ -1,0 +1,59 @@
+name: Patch ContinueWatching button
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch file
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path('ContinueWatching.js')
+          s = p.read_text(encoding='utf-8')
+          old = s
+
+          s = s.replace("var PLUGIN_VERSION = 'v3.1.0-anime-playlist-fixed-20260507';", "var PLUGIN_VERSION = 'v3.1.1-button-dedup-20260511';")
+          s = s.replace("var UIManager = (function () {\n        var debounceTimer = null;", "var UIManager = (function () {\n        var debounceTimer = null;\n        var installed = false;", 1)
+          s = s.replace("        function install() {\n            Lampa.Listener.follow('full', function (event) {", "        function install() {\n            if (installed) return;\n            installed = true;\n\n            Lampa.Listener.follow('full', function (event) {", 1)
+
+          a = "                var existing = render.find('.button--continue-watch-ddd');\n\n                if (existing.length) {"
+          b = "                var existing = render.find('.button--continue-watch-ddd');\n\n                if (existing.length > 1) {\n                    existing.slice(1).remove();\n                    existing = existing.eq(0);\n                }\n\n                if (existing.length) {"
+          s = s.replace(a, b, 1)
+
+          s = s.replace("                    updateButton(existing, movie, params);", "                    var existingButton = existing.eq(0);\n                    updateButton(existingButton, movie, params);", 1)
+          s = s.replace("                    existing.off('hover:enter').on('hover:enter', function () {", "                    existingButton.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {", 1)
+          s = s.replace("                    button.on('hover:enter', function () {", "                    button.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {", 1)
+
+          if 'var installed = false;' not in s:
+              raise SystemExit('install guard not inserted')
+
+          if s != old:
+              p.write_text(s, encoding='utf-8')
+              print('patched')
+          else:
+              print('no changes')
+          PY
+
+      - name: Commit
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ContinueWatching.js
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "Fix duplicate ContinueWatching button"
+          git push
