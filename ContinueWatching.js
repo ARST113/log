@@ -18,7 +18,7 @@
      */
 
     var PLUGIN_NAME = 'ContinueWatchDDD';
-    var PLUGIN_VERSION = 'v3.1.0-anime-playlist-fixed-20260507';
+    var PLUGIN_VERSION = 'v3.1.1-button-dedup-20260511';
 
     /**
      * Диагностика.
@@ -2506,6 +2506,7 @@
 
     var UIManager = (function () {
         var debounceTimer = null;
+        var installed = false;
 
         function getTimelineView(hash) {
             try {
@@ -2680,6 +2681,9 @@
         }
 
         function install() {
+            if (installed) return;
+            installed = true;
+
             Lampa.Listener.follow('full', function (event) {
                 if (!event || event.type !== 'complite') return;
 
@@ -2698,15 +2702,16 @@
                         var existing = render.find('.button--continue-watch-ddd');
 
                         if (existing.length) {
-                            updateButton(existing, movie, params);
+                            var existingButton = existing.eq(0);
+                    updateButton(existingButton, movie, params);
 
-                            existing.off('hover:enter').on('hover:enter', function () {
+                            existingButton.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {
                                 handleClick(movie, this);
                             });
                         } else {
                             var button = createButton(movie, params);
 
-                            button.on('hover:enter', function () {
+                            button.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {
                                 handleClick(movie, this);
                             });
 
