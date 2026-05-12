@@ -732,7 +732,11 @@
 
         function updateLastPointer(params, data, hash) {
             if (!data || !hash) return;
-            if (!data.season || !data.episode) return;
+
+            var mediaType = String(data.media_type || data.mediaType || '').toLowerCase();
+            var isMovieRecord = mediaType === 'movie';
+
+            if (!isMovieRecord && (!data.season || !data.episode)) return;
 
             var movieKey = getMovieKeyFromData(data);
             if (!movieKey) return;
@@ -745,6 +749,7 @@
                 hash: hash,
                 season: Number(data.season || 0),
                 episode: Number(data.episode || 0),
+                media_type: mediaType || '',
                 timestamp: Utils.now()
             };
         }
@@ -910,6 +915,9 @@
 
             var originalTitle = Utils.getMovieTitle(movie);
             var movieId = movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId;
+            var mediaType = String(movie.media_type || movie.mediaType || '').toLowerCase();
+            var isTvLike = !!(movie.name || movie.original_name || movie.number_of_seasons !== undefined || movie.first_air_date || mediaType === 'tv');
+            var isMovieLike = !isTvLike || mediaType === 'movie';
             var params = getParams();
             var movieKey = getMovieKey(movie);
 
@@ -952,7 +960,14 @@
                         sameTitle = sameTitle || String(item.title) === String(originalTitle);
                     }
 
-                    return (sameId || sameTitle) && item.season && item.episode;
+                    if (!(sameId || sameTitle)) return false;
+
+                    if (isMovieLike) {
+                        var itemMediaType = String(item.media_type || item.mediaType || '').toLowerCase();
+                        return itemMediaType === 'movie' || (!item.season && !item.episode);
+                    }
+
+                    return item.season && item.episode;
                 })
                 .sort(function (a, b) {
                     return (b.timestamp || 0) - (a.timestamp || 0);
@@ -1404,6 +1419,7 @@
         var lastSavedByHash = {};
         var lastEventTsBySession = {};
         var pollTimer = null;
+        var consecutiveFetchFails = 0;
         var host = CONFIG.dddHost + ':' + CONFIG.dddPort;
 
         function makeSid(movie, timelineHash, season, episode) {
@@ -1619,7 +1635,13 @@
             };
 
             activeSession = session;
+            consecutiveFetchFails = 0;
             StorageManager.saveDDDSession(session);
+            startPolling();
+
+            setTimeout(function () {
+                probe(false);
+            }, 1500);
 
             Utils.noty(
                 'attach pl=' + session.playlistMeta.length +
@@ -1844,7 +1866,11 @@
             if (!session || !session.movie || !meta || !meta.timelineHash) return;
 
             try {
-                if (!meta.season || !meta.episode) {
+                var mediaType = String((session.movie && (session.movie.media_type || session.movie.mediaType)) || '').toLowerCase();
+                var isTvLike = !!(session.movie && (session.movie.name || session.movie.original_name || session.movie.number_of_seasons !== undefined || session.movie.first_air_date || mediaType === 'tv'));
+                var isMovieLike = !isTvLike || mediaType === 'movie';
+
+                if (!isMovieLike && (!meta.season || !meta.episode)) {
                     Utils.warn('Skip DDD stream params without S/E', meta, payload);
                     return;
                 }
@@ -1866,6 +1892,7 @@
                     original_language: Utils.getOriginalLanguage(session.movie),
                     movie_id: session.movie.id || session.movie.movie_id || session.movie_id,
                     movie_key: session.movie_key,
+                    media_type: isMovieLike ? 'movie' : 'tv',
 
                     season: meta.season,
                     episode: meta.episode,
@@ -2022,6 +2049,7 @@
                     return fetchJson(eventsUrl, CONFIG.dddFetchTimeoutMs);
                 })
                 .then(function (events) {
+                    consecutiveFetchFails = 0;
                     var best = chooseBestEvent(stateData, events);
 
                     if (!best || !best.payload) {
@@ -2032,7 +2060,12 @@
                     return updateTimelineFromEvent(session, best);
                 })
                 .catch(function (e) {
+                    consecutiveFetchFails++;
                     Utils.log('DDD probe failed', e);
+
+                    if (!showFail && consecutiveFetchFails >= 2) {
+                        stopPolling();
+                    }
 
                     if (
                         showFail ||
@@ -2061,10 +2094,17 @@
             }, CONFIG.dddPollIntervalMs);
         }
 
+        function stopPolling() {
+            if (!pollTimer) return;
+
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+
         function installWakeHooks() {
             try {
                 document.addEventListener('visibilitychange', function () {
-                    if (!document.hidden) {
+                    if (!document.hidden && activeSession) {
                         setTimeout(function () {
                             probe(true);
                         }, 800);
@@ -2074,6 +2114,8 @@
 
             try {
                 window.addEventListener('focus', function () {
+                    if (!activeSession) return;
+
                     setTimeout(function () {
                         probe(true);
                     }, 800);
@@ -2082,7 +2124,7 @@
 
             try {
                 Lampa.Listener.follow('app', function (event) {
-                    if (event && (event.type === 'ready' || event.type === 'resume')) {
+                    if (event && (event.type === 'ready' || event.type === 'resume') && activeSession) {
                         setTimeout(function () {
                             probe(true);
                         }, 1000);
@@ -2111,7 +2153,6 @@
         function init() {
             if (!CONFIG.dddEnabled) return;
 
-            startPolling();
             installWakeHooks();
             if (DEBUG.exposeApi) exposeDebugApi();
 
@@ -2124,6 +2165,7 @@
             init: init,
             attach: attach,
             probe: probe,
+            stopPolling: stopPolling,
             getSession: getSession
         };
     })();
@@ -2267,6 +2309,7 @@
                 original_language: Utils.getOriginalLanguage(movie),
                 movie_id: movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId,
                 movie_key: StorageManager.getMovieKey(movie),
+                media_type: (movie.media_type || movie.mediaType || (!(movie.name || movie.original_name || movie.number_of_seasons !== undefined || movie.first_air_date) ? 'movie' : 'tv')),
 
                 season: season,
                 episode: episode,
@@ -2383,6 +2426,10 @@
                         DDDLayer.probe(true);
                     } catch (e) {}
 
+                    try {
+                        DDDLayer.stopPolling();
+                    } catch (e) {}
+
                     currentEpisodeHash = null;
                 });
 
@@ -2446,6 +2493,7 @@
                 original_language: Utils.getOriginalLanguage(movie),
                 movie_id: movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId,
                 movie_key: StorageManager.getMovieKey(movie),
+                media_type: (movie.media_type || movie.mediaType || (!(movie.name || movie.original_name || movie.number_of_seasons !== undefined || movie.first_air_date) ? 'movie' : 'tv')),
 
                 season: params.season || 0,
                 episode: params.episode || 0,
@@ -2550,6 +2598,26 @@
             } catch (e) {}
 
             return null;
+        }
+
+        function removeContinueButtons(render) {
+            try {
+                var root = render && render.length ? render : $(document.body);
+                var continueButtonRe = new RegExp('^Продолжить +S[0-9]+(?: *[.] *| +)E[0-9]+', 'i');
+
+                root.find('.button--continue-watch-ddd, .button--continue-watch-ddd-debug').remove();
+
+                root.find('.full-start__button, .full-start-new__button, .selector').each(function () {
+                    var el = $(this);
+                    var text = String(el.text() || '').replace(/[ 	
+
+]+/g, ' ').trim();
+
+                    if (continueButtonRe.test(text)) {
+                        el.remove();
+                    }
+                });
+            } catch (e) {}
         }
 
         function renderButtonContent(movie, params) {
@@ -2733,24 +2801,15 @@
 
                         if (!params) return;
 
-                        var existing = render.find('.button--continue-watch-ddd');
+                        removeContinueButtons(render);
 
-                        if (existing.length) {
-                            var existingButton = existing.eq(0);
-                            updateButton(existingButton, movie, params);
+                        var button = createButton(movie, params);
 
-                            existingButton.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {
-                                handleClick(movie, this);
-                            });
-                        } else {
-                            var button = createButton(movie, params);
+                        button.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {
+                            handleClick(movie, this);
+                        });
 
-                            button.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {
-                                handleClick(movie, this);
-                            });
-
-                            insertAfterBestPlace(render, button);
-                        }
+                        insertAfterBestPlace(render, button);
 
                         if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty) {
                             var debugExisting = render.find('.button--continue-watch-ddd-debug');
