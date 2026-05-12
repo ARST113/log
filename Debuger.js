@@ -2609,9 +2609,12 @@
 
                 root.find('.full-start__button, .full-start-new__button, .selector').each(function () {
                     var el = $(this);
-                    var text = String(el.text() || '').replace(/[ 	
-
-]+/g, ' ').trim();
+                    var text = String(el.text() || '')
+                        .split(String.fromCharCode(10)).join(' ')
+                        .split(String.fromCharCode(13)).join(' ')
+                        .split(String.fromCharCode(9)).join(' ')
+                        .replace(/  +/g, ' ')
+                        .trim();
 
                     if (continueButtonRe.test(text)) {
                         el.remove();
