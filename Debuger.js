@@ -20,7 +20,7 @@
     var PLUGIN_NAME = 'ContinueWatchDDD';
     var PLUGIN_VERSION = 'v3.1.3-local-bridge-state-events-fixed-20260512';
 
-    var DDD_DEBUG = false;
+    var DDD_DEBUG = true;
 
     var DEBUG = {
         enabled: DDD_DEBUG,
@@ -328,6 +328,45 @@
             );
         }
 
+        function getMediaKind(obj) {
+            obj = obj || {};
+
+            var card = obj.card || obj.movie || obj.data || obj;
+            var media = String(
+                obj.media_type ||
+                obj.mediaType ||
+                card.media_type ||
+                card.mediaType ||
+                ''
+            ).toLowerCase();
+
+            if (media === 'movie' || media === 'film') return 'movie';
+            if (media === 'tv' || media === 'show' || media === 'series') return 'tv';
+
+            if (
+                Number(card.number_of_seasons || 0) > 0 ||
+                Number(card.number_of_episodes || 0) > 0 ||
+                card.original_name ||
+                card.first_air_date ||
+                card.seasons !== undefined ||
+                card.episodes !== undefined ||
+                card.last_episode_to_air !== undefined ||
+                card.next_episode_to_air !== undefined
+            ) {
+                return 'tv';
+            }
+
+            if (
+                card.release_date ||
+                Number(card.runtime || 0) > 0 ||
+                card.original_title
+            ) {
+                return 'movie';
+            }
+
+            return 'movie';
+        }
+
         function isJapaneseSeries(obj) {
             obj = obj || {};
 
@@ -335,14 +374,9 @@
             var lang = getOriginalLanguage(card);
 
             if (lang !== 'ja') return false;
+            if (getMediaKind(card) !== 'tv') return false;
 
-            return !!(
-                card.original_name ||
-                card.name ||
-                card.media_type === 'tv' ||
-                card.number_of_seasons !== undefined ||
-                card.first_air_date
-            );
+            return true;
         }
 
         function getStreamFileNameFromData(data) {
@@ -576,6 +610,7 @@
             extractSE: extractSE,
             getOriginalLanguage: getOriginalLanguage,
             getMovieTitle: getMovieTitle,
+            getMediaKind: getMediaKind,
             isJapaneseSeries: isJapaneseSeries,
             getStreamFileNameFromData: getStreamFileNameFromData
         };
@@ -915,9 +950,8 @@
 
             var originalTitle = Utils.getMovieTitle(movie);
             var movieId = movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId;
-            var mediaType = String(movie.media_type || movie.mediaType || '').toLowerCase();
-            var isTvLike = !!(movie.name || movie.original_name || movie.number_of_seasons !== undefined || movie.first_air_date || mediaType === 'tv');
-            var isMovieLike = !isTvLike || mediaType === 'movie';
+            var mediaKind = Utils.getMediaKind(movie);
+            var isMovieLike = mediaKind === 'movie';
             var params = getParams();
             var movieKey = getMovieKey(movie);
 
@@ -1551,6 +1585,7 @@
                 movie_key: movie ? StorageManager.getMovieKey(movie) : '',
                 original_title: movie ? Utils.getMovieTitle(movie) : '',
                 original_language: movie ? Utils.getOriginalLanguage(movie) : '',
+                media_type: movie ? Utils.getMediaKind(movie) : '',
 
                 title: params.title || '',
                 season: season,
@@ -1866,9 +1901,8 @@
             if (!session || !session.movie || !meta || !meta.timelineHash) return;
 
             try {
-                var mediaType = String((session.movie && (session.movie.media_type || session.movie.mediaType)) || '').toLowerCase();
-                var isTvLike = !!(session.movie && (session.movie.name || session.movie.original_name || session.movie.number_of_seasons !== undefined || session.movie.first_air_date || mediaType === 'tv'));
-                var isMovieLike = !isTvLike || mediaType === 'movie';
+                var mediaKind = session.movie ? Utils.getMediaKind(session.movie) : 'movie';
+                var isMovieLike = mediaKind === 'movie';
 
                 if (!isMovieLike && (!meta.season || !meta.episode)) {
                     Utils.warn('Skip DDD stream params without S/E', meta, payload);
@@ -1892,7 +1926,7 @@
                     original_language: Utils.getOriginalLanguage(session.movie),
                     movie_id: session.movie.id || session.movie.movie_id || session.movie_id,
                     movie_key: session.movie_key,
-                    media_type: isMovieLike ? 'movie' : 'tv',
+                    media_type: mediaKind,
 
                     season: meta.season,
                     episode: meta.episode,
@@ -2309,7 +2343,7 @@
                 original_language: Utils.getOriginalLanguage(movie),
                 movie_id: movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId,
                 movie_key: StorageManager.getMovieKey(movie),
-                media_type: (movie.media_type || movie.mediaType || (!(movie.name || movie.original_name || movie.number_of_seasons !== undefined || movie.first_air_date) ? 'movie' : 'tv')),
+                media_type: Utils.getMediaKind(movie),
 
                 season: season,
                 episode: episode,
@@ -2493,7 +2527,7 @@
                 original_language: Utils.getOriginalLanguage(movie),
                 movie_id: movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId,
                 movie_key: StorageManager.getMovieKey(movie),
-                media_type: (movie.media_type || movie.mediaType || (!(movie.name || movie.original_name || movie.number_of_seasons !== undefined || movie.first_air_date) ? 'movie' : 'tv')),
+                media_type: Utils.getMediaKind(movie),
 
                 season: params.season || 0,
                 episode: params.episode || 0,
