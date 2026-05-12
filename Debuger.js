@@ -20,7 +20,19 @@
     var PLUGIN_NAME = 'ContinueWatchDDD';
     var PLUGIN_VERSION = 'v3.1.3-local-bridge-state-events-fixed-20260512';
 
-    var DDD_DEBUG = false;
+    var DDD_DEBUG = true;
+
+    var DEBUG = {
+        enabled: DDD_DEBUG,
+        console: DDD_DEBUG,
+        noty: DDD_DEBUG,
+        notyLevel: DDD_DEBUG ? 3 : 0,
+        notyMinIntervalMs: 1500,
+        pollSuccess: DDD_DEBUG,
+        pollFail: DDD_DEBUG,
+        statusButton: DDD_DEBUG,
+        exposeApi: DDD_DEBUG
+    };
 
     var CONFIG = {
         storageBaseKey: 'continue_watch_params',
@@ -42,13 +54,6 @@
         minDurationSeconds: 60,
         finishPercent: 90,
 
-        debugConsole: false,
-        debugNoty: false,
-        debugNotyLevel: 0,
-        debugNotyMinIntervalMs: 1500,
-        debugNotyPollSuccess: false,
-        debugNotyPollFail: false,
-        debugStatusButton: false,
 
         onlyExternalTorrentPlayer: true
     };
@@ -98,7 +103,7 @@
         }
 
         function showConsole(method, args) {
-            if (!DDD_DEBUG && !CONFIG.debugConsole) return;
+            if (!DEBUG.enabled || !DEBUG.console) return;
             if (!window.console) return;
 
             var fn = console[method] || console.log;
@@ -109,15 +114,15 @@
         }
 
         function showNoty(message, level, force) {
-            if (!DDD_DEBUG && !CONFIG.debugNoty) return;
+            if (!DEBUG.enabled || !DEBUG.noty) return;
 
             level = Number(level || 0);
-            if (!force && level > Number(CONFIG.debugNotyLevel || 0)) return;
+            if (!force && level > Number(DEBUG.notyLevel || 0)) return;
 
             var current = now();
             var text = String(message || '');
 
-            if (!force && text === lastNotyMessage && current - lastNotyTime < CONFIG.debugNotyMinIntervalMs) {
+            if (!force && text === lastNotyMessage && current - lastNotyTime < DEBUG.notyMinIntervalMs) {
                 return;
             }
 
@@ -1961,7 +1966,7 @@
 
             updateStreamTimestampFromDDD(session, meta, payload);
 
-            if (CONFIG.debugNotyPollSuccess || CONFIG.debugNotyLevel >= 3) {
+            if (DEBUG.enabled && (DEBUG.pollSuccess || DEBUG.notyLevel >= 3)) {
                 Utils.noty(
                     'tl S' + (meta.season || 0) +
                     'E' + (meta.episode || 0) +
@@ -2032,8 +2037,9 @@
                     if (
                         showFail ||
                         (
-                            CONFIG.debugNotyPollFail &&
-                            CONFIG.debugNotyLevel >= 3
+                            DEBUG.enabled &&
+                            DEBUG.pollFail &&
+                            DEBUG.notyLevel >= 3
                         )
                     ) {
                         Utils.noty(
@@ -2107,7 +2113,7 @@
 
             startPolling();
             installWakeHooks();
-            exposeDebugApi();
+            if (DEBUG.exposeApi) exposeDebugApi();
 
             setTimeout(function () {
                 probe(false);
@@ -2746,7 +2752,7 @@
                             insertAfterBestPlace(render, button);
                         }
 
-                        if (CONFIG.debugStatusButton && CONFIG.debugNoty) {
+                        if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty) {
                             var debugExisting = render.find('.button--continue-watch-ddd-debug');
 
                             if (debugExisting.length) {
