@@ -2,8 +2,8 @@
     'use strict';
 
     if (!window.Lampa) return;
-    if (window.__CONTINUE_WATCH_DDD_LAYER_V3__) return;
-    window.__CONTINUE_WATCH_DDD_LAYER_V3__ = true;
+    if (window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__) return;
+    window.__CONTINUE_WATCH_DDD_LAYER_V3_LOADING__ = true;
 
     /**
      * ContinueWatch + DDD Local Bridge
@@ -20,17 +20,17 @@
     var PLUGIN_NAME = 'ContinueWatchDDD';
     var PLUGIN_VERSION = 'v3.1.3-local-bridge-state-events-fixed-20260512';
 
-    var DDD_DEBUG = true;
+    var DDD_DEBUG = false;
 
     var DEBUG = {
         enabled: DDD_DEBUG,
-        console: DDD_DEBUG,
+        console: false,
         noty: DDD_DEBUG,
         notyLevel: DDD_DEBUG ? 3 : 0,
         notyMinIntervalMs: 1500,
         pollSuccess: DDD_DEBUG,
         pollFail: DDD_DEBUG,
-        statusButton: DDD_DEBUG,
+        statusButton: false,
         exposeApi: DDD_DEBUG
     };
 
@@ -2857,8 +2857,18 @@
             setTimeout(function () {
                 StorageManager.cleanupOld();
             }, 10000);
+
+            window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ = true;
+            window.__CONTINUE_WATCH_DDD_LAYER_V3_LOADING__ = false;
         } catch (e) {
+            window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ = false;
+            window.__CONTINUE_WATCH_DDD_LAYER_V3_LOADING__ = false;
             Utils.error('Init failed', e);
+            try {
+                if (Lampa.Noty && Lampa.Noty.show) {
+                    Lampa.Noty.show('ContinueWatchDDD init error: ' + String(e && e.message ? e.message : e).slice(0, 120));
+                }
+            } catch (ee) {}
         }
     }
 
