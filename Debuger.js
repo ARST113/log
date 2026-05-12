@@ -18,20 +18,29 @@
      */
 
     var PLUGIN_NAME = 'ContinueWatchDDD';
-    var PLUGIN_VERSION = 'v3.1.3-local-bridge-state-events-fixed-20260512';
+    var PLUGIN_VERSION = 'v3.1.4-debug-fixed-20260512';
 
-    var DDD_DEBUG = true;
+    /**
+     * Единый главный переключатель диагностики.
+     *
+     * false — тихий рабочий режим.
+     * true  — Noty-диагностика + debug API + ручной probe/session/storage.
+     *
+     * Кнопка "DDD статус" специально не включается автоматически,
+     * потому что она мешает обычному тесту карточки.
+     */
+    var DDD_DEBUG = false;
 
     var DEBUG = {
-        enabled: DDD_DEBUG,
-        console: false,
-        noty: DDD_DEBUG,
+        enabled: !!DDD_DEBUG,
+        console: !!DDD_DEBUG,
+        noty: !!DDD_DEBUG,
         notyLevel: DDD_DEBUG ? 3 : 0,
-        notyMinIntervalMs: 1500,
-        pollSuccess: DDD_DEBUG,
-        pollFail: DDD_DEBUG,
+        notyMinIntervalMs: 1200,
+        pollSuccess: !!DDD_DEBUG,
+        pollFail: !!DDD_DEBUG,
         statusButton: false,
-        exposeApi: DDD_DEBUG
+        exposeApi: true
     };
 
     var CONFIG = {
@@ -136,16 +145,27 @@
             } catch (e) {}
         }
 
+        function debugLine(prefix, args, level, force) {
+            var text = stringifyArgs(args);
+
+            if (!text) text = '';
+            if (prefix) text = prefix + (text ? ': ' + text : '');
+
+            showNoty(text.slice(0, 180), level, force);
+        }
+
         function log() {
             showConsole('log', arguments);
         }
 
         function warn() {
             showConsole('warn', arguments);
+            debugLine('warn', arguments, 2, false);
         }
 
         function error() {
             showConsole('error', arguments);
+            debugLine('error', arguments, 0, true);
         }
 
         function noty(message, force, level) {
@@ -2171,15 +2191,50 @@
             window.ContinueWatchDDD = {
                 version: PLUGIN_VERSION,
                 config: CONFIG,
+                debug: DEBUG,
+                host: host,
                 probe: function () {
                     return probe(true);
                 },
                 session: function () {
                     return getSession();
                 },
-                host: host,
                 storage: function () {
                     return StorageManager.getParams();
+                },
+                enableDebug: function () {
+                    DEBUG.enabled = true;
+                    DEBUG.console = true;
+                    DEBUG.noty = true;
+                    DEBUG.notyLevel = 3;
+                    DEBUG.pollSuccess = true;
+                    DEBUG.pollFail = true;
+                    DEBUG.exposeApi = true;
+
+                    try {
+                        if (Lampa.Noty && Lampa.Noty.show) {
+                            Lampa.Noty.show('ContinueWatchDDD debug enabled');
+                        }
+                    } catch (e) {}
+
+                    return DEBUG;
+                },
+                disableDebug: function () {
+                    DEBUG.enabled = false;
+                    DEBUG.console = false;
+                    DEBUG.noty = false;
+                    DEBUG.notyLevel = 0;
+                    DEBUG.pollSuccess = false;
+                    DEBUG.pollFail = false;
+
+                    return DEBUG;
+                },
+                noty: function (message) {
+                    try {
+                        if (Lampa.Noty && Lampa.Noty.show) {
+                            Lampa.Noty.show(String(message || 'debug test'));
+                        }
+                    } catch (e) {}
                 }
             };
         }
@@ -2188,7 +2243,7 @@
             if (!CONFIG.dddEnabled) return;
 
             installWakeHooks();
-            if (DEBUG.exposeApi) exposeDebugApi();
+            exposeDebugApi();
 
             setTimeout(function () {
                 probe(false);
