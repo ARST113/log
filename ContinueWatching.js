@@ -2,32 +2,61 @@
     'use strict';
 
     if (!window.Lampa) return;
-    if (window.__CONTINUE_WATCH_DDD_LAYER_V3__) return;
-    window.__CONTINUE_WATCH_DDD_LAYER_V3__ = true;
+
+    /*
+     * Важно для разработки:
+     * старый общий guard __CONTINUE_WATCH_DDD_LAYER_V3_READY__ мешал загрузить новую версию,
+     * поэтому debug-правки могли физически не применяться.
+     */
+    var BOOT_VERSION = 'v3.1.5-debug-boot-guard-fixed-20260512';
+
+    if (
+        window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
+        window.__CONTINUE_WATCH_DDD_LAYER_V3_VERSION__ === BOOT_VERSION
+    ) {
+        return;
+    }
+
+    window.__CONTINUE_WATCH_DDD_LAYER_V3_LOADING__ = true;
+    window.__CONTINUE_WATCH_DDD_LAYER_V3_VERSION__ = BOOT_VERSION;
 
     /**
      * ContinueWatch + DDD Local Bridge
      *
-     * Цель:
-     * - использовать штатные механизмы Lampa: Player, Timeline, playlist;
-     * - не конкурировать с системой истории Lampa;
-     * - сохранять только минимальные stream-параметры для повторного запуска TorrServer stream;
-     * - не привязывать сохранённые записи к старому TorrServer host;
-     * - корректно работать с anime-case, где TMDB/Lampa/раздача могут расходиться по S/E;
-     * - не портить playlist пустыми/непроверенными данными bridge layer.
+     * Версия под актуальный dddplayer2 local bridge:
+     * - запуск DDD через fragment #ddd_mode=local&ddd_sid=...;
+     * - чтение /ping, /state, /events;
+     * - поддержка нового формата ответов сервера: { ok, state } и { ok, events };
+     * - сохранение позиции в штатный Lampa.Timeline;
+     * - сохранение минимальных stream-параметров для повторного запуска TorrServer stream;
+     * - сохранение playlist/meta для корректного resume сериалов и anime-case.
      */
 
     var PLUGIN_NAME = 'ContinueWatchDDD';
-    var PLUGIN_VERSION = 'v3.1.2-button-global-dedup-20260511';
+    var PLUGIN_VERSION = 'v3.1.5-debug-boot-guard-fixed-20260512';
 
     /**
-     * Диагностика.
+     * Единый главный переключатель диагностики.
      *
-     * Для проверки сейчас включено.
-     * После теста можно вернуть false.
+     * false — тихий рабочий режим.
+     * true  — Noty-диагностика + debug API + ручной probe/session/storage.
+     *
+     * Кнопка "DDD статус" специально не включается автоматически,
+     * потому что она мешает обычному тесту карточки.
      */
-    //var DDD_DEBUG = true;
     var DDD_DEBUG = false;
+
+    var DEBUG = {
+        enabled: !!DDD_DEBUG,
+        console: !!DDD_DEBUG,
+        noty: !!DDD_DEBUG,
+        notyLevel: DDD_DEBUG ? 3 : 0,
+        notyMinIntervalMs: 1200,
+        pollSuccess: !!DDD_DEBUG,
+        pollFail: !!DDD_DEBUG,
+        statusButton: false,
+        exposeApi: true
+    };
 
     var CONFIG = {
         storageBaseKey: 'continue_watch_params',
@@ -49,21 +78,7 @@
         minDurationSeconds: 60,
         finishPercent: 90,
 
-        debugConsole: false,
-        debugNoty: false,
-        debugNotyLevel: 0,
-        debugNotyMinIntervalMs: 1500,
-        debugNotyPollSuccess: false,
-        debugNotyPollFail: false,
-        debugStatusButton: false,
 
-        /**
-         * true:
-         * DDD-слой добавляется только для внешнего torrent-плеера.
-         *
-         * false:
-         * DDD-слой добавляется всегда, если URL похож на TorrServer stream.
-         */
         onlyExternalTorrentPlayer: true
     };
 
@@ -110,48 +125,97 @@
 
             return out.join(' ');
         }
-        
-        function showConsole(method, args) {}
-        
-        function showNoty(message, level, force) {}
-        
-        function log() {}
-        
-        function warn() {}
-        
-        function error() {}
-        
-        function noty(message, force, level) {}
-        
-                function stripFragment(url) {
-                    if (typeof url !== 'string') return url;
-        
-                    var pos = url.indexOf('#');
-                    return pos >= 0 ? url.substring(0, pos) : url;
+
+        function showConsole(method, args) {
+            if (!DEBUG.enabled || !DEBUG.console) return;
+            if (!window.console) return;
+
+            var fn = console[method] || console.log;
+
+            try {
+                fn.apply(console, ['[' + PLUGIN_NAME + ']'].concat(Array.prototype.slice.call(args)));
+            } catch (e) {}
+        }
+
+        function showNoty(message, level, force) {
+            if (!DEBUG.enabled || !DEBUG.noty) return;
+
+            level = Number(level || 0);
+            if (!force && level > Number(DEBUG.notyLevel || 0)) return;
+
+            var current = now();
+            var text = String(message || '');
+
+            if (!force && text === lastNotyMessage && current - lastNotyTime < DEBUG.notyMinIntervalMs) {
+                return;
+            }
+
+            lastNotyMessage = text;
+            lastNotyTime = current;
+
+            try {
+                if (Lampa.Noty && Lampa.Noty.show) {
+                    Lampa.Noty.show(text);
                 }
-        
-                function isStreamUrl(url) {
-                    return typeof url === 'string' && url.indexOf('/stream/') !== -1;
-                }
-        
-                function encodeParams(params) {
-                    var result = [];
-        
-                    Object.keys(params).forEach(function (key) {
-                        if (params[key] === undefined || params[key] === null) return;
-        
-                        result.push(
-                            encodeURIComponent(key) + '=' + encodeURIComponent(String(params[key]))
-                        );
-                    });
-        
-                    return result.join('&');
-                }
-        
-                function pad2(value) {
-                    value = Number(value || 0);
-                    return value < 10 ? '0' + value : String(value);
-                }
+            } catch (e) {}
+        }
+
+        function debugLine(prefix, args, level, force) {
+            var text = stringifyArgs(args);
+
+            if (!text) text = '';
+            if (prefix) text = prefix + (text ? ': ' + text : '');
+
+            showNoty(text.slice(0, 180), level, force);
+        }
+
+        function log() {
+            showConsole('log', arguments);
+        }
+
+        function warn() {
+            showConsole('warn', arguments);
+            debugLine('warn', arguments, 2, false);
+        }
+
+        function error() {
+            showConsole('error', arguments);
+            debugLine('error', arguments, 0, true);
+        }
+
+        function noty(message, force, level) {
+            showNoty(message, level, force);
+        }
+
+        function stripFragment(url) {
+            if (typeof url !== 'string') return url;
+
+            var pos = url.indexOf('#');
+            return pos >= 0 ? url.substring(0, pos) : url;
+        }
+
+        function isStreamUrl(url) {
+            return typeof url === 'string' && url.indexOf('/stream/') !== -1;
+        }
+
+        function encodeParams(params) {
+            var result = [];
+
+            Object.keys(params).forEach(function (key) {
+                if (params[key] === undefined || params[key] === null) return;
+
+                result.push(
+                    encodeURIComponent(key) + '=' + encodeURIComponent(String(params[key]))
+                );
+            });
+
+            return result.join('&');
+        }
+
+        function pad2(value) {
+            value = Number(value || 0);
+            return value < 10 ? '0' + value : String(value);
+        }
 
         function formatSeconds(seconds) {
             seconds = Number(seconds || 0);
@@ -299,6 +363,45 @@
             );
         }
 
+        function getMediaKind(obj) {
+            obj = obj || {};
+
+            var card = obj.card || obj.movie || obj.data || obj;
+            var media = String(
+                obj.media_type ||
+                obj.mediaType ||
+                card.media_type ||
+                card.mediaType ||
+                ''
+            ).toLowerCase();
+
+            if (media === 'movie' || media === 'film') return 'movie';
+            if (media === 'tv' || media === 'show' || media === 'series') return 'tv';
+
+            if (
+                Number(card.number_of_seasons || 0) > 0 ||
+                Number(card.number_of_episodes || 0) > 0 ||
+                card.original_name ||
+                card.first_air_date ||
+                card.seasons !== undefined ||
+                card.episodes !== undefined ||
+                card.last_episode_to_air !== undefined ||
+                card.next_episode_to_air !== undefined
+            ) {
+                return 'tv';
+            }
+
+            if (
+                card.release_date ||
+                Number(card.runtime || 0) > 0 ||
+                card.original_title
+            ) {
+                return 'movie';
+            }
+
+            return 'movie';
+        }
+
         function isJapaneseSeries(obj) {
             obj = obj || {};
 
@@ -306,14 +409,9 @@
             var lang = getOriginalLanguage(card);
 
             if (lang !== 'ja') return false;
+            if (getMediaKind(card) !== 'tv') return false;
 
-            return !!(
-                card.original_name ||
-                card.name ||
-                card.media_type === 'tv' ||
-                card.number_of_seasons !== undefined ||
-                card.first_air_date
-            );
+            return true;
         }
 
         function getStreamFileNameFromData(data) {
@@ -349,11 +447,6 @@
 
                 var m;
 
-                /*
-                 * Anime-case:
-                 * [SubsPlus+] Oshi No Ko S2 - 10
-                 * Title S2 10
-                 */
                 m = text.match(/\bS\s*0?(\d{1,2})\s*[-_. ]+\s*0?(\d{1,3})\b/i);
                 if (m) {
                     return {
@@ -363,9 +456,6 @@
                     };
                 }
 
-                /*
-                 * S2E10 / S02E010
-                 */
                 m = text.match(/\bS(?:eason)?\s*0?(\d{1,2})\s*[\.\-_: ]*\s*E(?:p(?:isode)?)?\s*0?(\d{1,3})\b/i);
                 if (m) {
                     return {
@@ -375,9 +465,6 @@
                     };
                 }
 
-                /*
-                 * 2x10 / 2х10 / 2×10
-                 */
                 m = text.match(/\b0?(\d{1,2})\s*[xх×]\s*0?(\d{1,3})\b/i);
                 if (m) {
                     return {
@@ -387,9 +474,6 @@
                     };
                 }
 
-                /*
-                 * Oshi no Ko 2nd Season - 10
-                 */
                 m = text.match(/\b0?(\d{1,2})(?:st|nd|rd|th)?\s+season\s*[-_.: ]+\s*0?(\d{1,3})\b/i);
                 if (m) {
                     return {
@@ -399,9 +483,6 @@
                     };
                 }
 
-                /*
-                 * Season 2 Episode 10
-                 */
                 m = text.match(/season\s*0?(\d{1,2}).*?(?:episode|ep\.?)\s*0?(\d{1,3})/i);
                 if (m) {
                     return {
@@ -411,9 +492,6 @@
                     };
                 }
 
-                /*
-                 * 2 сезон 10 серия
-                 */
                 m = text.match(/0?(\d{1,2})\s*сезон.*?0?(\d{1,3})\s*сер/i);
                 if (m) {
                     return {
@@ -423,9 +501,6 @@
                     };
                 }
 
-                /*
-                 * Японский вариант: 第10話
-                 */
                 m = text.match(/第\s*0?(\d{1,3})\s*話/i);
                 if (m && allowEpisodeOnly && fallbackSeason) {
                     return {
@@ -435,9 +510,6 @@
                     };
                 }
 
-                /*
-                 * Episode 10 / Ep.10 / Серия 10
-                 */
                 m = text.match(/(?:эпизод|сер(?:ия|ии|и)?|episode|ep\.?|сер\.)\s*[-–—:]?\s*0?(\d{1,3})/i);
                 if (m && allowEpisodeOnly && fallbackSeason) {
                     return {
@@ -447,10 +519,6 @@
                     };
                 }
 
-                /*
-                 * Anime-only fallback:
-                 * Title - 10
-                 */
                 m = text.match(/\s[-–—]\s0?(\d{1,3})(?:\s|$|\.|\[|\()/i);
                 if (m && allowEpisodeOnly && fallbackSeason) {
                     return {
@@ -460,10 +528,6 @@
                     };
                 }
 
-                /*
-                 * Filename ending:
-                 * Title 10.mkv / Title - 10.mkv
-                 */
                 m = text.match(/(?:^|[\s._\-\[\(])0?(\d{1,3})(?:\s*(?:v\d+)?\s*(?:\[[^\]]+\]|\([^)]+\))*)?\.(?:mkv|mp4|avi|ts)$/i);
                 if (m && allowEpisodeOnly && fallbackSeason) {
                     return {
@@ -581,6 +645,7 @@
             extractSE: extractSE,
             getOriginalLanguage: getOriginalLanguage,
             getMovieTitle: getMovieTitle,
+            getMediaKind: getMediaKind,
             isJapaneseSeries: isJapaneseSeries,
             getStreamFileNameFromData: getStreamFileNameFromData
         };
@@ -737,7 +802,11 @@
 
         function updateLastPointer(params, data, hash) {
             if (!data || !hash) return;
-            if (!data.season || !data.episode) return;
+
+            var mediaType = String(data.media_type || data.mediaType || '').toLowerCase();
+            var isMovieRecord = mediaType === 'movie';
+
+            if (!isMovieRecord && (!data.season || !data.episode)) return;
 
             var movieKey = getMovieKeyFromData(data);
             if (!movieKey) return;
@@ -750,6 +819,7 @@
                 hash: hash,
                 season: Number(data.season || 0),
                 episode: Number(data.episode || 0),
+                media_type: mediaType || '',
                 timestamp: Utils.now()
             };
         }
@@ -769,9 +839,6 @@
 
                 var value = data[key];
 
-                /**
-                 * Не затираем старые хорошие значения undefined-ом.
-                 */
                 if (value === undefined) return;
 
                 if (old[key] !== value) {
@@ -781,10 +848,6 @@
             });
 
             if (Array.isArray(data.playlist)) {
-                /**
-                 * Bridge/session-race не должен затирать полноценный сериаловый playlist
-                 * пустым или одиночным списком.
-                 */
                 if (data.playlist.length >= 2) {
                     var oldJson = old.playlist ? Utils.safeJson(old.playlist) : '';
                     var newJson = Utils.safeJson(data.playlist);
@@ -909,10 +972,6 @@
 
             if (!originalTitle) return '';
 
-            /**
-             * Повторяет формулу Lampa Timeline.watchedEpisode:
-             * season > 10 ? ':' : ''
-             */
             if (season > 0 && episode > 0) {
                 var separator = season > 10 ? ':' : '';
                 return Lampa.Utils.hash([season, separator, episode, originalTitle].join(''));
@@ -926,6 +985,8 @@
 
             var originalTitle = Utils.getMovieTitle(movie);
             var movieId = movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId;
+            var mediaKind = Utils.getMediaKind(movie);
+            var isMovieLike = mediaKind === 'movie';
             var params = getParams();
             var movieKey = getMovieKey(movie);
 
@@ -968,7 +1029,14 @@
                         sameTitle = sameTitle || String(item.title) === String(originalTitle);
                     }
 
-                    return (sameId || sameTitle) && item.season && item.episode;
+                    if (!(sameId || sameTitle)) return false;
+
+                    if (isMovieLike) {
+                        var itemMediaType = String(item.media_type || item.mediaType || '').toLowerCase();
+                        return itemMediaType === 'movie' || (!item.season && !item.episode);
+                    }
+
+                    return item.season && item.episode;
                 })
                 .sort(function (a, b) {
                     return (b.timestamp || 0) - (a.timestamp || 0);
@@ -1223,10 +1291,6 @@
                 }
             }
 
-            /**
-             * Fallback S/E разрешён только для реально выбранного элемента.
-             * Иначе весь playlistMeta получит один и тот же номер серии.
-             */
             if ((!season || !episode) && index === selectedIndex) {
                 season = Number(fallbackSeason || 0);
                 episode = Number(fallbackEpisode || 0);
@@ -1235,7 +1299,7 @@
 
             var timelineHash = '';
 
-            if (item.timeline && item.timeline.hash !== undefined) {
+            if (item.timeline && typeof item.timeline === 'object' && item.timeline.hash !== undefined) {
                 timelineHash = String(item.timeline.hash);
             }
 
@@ -1373,10 +1437,6 @@
         function findMetaByIndexOrUrl(session, index, url) {
             if (!session || !Array.isArray(session.playlistMeta)) return null;
 
-            /**
-             * Сначала URL/stream identity.
-             * Индекс внешнего плеера может не совпадать с индексом Lampa playlist.
-             */
             if (url) {
                 var clean = Utils.stripFragment(url);
                 var targetIdentity = Utils.streamIdentity(url);
@@ -1428,6 +1488,7 @@
         var lastSavedByHash = {};
         var lastEventTsBySession = {};
         var pollTimer = null;
+        var consecutiveFetchFails = 0;
         var host = CONFIG.dddHost + ':' + CONFIG.dddPort;
 
         function makeSid(movie, timelineHash, season, episode) {
@@ -1495,10 +1556,6 @@
                 explicitIndex = Number(params.start_index || 0);
             }
 
-            /**
-             * Главное правило:
-             * если текущий stream URL найден в playlist, он важнее playlist_index.
-             */
             if (indexByUrl >= 0) return indexByUrl;
             if (indexByFallbackUrl >= 0) return indexByFallbackUrl;
 
@@ -1563,6 +1620,7 @@
                 movie_key: movie ? StorageManager.getMovieKey(movie) : '',
                 original_title: movie ? Utils.getMovieTitle(movie) : '',
                 original_language: movie ? Utils.getOriginalLanguage(movie) : '',
+                media_type: movie ? Utils.getMediaKind(movie) : '',
 
                 title: params.title || '',
                 season: season,
@@ -1630,15 +1688,30 @@
                 params.url = appendFragment(params.url, session, startIndex, startIndex);
             }
 
+            if (params.url && Utils.isStreamUrl(params.url)) {
+                params.url = appendFragment(params.url, session, startIndex, startIndex);
+            }
+
             params.playlist_index = startIndex;
+            params.ddd_start_index = startIndex;
+            params.start_index = startIndex;
+
             params.ddd_session = {
                 sid: session.sid,
+                token: session.token,
+                host: session.host,
                 port: session.port,
                 startIndex: session.startIndex
             };
 
             activeSession = session;
+            consecutiveFetchFails = 0;
             StorageManager.saveDDDSession(session);
+            startPolling();
+
+            setTimeout(function () {
+                probe(false);
+            }, 1500);
 
             Utils.noty(
                 'attach pl=' + session.playlistMeta.length +
@@ -1700,19 +1773,66 @@
 
         function normalizeEvents(data) {
             if (Array.isArray(data)) return data;
+
+            if (data && Array.isArray(data.events)) return data.events;
             if (data && Array.isArray(data.value)) return data.value;
             if (data && Array.isArray(data.Value)) return data.Value;
 
             return [];
         }
 
+        function normalizeStateEvent(data) {
+            if (!data) return null;
+
+            var state = data.state || data.State || data;
+
+            if (!state || typeof state !== 'object') return null;
+
+            var hasAnyPosition =
+                state.position !== undefined ||
+                state.duration !== undefined ||
+                state.uri !== undefined ||
+                state.windowIndex !== undefined ||
+                state.title !== undefined;
+
+            if (!hasAnyPosition) return null;
+
+            return {
+                schema: state.schema || 1,
+                type: state.lastEventType || 'state',
+                client: state.client || CONFIG.dddClient,
+                sessionId: state.sessionId || null,
+                ts: Number(state.updatedAt || state.ts || 0),
+                payload: {
+                    sessionId: state.sessionId || null,
+                    ts: Number(state.updatedAt || state.ts || 0),
+                    uri: state.uri || '',
+                    position: state.position,
+                    duration: state.duration,
+                    bufferedPosition: state.bufferedPosition,
+                    bufferedPercentage: state.bufferedPercentage,
+                    title: state.title || '',
+                    windowIndex: state.windowIndex,
+                    playlistSize: state.playlistSize,
+                    isPlaying: state.isPlaying,
+                    isBuffering: state.isBuffering,
+                    finished: state.finished,
+                    endBy: state.endBy,
+                    reason: state.lastReason || state.lastEventType || 'state'
+                }
+            };
+        }
+
         function hasPosition(event) {
+            if (!event) return false;
+
+            var payload = event.payload || event;
+
             return !!(
-                event &&
-                event.payload &&
+                payload &&
                 (
-                    event.payload.position !== undefined ||
-                    event.payload.positionSec !== undefined
+                    payload.position !== undefined ||
+                    payload.positionSec !== undefined
                 )
             );
         }
@@ -1720,35 +1840,44 @@
         function eventTs(event, fallbackIndex) {
             if (!event) return fallbackIndex || 0;
 
+            var payload = event.payload || {};
+
             return Number(
                 event.ts ||
-                (event.payload && event.payload.ts) ||
+                payload.ts ||
+                event.updatedAt ||
+                payload.updatedAt ||
                 fallbackIndex ||
                 0
             );
         }
 
-        function chooseBestEvent(state, eventsRaw) {
+        function chooseBestEvent(stateRaw, eventsRaw) {
             var events = normalizeEvents(eventsRaw);
+            var stateEvent = normalizeStateEvent(stateRaw);
             var candidates = [];
 
             for (var i = 0; i < events.length; i++) {
-                if (events[i] && events[i].payload && hasPosition(events[i])) {
+                if (events[i] && hasPosition(events[i])) {
                     events[i].__order = i + 1;
                     candidates.push(events[i]);
                 }
             }
 
-            if (state && state.payload && hasPosition(state)) {
-                state.__order = events.length + 1;
-                candidates.push(state);
+            if (stateEvent && hasPosition(stateEvent)) {
+                stateEvent.__order = events.length + 1;
+                candidates.push(stateEvent);
             }
 
             candidates.sort(function (a, b) {
-                return eventTs(b, b.__order) - eventTs(a, a.__order);
+                var tsDelta = eventTs(b, b.__order) - eventTs(a, a.__order);
+
+                if (tsDelta !== 0) return tsDelta;
+
+                return (b.__order || 0) - (a.__order || 0);
             });
 
-            return candidates[0] || state || null;
+            return candidates[0] || stateEvent || null;
         }
 
         function readPayloadIndex(payload, session) {
@@ -1807,7 +1936,10 @@
             if (!session || !session.movie || !meta || !meta.timelineHash) return;
 
             try {
-                if (!meta.season || !meta.episode) {
+                var mediaKind = session.movie ? Utils.getMediaKind(session.movie) : 'movie';
+                var isMovieLike = mediaKind === 'movie';
+
+                if (!isMovieLike && (!meta.season || !meta.episode)) {
                     Utils.warn('Skip DDD stream params without S/E', meta, payload);
                     return;
                 }
@@ -1829,6 +1961,7 @@
                     original_language: Utils.getOriginalLanguage(session.movie),
                     movie_id: session.movie.id || session.movie.movie_id || session.movie_id,
                     movie_key: session.movie_key,
+                    media_type: mediaKind,
 
                     season: meta.season,
                     episode: meta.episode,
@@ -1857,10 +1990,6 @@
                 return false;
             }
 
-            if (eventTime) {
-                lastEventTsBySession[sessionId] = eventTime;
-            }
-
             var positionSec = Utils.msToSeconds(payload.position);
             var durationSec = Utils.msToSeconds(payload.duration);
 
@@ -1874,6 +2003,10 @@
 
             if (positionSec < CONFIG.minSaveSeconds) return false;
             if (durationSec < CONFIG.minDurationSeconds) return false;
+
+            if (eventTime) {
+                lastEventTsBySession[sessionId] = eventTime;
+            }
 
             var meta = resolveMeta(session, payload);
 
@@ -1929,7 +2062,7 @@
 
             updateStreamTimestampFromDDD(session, meta, payload);
 
-            if (CONFIG.debugNotyPollSuccess || CONFIG.debugNotyLevel >= 3) {
+            if (DEBUG.enabled && (DEBUG.pollSuccess || DEBUG.notyLevel >= 3)) {
                 Utils.noty(
                     'tl S' + (meta.season || 0) +
                     'E' + (meta.episode || 0) +
@@ -1962,8 +2095,17 @@
             }
 
             var pingUrl = host + '/ping';
-            var stateUrl = host + '/state?sid=' + encodeURIComponent(session.sid) + '&token=' + encodeURIComponent(session.token);
-            var eventsUrl = host + '/events?sid=' + encodeURIComponent(session.sid) + '&token=' + encodeURIComponent(session.token);
+
+            var stateUrl =
+                host +
+                '/state?sid=' + encodeURIComponent(session.sid) +
+                '&token=' + encodeURIComponent(session.token);
+
+            var eventsUrl =
+                host +
+                '/events?sid=' + encodeURIComponent(session.sid) +
+                '&token=' + encodeURIComponent(session.token) +
+                '&limit=50';
 
             var stateData = null;
 
@@ -1976,6 +2118,7 @@
                     return fetchJson(eventsUrl, CONFIG.dddFetchTimeoutMs);
                 })
                 .then(function (events) {
+                    consecutiveFetchFails = 0;
                     var best = chooseBestEvent(stateData, events);
 
                     if (!best || !best.payload) {
@@ -1986,13 +2129,19 @@
                     return updateTimelineFromEvent(session, best);
                 })
                 .catch(function (e) {
+                    consecutiveFetchFails++;
                     Utils.log('DDD probe failed', e);
+
+                    if (!showFail && consecutiveFetchFails >= 2) {
+                        stopPolling();
+                    }
 
                     if (
                         showFail ||
                         (
-                            CONFIG.debugNotyPollFail &&
-                            CONFIG.debugNotyLevel >= 3
+                            DEBUG.enabled &&
+                            DEBUG.pollFail &&
+                            DEBUG.notyLevel >= 3
                         )
                     ) {
                         Utils.noty(
@@ -2014,10 +2163,17 @@
             }, CONFIG.dddPollIntervalMs);
         }
 
+        function stopPolling() {
+            if (!pollTimer) return;
+
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+
         function installWakeHooks() {
             try {
                 document.addEventListener('visibilitychange', function () {
-                    if (!document.hidden) {
+                    if (!document.hidden && activeSession) {
                         setTimeout(function () {
                             probe(true);
                         }, 800);
@@ -2027,6 +2183,8 @@
 
             try {
                 window.addEventListener('focus', function () {
+                    if (!activeSession) return;
+
                     setTimeout(function () {
                         probe(true);
                     }, 800);
@@ -2035,7 +2193,7 @@
 
             try {
                 Lampa.Listener.follow('app', function (event) {
-                    if (event && (event.type === 'ready' || event.type === 'resume')) {
+                    if (event && (event.type === 'ready' || event.type === 'resume') && activeSession) {
                         setTimeout(function () {
                             probe(true);
                         }, 1000);
@@ -2048,15 +2206,50 @@
             window.ContinueWatchDDD = {
                 version: PLUGIN_VERSION,
                 config: CONFIG,
+                debug: DEBUG,
+                host: host,
                 probe: function () {
                     return probe(true);
                 },
                 session: function () {
                     return getSession();
                 },
-                host: host,
                 storage: function () {
                     return StorageManager.getParams();
+                },
+                enableDebug: function () {
+                    DEBUG.enabled = true;
+                    DEBUG.console = true;
+                    DEBUG.noty = true;
+                    DEBUG.notyLevel = 3;
+                    DEBUG.pollSuccess = true;
+                    DEBUG.pollFail = true;
+                    DEBUG.exposeApi = true;
+
+                    try {
+                        if (Lampa.Noty && Lampa.Noty.show) {
+                            Lampa.Noty.show('ContinueWatchDDD debug enabled');
+                        }
+                    } catch (e) {}
+
+                    return DEBUG;
+                },
+                disableDebug: function () {
+                    DEBUG.enabled = false;
+                    DEBUG.console = false;
+                    DEBUG.noty = false;
+                    DEBUG.notyLevel = 0;
+                    DEBUG.pollSuccess = false;
+                    DEBUG.pollFail = false;
+
+                    return DEBUG;
+                },
+                noty: function (message) {
+                    try {
+                        if (Lampa.Noty && Lampa.Noty.show) {
+                            Lampa.Noty.show(String(message || 'debug test'));
+                        }
+                    } catch (e) {}
                 }
             };
         }
@@ -2064,9 +2257,8 @@
         function init() {
             if (!CONFIG.dddEnabled) return;
 
-            startPolling();
             installWakeHooks();
-            //exposeDebugApi(); // debug API отключён в чистой версии
+            exposeDebugApi();
 
             setTimeout(function () {
                 probe(false);
@@ -2077,6 +2269,7 @@
             init: init,
             attach: attach,
             probe: probe,
+            stopPolling: stopPolling,
             getSession: getSession
         };
     })();
@@ -2182,9 +2375,6 @@
             if (playlistToSave) {
                 playlistIndex = PlaylistManager.findPlaylistIndexByUrl(playlistToSave, params.url);
 
-                /**
-                 * playlist_index используем только если URL не удалось сопоставить.
-                 */
                 if (playlistIndex < 0 && params.playlist_index !== undefined) {
                     var candidateIndex = Number(params.playlist_index || 0);
 
@@ -2223,6 +2413,7 @@
                 original_language: Utils.getOriginalLanguage(movie),
                 movie_id: movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId,
                 movie_key: StorageManager.getMovieKey(movie),
+                media_type: Utils.getMediaKind(movie),
 
                 season: season,
                 episode: episode,
@@ -2339,6 +2530,10 @@
                         DDDLayer.probe(true);
                     } catch (e) {}
 
+                    try {
+                        DDDLayer.stopPolling();
+                    } catch (e) {}
+
                     currentEpisodeHash = null;
                 });
 
@@ -2373,9 +2568,6 @@
             var playlistIndex = -1;
 
             if (playlist) {
-                /**
-                 * Для Continue сначала URL, потому что старый playlist_index мог быть испорчен.
-                 */
                 playlistIndex = PlaylistManager.findPlaylistIndexByUrl(playlist, url);
 
                 if (playlistIndex < 0 && params.playlist_index !== undefined) {
@@ -2405,6 +2597,7 @@
                 original_language: Utils.getOriginalLanguage(movie),
                 movie_id: movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId,
                 movie_key: StorageManager.getMovieKey(movie),
+                media_type: Utils.getMediaKind(movie),
 
                 season: params.season || 0,
                 episode: params.episode || 0,
@@ -2426,14 +2619,7 @@
                 season: params.season,
                 episode: params.episode,
 
-                /**
-                 * file_index — индекс файла внутри TorrServer.
-                 */
                 file_index: params.file_index || 0,
-
-                /**
-                 * playlist_index — индекс элемента внутри Lampa playlist.
-                 */
                 playlist_index: playlistIndex,
                 ddd_start_index: playlistIndex,
                 start_index: playlistIndex,
@@ -2516,6 +2702,29 @@
             } catch (e) {}
 
             return null;
+        }
+
+        function removeContinueButtons(render) {
+            try {
+                var root = render && render.length ? render : $(document.body);
+                var continueButtonRe = new RegExp('^Продолжить +S[0-9]+(?: *[.] *| +)E[0-9]+', 'i');
+
+                root.find('.button--continue-watch-ddd, .button--continue-watch-ddd-debug').remove();
+
+                root.find('.full-start__button, .full-start-new__button, .selector').each(function () {
+                    var el = $(this);
+                    var text = String(el.text() || '')
+                        .split(String.fromCharCode(10)).join(' ')
+                        .split(String.fromCharCode(13)).join(' ')
+                        .split(String.fromCharCode(9)).join(' ')
+                        .replace(/  +/g, ' ')
+                        .trim();
+
+                    if (continueButtonRe.test(text)) {
+                        el.remove();
+                    }
+                });
+            } catch (e) {}
         }
 
         function renderButtonContent(movie, params) {
@@ -2699,39 +2908,26 @@
 
                         if (!params) return;
 
-                        var existing = render.find('.button--continue-watch-ddd');
+                        removeContinueButtons(render);
 
-                        if (existing.length) {
-                            var existingButton = existing.eq(0);
-                    updateButton(existingButton, movie, params);
+                        var button = createButton(movie, params);
 
-                            existingButton.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {
-                                handleClick(movie, this);
-                            });
-                        } else {
-                            var button = createButton(movie, params);
+                        button.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {
+                            handleClick(movie, this);
+                        });
 
-                            button.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {
-                                handleClick(movie, this);
-                            });
+                        insertAfterBestPlace(render, button);
 
-                            insertAfterBestPlace(render, button);
+                        if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty) {
+                            var debugExisting = render.find('.button--continue-watch-ddd-debug');
+
+                            if (debugExisting.length) {
+                                bindStatusButton(debugExisting, movie);
+                            } else {
+                                var debugButton = createStatusButton(movie);
+                                render.find('.button--continue-watch-ddd').after(debugButton);
+                            }
                         }
-
-                        /*
-                         * DDD статус отключён в чистой версии.
-                         *
-                         * if (CONFIG.debugStatusButton && CONFIG.debugNoty) {
-                         *     var debugExisting = render.find('.button--continue-watch-ddd-debug');
-                         *
-                         *     if (debugExisting.length) {
-                         *         bindStatusButton(debugExisting, movie);
-                         *     } else {
-                         *         var debugButton = createStatusButton(movie);
-                         *         render.find('.button--continue-watch-ddd').after(debugButton);
-                         *     }
-                         * }
-                         */
                     } catch (e) {
                         Utils.error('Button render failed', e);
                     }
@@ -2765,8 +2961,20 @@
             setTimeout(function () {
                 StorageManager.cleanupOld();
             }, 10000);
+
+            window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ = true;
+            window.__CONTINUE_WATCH_DDD_LAYER_V3_LOADING__ = false;
+            window.__CONTINUE_WATCH_DDD_LAYER_V3_VERSION__ = PLUGIN_VERSION;
         } catch (e) {
+            window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ = false;
+            window.__CONTINUE_WATCH_DDD_LAYER_V3_LOADING__ = false;
+            window.__CONTINUE_WATCH_DDD_LAYER_V3_VERSION__ = PLUGIN_VERSION + ':init-error';
             Utils.error('Init failed', e);
+            try {
+                if (Lampa.Noty && Lampa.Noty.show) {
+                    Lampa.Noty.show('ContinueWatchDDD init error: ' + String(e && e.message ? e.message : e).slice(0, 120));
+                }
+            } catch (ee) {}
         }
     }
 
@@ -2780,6 +2988,7 @@
             }
         });
     }
+
     // ==========================================================
     // ContinueWatchDDD global button dedup
     // =========================================================
@@ -2820,5 +3029,4 @@
             });
         } catch (e) {}
     })();
-
 })();
