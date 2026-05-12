@@ -8,26 +8,19 @@
     /**
      * ContinueWatch + DDD Local Bridge
      *
-     * Цель:
-     * - использовать штатные механизмы Lampa: Player, Timeline, playlist;
-     * - не конкурировать с системой истории Lampa;
-     * - сохранять только минимальные stream-параметры для повторного запуска TorrServer stream;
-     * - не привязывать сохранённые записи к старому TorrServer host;
-     * - корректно работать с anime-case, где TMDB/Lampa/раздача могут расходиться по S/E;
-     * - не портить playlist пустыми/непроверенными данными bridge layer.
+     * Версия под актуальный dddplayer2 local bridge:
+     * - запуск DDD через fragment #ddd_mode=local&ddd_sid=...;
+     * - чтение /ping, /state, /events;
+     * - поддержка нового формата ответов сервера: { ok, state } и { ok, events };
+     * - сохранение позиции в штатный Lampa.Timeline;
+     * - сохранение минимальных stream-параметров для повторного запуска TorrServer stream;
+     * - сохранение playlist/meta для корректного resume сериалов и anime-case.
      */
 
     var PLUGIN_NAME = 'ContinueWatchDDD';
-    var PLUGIN_VERSION = 'v3.1.0-anime-playlist-fixed-20260507';
+    var PLUGIN_VERSION = 'v3.1.3-local-bridge-state-events-fixed-20260512';
 
-    /**
-     * Диагностика.
-     *
-     * Для проверки сейчас включено.
-     * После теста можно вернуть false.
-     */
-    var DDD_DEBUG = true;
-    // DDD_DEBUG = false;
+    var DDD_DEBUG = false;
 
     var CONFIG = {
         storageBaseKey: 'continue_watch_params',
@@ -49,21 +42,14 @@
         minDurationSeconds: 60,
         finishPercent: 90,
 
-        debugConsole: DDD_DEBUG,
-        debugNoty: DDD_DEBUG,
-        debugNotyLevel: DDD_DEBUG ? 2 : 0,
+        debugConsole: false,
+        debugNoty: false,
+        debugNotyLevel: 0,
         debugNotyMinIntervalMs: 1500,
         debugNotyPollSuccess: false,
-        debugNotyPollFail: DDD_DEBUG,
-        debugStatusButton: DDD_DEBUG,
+        debugNotyPollFail: false,
+        debugStatusButton: false,
 
-        /**
-         * true:
-         * DDD-слой добавляется только для внешнего torrent-плеера.
-         *
-         * false:
-         * DDD-слой добавляется всегда, если URL похож на TorrServer stream.
-         */
         onlyExternalTorrentPlayer: true
     };
 
@@ -112,65 +98,53 @@
         }
 
         function showConsole(method, args) {
-            if (!CONFIG.debugConsole) return;
+            if (!DDD_DEBUG && !CONFIG.debugConsole) return;
+            if (!window.console) return;
+
+            var fn = console[method] || console.log;
 
             try {
-                var prefix = '[' + PLUGIN_NAME + ']';
-                var list = [prefix].concat(Array.prototype.slice.call(args));
-
-                if (console && console[method]) {
-                    console[method].apply(console, list);
-                }
+                fn.apply(console, ['[' + PLUGIN_NAME + ']'].concat(Array.prototype.slice.call(args)));
             } catch (e) {}
         }
 
         function showNoty(message, level, force) {
-            level = level === undefined ? 1 : Number(level || 0);
+            if (!DDD_DEBUG && !CONFIG.debugNoty) return;
 
-            if (!CONFIG.debugNoty) return;
+            level = Number(level || 0);
             if (!force && level > Number(CONFIG.debugNotyLevel || 0)) return;
 
-            message = String(message || '');
-            if (!message) return;
-
             var current = now();
+            var text = String(message || '');
 
-            if (
-                !force &&
-                message === lastNotyMessage &&
-                current - lastNotyTime < CONFIG.debugNotyMinIntervalMs
-            ) {
+            if (!force && text === lastNotyMessage && current - lastNotyTime < CONFIG.debugNotyMinIntervalMs) {
                 return;
             }
 
-            lastNotyMessage = message;
+            lastNotyMessage = text;
             lastNotyTime = current;
 
             try {
-                if (window.Lampa && Lampa.Noty && Lampa.Noty.show) {
-                    Lampa.Noty.show(message);
+                if (Lampa.Noty && Lampa.Noty.show) {
+                    Lampa.Noty.show(text);
                 }
             } catch (e) {}
         }
 
         function log() {
             showConsole('log', arguments);
-            showNoty('[DDD] ' + stringifyArgs(arguments), 3, false);
         }
 
         function warn() {
             showConsole('warn', arguments);
-            showNoty('[DDD WARN] ' + stringifyArgs(arguments), 1, false);
         }
 
         function error() {
             showConsole('error', arguments);
-            showNoty('[DDD ERR] ' + stringifyArgs(arguments), 0, false);
         }
 
         function noty(message, force, level) {
-            showConsole('log', [message]);
-            showNoty('[DDD] ' + message, level, force);
+            showNoty(message, level, force);
         }
 
         function stripFragment(url) {
@@ -399,11 +373,6 @@
 
                 var m;
 
-                /*
-                 * Anime-case:
-                 * [SubsPlus+] Oshi No Ko S2 - 10
-                 * Title S2 10
-                 */
                 m = text.match(/\bS\s*0?(\d{1,2})\s*[-_. ]+\s*0?(\d{1,3})\b/i);
                 if (m) {
                     return {
@@ -413,9 +382,6 @@
                     };
                 }
 
-                /*
-                 * S2E10 / S02E010
-                 */
                 m = text.match(/\bS(?:eason)?\s*0?(\d{1,2})\s*[\.\-_: ]*\s*E(?:p(?:isode)?)?\s*0?(\d{1,3})\b/i);
                 if (m) {
                     return {
@@ -425,9 +391,6 @@
                     };
                 }
 
-                /*
-                 * 2x10 / 2х10 / 2×10
-                 */
                 m = text.match(/\b0?(\d{1,2})\s*[xх×]\s*0?(\d{1,3})\b/i);
                 if (m) {
                     return {
@@ -437,9 +400,6 @@
                     };
                 }
 
-                /*
-                 * Oshi no Ko 2nd Season - 10
-                 */
                 m = text.match(/\b0?(\d{1,2})(?:st|nd|rd|th)?\s+season\s*[-_.: ]+\s*0?(\d{1,3})\b/i);
                 if (m) {
                     return {
@@ -449,9 +409,6 @@
                     };
                 }
 
-                /*
-                 * Season 2 Episode 10
-                 */
                 m = text.match(/season\s*0?(\d{1,2}).*?(?:episode|ep\.?)\s*0?(\d{1,3})/i);
                 if (m) {
                     return {
@@ -461,9 +418,6 @@
                     };
                 }
 
-                /*
-                 * 2 сезон 10 серия
-                 */
                 m = text.match(/0?(\d{1,2})\s*сезон.*?0?(\d{1,3})\s*сер/i);
                 if (m) {
                     return {
@@ -473,9 +427,6 @@
                     };
                 }
 
-                /*
-                 * Японский вариант: 第10話
-                 */
                 m = text.match(/第\s*0?(\d{1,3})\s*話/i);
                 if (m && allowEpisodeOnly && fallbackSeason) {
                     return {
@@ -485,9 +436,6 @@
                     };
                 }
 
-                /*
-                 * Episode 10 / Ep.10 / Серия 10
-                 */
                 m = text.match(/(?:эпизод|сер(?:ия|ии|и)?|episode|ep\.?|сер\.)\s*[-–—:]?\s*0?(\d{1,3})/i);
                 if (m && allowEpisodeOnly && fallbackSeason) {
                     return {
@@ -497,10 +445,6 @@
                     };
                 }
 
-                /*
-                 * Anime-only fallback:
-                 * Title - 10
-                 */
                 m = text.match(/\s[-–—]\s0?(\d{1,3})(?:\s|$|\.|\[|\()/i);
                 if (m && allowEpisodeOnly && fallbackSeason) {
                     return {
@@ -510,10 +454,6 @@
                     };
                 }
 
-                /*
-                 * Filename ending:
-                 * Title 10.mkv / Title - 10.mkv
-                 */
                 m = text.match(/(?:^|[\s._\-\[\(])0?(\d{1,3})(?:\s*(?:v\d+)?\s*(?:\[[^\]]+\]|\([^)]+\))*)?\.(?:mkv|mp4|avi|ts)$/i);
                 if (m && allowEpisodeOnly && fallbackSeason) {
                     return {
@@ -819,9 +759,6 @@
 
                 var value = data[key];
 
-                /**
-                 * Не затираем старые хорошие значения undefined-ом.
-                 */
                 if (value === undefined) return;
 
                 if (old[key] !== value) {
@@ -831,10 +768,6 @@
             });
 
             if (Array.isArray(data.playlist)) {
-                /**
-                 * Bridge/session-race не должен затирать полноценный сериаловый playlist
-                 * пустым или одиночным списком.
-                 */
                 if (data.playlist.length >= 2) {
                     var oldJson = old.playlist ? Utils.safeJson(old.playlist) : '';
                     var newJson = Utils.safeJson(data.playlist);
@@ -959,10 +892,6 @@
 
             if (!originalTitle) return '';
 
-            /**
-             * Повторяет формулу Lampa Timeline.watchedEpisode:
-             * season > 10 ? ':' : ''
-             */
             if (season > 0 && episode > 0) {
                 var separator = season > 10 ? ':' : '';
                 return Lampa.Utils.hash([season, separator, episode, originalTitle].join(''));
@@ -1273,10 +1202,6 @@
                 }
             }
 
-            /**
-             * Fallback S/E разрешён только для реально выбранного элемента.
-             * Иначе весь playlistMeta получит один и тот же номер серии.
-             */
             if ((!season || !episode) && index === selectedIndex) {
                 season = Number(fallbackSeason || 0);
                 episode = Number(fallbackEpisode || 0);
@@ -1285,7 +1210,7 @@
 
             var timelineHash = '';
 
-            if (item.timeline && item.timeline.hash !== undefined) {
+            if (item.timeline && typeof item.timeline === 'object' && item.timeline.hash !== undefined) {
                 timelineHash = String(item.timeline.hash);
             }
 
@@ -1423,10 +1348,6 @@
         function findMetaByIndexOrUrl(session, index, url) {
             if (!session || !Array.isArray(session.playlistMeta)) return null;
 
-            /**
-             * Сначала URL/stream identity.
-             * Индекс внешнего плеера может не совпадать с индексом Lampa playlist.
-             */
             if (url) {
                 var clean = Utils.stripFragment(url);
                 var targetIdentity = Utils.streamIdentity(url);
@@ -1545,10 +1466,6 @@
                 explicitIndex = Number(params.start_index || 0);
             }
 
-            /**
-             * Главное правило:
-             * если текущий stream URL найден в playlist, он важнее playlist_index.
-             */
             if (indexByUrl >= 0) return indexByUrl;
             if (indexByFallbackUrl >= 0) return indexByFallbackUrl;
 
@@ -1680,9 +1597,18 @@
                 params.url = appendFragment(params.url, session, startIndex, startIndex);
             }
 
+            if (params.url && Utils.isStreamUrl(params.url)) {
+                params.url = appendFragment(params.url, session, startIndex, startIndex);
+            }
+
             params.playlist_index = startIndex;
+            params.ddd_start_index = startIndex;
+            params.start_index = startIndex;
+
             params.ddd_session = {
                 sid: session.sid,
+                token: session.token,
+                host: session.host,
                 port: session.port,
                 startIndex: session.startIndex
             };
@@ -1750,19 +1676,66 @@
 
         function normalizeEvents(data) {
             if (Array.isArray(data)) return data;
+
+            if (data && Array.isArray(data.events)) return data.events;
             if (data && Array.isArray(data.value)) return data.value;
             if (data && Array.isArray(data.Value)) return data.Value;
 
             return [];
         }
 
+        function normalizeStateEvent(data) {
+            if (!data) return null;
+
+            var state = data.state || data.State || data;
+
+            if (!state || typeof state !== 'object') return null;
+
+            var hasAnyPosition =
+                state.position !== undefined ||
+                state.duration !== undefined ||
+                state.uri !== undefined ||
+                state.windowIndex !== undefined ||
+                state.title !== undefined;
+
+            if (!hasAnyPosition) return null;
+
+            return {
+                schema: state.schema || 1,
+                type: state.lastEventType || 'state',
+                client: state.client || CONFIG.dddClient,
+                sessionId: state.sessionId || null,
+                ts: Number(state.updatedAt || state.ts || 0),
+                payload: {
+                    sessionId: state.sessionId || null,
+                    ts: Number(state.updatedAt || state.ts || 0),
+                    uri: state.uri || '',
+                    position: state.position,
+                    duration: state.duration,
+                    bufferedPosition: state.bufferedPosition,
+                    bufferedPercentage: state.bufferedPercentage,
+                    title: state.title || '',
+                    windowIndex: state.windowIndex,
+                    playlistSize: state.playlistSize,
+                    isPlaying: state.isPlaying,
+                    isBuffering: state.isBuffering,
+                    finished: state.finished,
+                    endBy: state.endBy,
+                    reason: state.lastReason || state.lastEventType || 'state'
+                }
+            };
+        }
+
         function hasPosition(event) {
+            if (!event) return false;
+
+            var payload = event.payload || event;
+
             return !!(
-                event &&
-                event.payload &&
+                payload &&
                 (
-                    event.payload.position !== undefined ||
-                    event.payload.positionSec !== undefined
+                    payload.position !== undefined ||
+                    payload.positionSec !== undefined
                 )
             );
         }
@@ -1770,35 +1743,44 @@
         function eventTs(event, fallbackIndex) {
             if (!event) return fallbackIndex || 0;
 
+            var payload = event.payload || {};
+
             return Number(
                 event.ts ||
-                (event.payload && event.payload.ts) ||
+                payload.ts ||
+                event.updatedAt ||
+                payload.updatedAt ||
                 fallbackIndex ||
                 0
             );
         }
 
-        function chooseBestEvent(state, eventsRaw) {
+        function chooseBestEvent(stateRaw, eventsRaw) {
             var events = normalizeEvents(eventsRaw);
+            var stateEvent = normalizeStateEvent(stateRaw);
             var candidates = [];
 
             for (var i = 0; i < events.length; i++) {
-                if (events[i] && events[i].payload && hasPosition(events[i])) {
+                if (events[i] && hasPosition(events[i])) {
                     events[i].__order = i + 1;
                     candidates.push(events[i]);
                 }
             }
 
-            if (state && state.payload && hasPosition(state)) {
-                state.__order = events.length + 1;
-                candidates.push(state);
+            if (stateEvent && hasPosition(stateEvent)) {
+                stateEvent.__order = events.length + 1;
+                candidates.push(stateEvent);
             }
 
             candidates.sort(function (a, b) {
-                return eventTs(b, b.__order) - eventTs(a, a.__order);
+                var tsDelta = eventTs(b, b.__order) - eventTs(a, a.__order);
+
+                if (tsDelta !== 0) return tsDelta;
+
+                return (b.__order || 0) - (a.__order || 0);
             });
 
-            return candidates[0] || state || null;
+            return candidates[0] || stateEvent || null;
         }
 
         function readPayloadIndex(payload, session) {
@@ -1907,10 +1889,6 @@
                 return false;
             }
 
-            if (eventTime) {
-                lastEventTsBySession[sessionId] = eventTime;
-            }
-
             var positionSec = Utils.msToSeconds(payload.position);
             var durationSec = Utils.msToSeconds(payload.duration);
 
@@ -1924,6 +1902,10 @@
 
             if (positionSec < CONFIG.minSaveSeconds) return false;
             if (durationSec < CONFIG.minDurationSeconds) return false;
+
+            if (eventTime) {
+                lastEventTsBySession[sessionId] = eventTime;
+            }
 
             var meta = resolveMeta(session, payload);
 
@@ -2012,8 +1994,17 @@
             }
 
             var pingUrl = host + '/ping';
-            var stateUrl = host + '/state?sid=' + encodeURIComponent(session.sid) + '&token=' + encodeURIComponent(session.token);
-            var eventsUrl = host + '/events?sid=' + encodeURIComponent(session.sid) + '&token=' + encodeURIComponent(session.token);
+
+            var stateUrl =
+                host +
+                '/state?sid=' + encodeURIComponent(session.sid) +
+                '&token=' + encodeURIComponent(session.token);
+
+            var eventsUrl =
+                host +
+                '/events?sid=' + encodeURIComponent(session.sid) +
+                '&token=' + encodeURIComponent(session.token) +
+                '&limit=50';
 
             var stateData = null;
 
@@ -2232,9 +2223,6 @@
             if (playlistToSave) {
                 playlistIndex = PlaylistManager.findPlaylistIndexByUrl(playlistToSave, params.url);
 
-                /**
-                 * playlist_index используем только если URL не удалось сопоставить.
-                 */
                 if (playlistIndex < 0 && params.playlist_index !== undefined) {
                     var candidateIndex = Number(params.playlist_index || 0);
 
@@ -2423,9 +2411,6 @@
             var playlistIndex = -1;
 
             if (playlist) {
-                /**
-                 * Для Continue сначала URL, потому что старый playlist_index мог быть испорчен.
-                 */
                 playlistIndex = PlaylistManager.findPlaylistIndexByUrl(playlist, url);
 
                 if (playlistIndex < 0 && params.playlist_index !== undefined) {
@@ -2476,14 +2461,7 @@
                 season: params.season,
                 episode: params.episode,
 
-                /**
-                 * file_index — индекс файла внутри TorrServer.
-                 */
                 file_index: params.file_index || 0,
-
-                /**
-                 * playlist_index — индекс элемента внутри Lampa playlist.
-                 */
                 playlist_index: playlistIndex,
                 ddd_start_index: playlistIndex,
                 start_index: playlistIndex,
@@ -2556,6 +2534,7 @@
 
     var UIManager = (function () {
         var debounceTimer = null;
+        var installed = false;
 
         function getTimelineView(hash) {
             try {
@@ -2730,6 +2709,9 @@
         }
 
         function install() {
+            if (installed) return;
+            installed = true;
+
             Lampa.Listener.follow('full', function (event) {
                 if (!event || event.type !== 'complite') return;
 
@@ -2748,15 +2730,16 @@
                         var existing = render.find('.button--continue-watch-ddd');
 
                         if (existing.length) {
-                            updateButton(existing, movie, params);
+                            var existingButton = existing.eq(0);
+                            updateButton(existingButton, movie, params);
 
-                            existing.off('hover:enter').on('hover:enter', function () {
+                            existingButton.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {
                                 handleClick(movie, this);
                             });
                         } else {
                             var button = createButton(movie, params);
 
-                            button.on('hover:enter', function () {
+                            button.off('hover:enter.continueWatchDDD').on('hover:enter.continueWatchDDD', function () {
                                 handleClick(movie, this);
                             });
 
@@ -2821,4 +2804,45 @@
             }
         });
     }
+
+    // ==========================================================
+    // ContinueWatchDDD global button dedup
+    // =========================================================
+
+    (function () {
+        var scheduled = false;
+
+        function dedupContinueWatchButtons() {
+            try {
+                var buttons = $('.button--continue-watch-ddd');
+
+                if (buttons.length <= 1) return;
+
+                buttons.slice(1).remove();
+            } catch (e) {}
+        }
+
+        function scheduleDedup() {
+            if (scheduled) return;
+
+            scheduled = true;
+
+            requestAnimationFrame(function () {
+                scheduled = false;
+                dedupContinueWatchButtons();
+            });
+        }
+
+        try {
+            Lampa.Listener.follow('full', function (event) {
+                if (!event || event.type !== 'complite') return;
+
+                scheduleDedup();
+
+                setTimeout(function () {
+                    dedupContinueWatchButtons();
+                }, 300);
+            });
+        } catch (e) {}
+    })();
 })();
