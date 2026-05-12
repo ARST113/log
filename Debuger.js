@@ -29,7 +29,7 @@
      * Кнопка "DDD статус" специально не включается автоматически,
      * потому что она мешает обычному тесту карточки.
      */
-    var DDD_DEBUG = false;
+    var DDD_DEBUG = true;
 
     var DEBUG = {
         enabled: !!DDD_DEBUG,
