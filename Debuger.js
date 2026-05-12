@@ -2,8 +2,23 @@
     'use strict';
 
     if (!window.Lampa) return;
-    if (window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__) return;
+
+    /*
+     * Важно для разработки:
+     * старый общий guard __CONTINUE_WATCH_DDD_LAYER_V3_READY__ мешал загрузить новую версию,
+     * поэтому debug-правки могли физически не применяться.
+     */
+    var BOOT_VERSION = 'v3.1.5-debug-boot-guard-fixed-20260512';
+
+    if (
+        window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
+        window.__CONTINUE_WATCH_DDD_LAYER_V3_VERSION__ === BOOT_VERSION
+    ) {
+        return;
+    }
+
     window.__CONTINUE_WATCH_DDD_LAYER_V3_LOADING__ = true;
+    window.__CONTINUE_WATCH_DDD_LAYER_V3_VERSION__ = BOOT_VERSION;
 
     /**
      * ContinueWatch + DDD Local Bridge
@@ -18,7 +33,7 @@
      */
 
     var PLUGIN_NAME = 'ContinueWatchDDD';
-    var PLUGIN_VERSION = 'v3.1.4-debug-fixed-20260512';
+    var PLUGIN_VERSION = 'v3.1.5-debug-boot-guard-fixed-20260512';
 
     /**
      * Единый главный переключатель диагностики.
@@ -29,7 +44,7 @@
      * Кнопка "DDD статус" специально не включается автоматически,
      * потому что она мешает обычному тесту карточки.
      */
-    var DDD_DEBUG = true;
+    var DDD_DEBUG = false;
 
     var DEBUG = {
         enabled: !!DDD_DEBUG,
@@ -2949,9 +2964,11 @@
 
             window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ = true;
             window.__CONTINUE_WATCH_DDD_LAYER_V3_LOADING__ = false;
+            window.__CONTINUE_WATCH_DDD_LAYER_V3_VERSION__ = PLUGIN_VERSION;
         } catch (e) {
             window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ = false;
             window.__CONTINUE_WATCH_DDD_LAYER_V3_LOADING__ = false;
+            window.__CONTINUE_WATCH_DDD_LAYER_V3_VERSION__ = PLUGIN_VERSION + ':init-error';
             Utils.error('Init failed', e);
             try {
                 if (Lampa.Noty && Lampa.Noty.show) {
