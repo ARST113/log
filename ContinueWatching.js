@@ -2585,7 +2585,7 @@
                         '<circle class="continue-watch-ddd-progress" cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="' + dash + ' 65.97" transform="rotate(-90 12 12)"></circle>' +
                         '<path d="M9 7.7v8.6c0 .55.6.89 1.08.6l6.62-4.3a.72.72 0 0 0 0-1.2l-6.62-4.3A.7.7 0 0 0 9 7.7z" fill="currentColor"></path>' +
                     '</svg>' +
-                    '<span class="continue-watch-ddd-text">Продолжить просмотр</span>' +
+                    '<span class="continue-watch-ddd-text">Продолжить</span>' +
                     '<em class="continue-watch-ddd-extra">' + escapeHtml(details ? ' · ' + details : '') + '</em>' +
                 '</div>';
 
