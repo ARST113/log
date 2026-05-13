@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.6-ddd-legacy-fragment-restore-20260513';
+    var BOOT_VERSION = 'v4.0.7-continue-ring-ui-20260513';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -18,7 +18,7 @@
     var PLUGIN_NAME = 'ContinueWatchUniversal';
     var PLUGIN_VERSION = BOOT_VERSION;
 
-    var DDD_DEBUG = false
+    var DDD_DEBUG = false;
 
     var DEBUG = {
         enabled: !!DDD_DEBUG,
@@ -2402,7 +2402,59 @@
                 .replace(/'/g, '&#39;');
         }
 
-        function formatContinueDetails(params) {
+        function getTimelineView(hash) {
+            try {
+                if (hash && Lampa.Timeline && Lampa.Timeline.view) {
+                    return Lampa.Timeline.view(hash);
+                }
+            } catch (e) {}
+
+            return null;
+        }
+
+        function getContinueRoad(movie, params) {
+            params = params || {};
+
+            var road = {
+                time: Number(params.time || 0),
+                duration: Number(params.duration || 0),
+                percent: Number(params.percent || 0)
+            };
+
+            try {
+                var hash = StorageManager.generateTimelineHash(
+                    movie,
+                    Number(params.season || 0),
+                    Number(params.episode || 0)
+                );
+
+                var timeline = getTimelineView(hash);
+
+                if (timeline) {
+                    if (Number(timeline.time || 0) > road.time) {
+                        road.time = Number(timeline.time || 0);
+                    }
+
+                    if (Number(timeline.duration || 0) > road.duration) {
+                        road.duration = Number(timeline.duration || 0);
+                    }
+
+                    if (Number(timeline.percent || 0) > road.percent) {
+                        road.percent = Number(timeline.percent || 0);
+                    }
+                }
+            } catch (e) {}
+
+            if (!road.percent && road.time && road.duration) {
+                road.percent = Math.round((road.time / road.duration) * 100);
+            }
+
+            road.percent = Utils.clamp(road.percent, 0, 100);
+
+            return road;
+        }
+
+        function formatContinueDetails(params, road) {
             if (!params) return '';
 
             var parts = [];
@@ -2417,20 +2469,30 @@
                 parts.push('E' + episode);
             }
 
-            if (params.time) {
-                parts.push(Utils.formatSeconds(params.time));
+            road = road || {};
+
+            if (road.time) {
+                parts.push(Utils.formatSeconds(road.time));
             }
 
             return parts.join(' · ');
         }
 
         function createButton(movie, params) {
-            var details = formatContinueDetails(params);
+            var road = getContinueRoad(movie, params);
+            var details = formatContinueDetails(params, road);
             var label = 'Продолжить просмотр' + (details ? ' · ' + details : '');
+            var dash = (road.percent * 65.97 / 100).toFixed(2);
+            var subtitle = details || '';
 
             var html = '' +
-                '<div class="full-start__button selector button--continue-watch-ddd" title="' + escapeHtml(label) + '">' +
-                    '<span>' + escapeHtml(label) + '</span>' +
+                '<div class="full-start__button selector button--continue-watch-ddd view--continue-watch" data-subtitle="' + escapeHtml(subtitle) + '" title="' + escapeHtml(label) + '">' +
+                    '<svg class="continue-watch-ddd-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">' +
+                        '<circle cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="1.7" fill="none" opacity="0.22"></circle>' +
+                        '<circle class="continue-watch-ddd-progress" cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="' + dash + ' 65.97" transform="rotate(-90 12 12)"></circle>' +
+                        '<path d="M9 7.7v8.6c0 .55.6.89 1.08.6l6.62-4.3a.72.72 0 0 0 0-1.2l-6.62-4.3A.7.7 0 0 0 9 7.7z" fill="currentColor"></path>' +
+                    '</svg>' +
+                    '<span class="continue-watch-ddd-text">' + escapeHtml(label) + '</span>' +
                 '</div>';
 
             var button = $(html);
