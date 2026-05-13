@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.2-clean-continue-label-20260513';
+    var BOOT_VERSION = 'v4.0.4-android-ddd-debug-restore-20260513';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -47,8 +47,8 @@
         dddMode: 'local',
         dddToken: '',
 
-        dddPollIntervalMs: 1000,
-        dddFetchTimeoutMs: 2500,
+        dddPollIntervalMs: 1500,
+        dddFetchTimeoutMs: 1800,
         dddTimelineSaveIntervalMs: 5000,
         dddEventsLimit: 50,
 
@@ -1575,9 +1575,34 @@
         var activeSid = '';
         var lastTs = 0;
         var lastProbeResult = null;
+        var lastPingAt = 0;
+        var lastGoodAt = 0;
+        var lastEventsError = '';
+        var lastStateError = '';
 
         function baseUrl() {
             return CONFIG.dddHost.replace(/\/$/, '') + ':' + CONFIG.dddPort;
+        }
+
+        function baseUrls() {
+            var urls = [];
+            var primary = baseUrl();
+
+            function add(url) {
+                if (!url) return;
+                if (urls.indexOf(url) === -1) urls.push(url);
+            }
+
+            add(primary);
+
+            if (primary.indexOf('127.0.0.1') !== -1) {
+                add(primary.replace('127.0.0.1', 'localhost'));
+            }
+            else if (primary.indexOf('localhost') !== -1) {
+                add(primary.replace('localhost', '127.0.0.1'));
+            }
+
+            return urls;
         }
 
         function withToken(params) {
@@ -1586,20 +1611,46 @@
             return params;
         }
 
-        function endpoint(path, params) {
+        function endpointFromBase(base, path, params) {
             params = withToken(params || {});
             var query = Utils.encodeParams(params);
-            return baseUrl() + path + (query ? '?' + query : '');
+            return base + path + (query ? '?' + query : '');
         }
 
-        function fetchJson(url, call) {
+        function endpoint(path, params) {
+            return endpointFromBase(baseUrl(), path, params);
+        }
+
+        function endpointList(path, variants) {
+            var result = [];
+            var bases = baseUrls();
+
+            variants = variants && variants.length ? variants : [{}];
+
+            bases.forEach(function (base) {
+                variants.forEach(function (params) {
+                    result.push(endpointFromBase(base, path, params));
+                });
+            });
+
+            return result;
+        }
+
+        function parseJsonMaybe(value) {
+            if (value === null || value === undefined) return null;
+            if (typeof value === 'object') return value;
+
+            try {
+                return JSON.parse(String(value));
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function fetchWithBrowserFetch(url, timeoutMs, call) {
             var finished = false;
             var timer = null;
             var controller = null;
-
-            try {
-                if (window.AbortController) controller = new AbortController();
-            } catch (e) {}
 
             function done(err, json) {
                 if (finished) return;
@@ -1612,24 +1663,134 @@
                 try {
                     if (controller) controller.abort();
                 } catch (e) {}
-                done(new Error('timeout'), null);
-            }, CONFIG.dddFetchTimeoutMs);
+                done(new Error('fetch timeout'), null);
+            }, timeoutMs);
+
+            try {
+                if (window.AbortController) controller = new AbortController();
+            } catch (e1) {}
 
             try {
                 fetch(url, controller ? { signal: controller.signal } : {})
                     .then(function (res) {
-                        if (!res || !res.ok) throw new Error('HTTP ' + (res ? res.status : 0));
+                        if (!res || !res.ok) throw new Error('fetch HTTP ' + (res ? res.status : 0));
                         return res.json();
                     })
                     .then(function (json) {
                         done(null, json);
                     })
                     .catch(function (err) {
-                        done(err, null);
+                        done(err || new Error('fetch failed'), null);
                     });
-            } catch (e) {
-                done(e, null);
+            } catch (e2) {
+                done(e2, null);
             }
+        }
+
+        function fetchWithXhr(url, timeoutMs, call) {
+            var xhr;
+
+            try {
+                xhr = new XMLHttpRequest();
+                xhr.open('GET', url, true);
+                xhr.timeout = timeoutMs;
+                xhr.onreadystatechange = function () {
+                    if (xhr.readyState !== 4) return;
+
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        var json = parseJsonMaybe(xhr.responseText);
+                        if (!json) return call(new Error('xhr invalid json'), null);
+                        return call(null, json);
+                    }
+
+                    call(new Error('xhr HTTP ' + xhr.status), null);
+                };
+                xhr.onerror = function () {
+                    call(new Error('xhr network error'), null);
+                };
+                xhr.ontimeout = function () {
+                    call(new Error('xhr timeout'), null);
+                };
+                xhr.send(null);
+            } catch (e) {
+                call(e, null);
+            }
+        }
+
+        function fetchWithLampaNative(url, timeoutMs, call) {
+            try {
+                if (!Utils.isAndroidPlatform()) return call(new Error('native skipped: not android'), null);
+                if (!Lampa.Android || !Lampa.Android.httpReq) return call(new Error('native skipped: Lampa.Android.httpReq missing'), null);
+
+                Lampa.Android.httpReq({
+                    url: url,
+                    dataType: 'json',
+                    timeout: timeoutMs,
+                    attempts: 0
+                }, {
+                    complite: function (data) {
+                        var json = parseJsonMaybe(data);
+                        if (!json) return call(new Error('native invalid json'), null);
+                        call(null, json);
+                    },
+                    error: function (err) {
+                        call(new Error(
+                            (err && (err.decode_error || err.responseText || err.message || err.status)) ||
+                            'native http error'
+                        ), null);
+                    }
+                });
+            } catch (e) {
+                call(e, null);
+            }
+        }
+
+        function fetchJson(url, call) {
+            var timeoutMs = CONFIG.dddFetchTimeoutMs;
+            var errors = [];
+
+            fetchWithBrowserFetch(url, timeoutMs, function (fetchErr, fetchJsonResult) {
+                if (!fetchErr && fetchJsonResult) return call(null, fetchJsonResult);
+                errors.push(fetchErr && fetchErr.message ? fetchErr.message : String(fetchErr || 'fetch failed'));
+
+                fetchWithXhr(url, timeoutMs, function (xhrErr, xhrJsonResult) {
+                    if (!xhrErr && xhrJsonResult) return call(null, xhrJsonResult);
+                    errors.push(xhrErr && xhrErr.message ? xhrErr.message : String(xhrErr || 'xhr failed'));
+
+                    fetchWithLampaNative(url, timeoutMs, function (nativeErr, nativeJsonResult) {
+                        if (!nativeErr && nativeJsonResult) return call(null, nativeJsonResult);
+                        errors.push(nativeErr && nativeErr.message ? nativeErr.message : String(nativeErr || 'native failed'));
+
+                        call(new Error(errors.join(' | ')), null);
+                    });
+                });
+            });
+        }
+
+        function fetchFirstJson(urls, label, call) {
+            var index = 0;
+            var errors = [];
+
+            function next() {
+                if (index >= urls.length) {
+                    return call(new Error(errors.join(' || ') || 'all requests failed'), null);
+                }
+
+                var url = urls[index++];
+
+                fetchJson(url, function (err, json) {
+                    if (!err && json) {
+                        if (DEBUG.pollSuccess) Utils.log('DDD ' + label + ' ok', url);
+                        lastGoodAt = Utils.now();
+                        return call(null, json);
+                    }
+
+                    errors.push(url + ' => ' + (err && err.message ? err.message : err));
+                    next();
+                });
+            }
+
+            next();
         }
 
         function canUse() {
@@ -1648,12 +1809,43 @@
             });
         }
 
+        function applyBridgeExtras(data, session) {
+            if (!data || !session || !session.sid) return data;
+
+            data.bridge_enabled = true;
+            data.bridge_session_id = session.sid;
+            data.bridge_client = CONFIG.dddClient;
+            data.bridge_mode = CONFIG.dddMode || 'local';
+            data.bridge_emit_position = true;
+            data.bridge_emit_user_actions = true;
+            data.bridge_position_interval_ms = 1000;
+            data.bridge_schema_version = 1;
+            data.bridge_local_port = CONFIG.dddPort;
+
+            if (CONFIG.dddToken) data.bridge_local_token = CONFIG.dddToken;
+
+            data.ddd_sid = session.sid;
+            data.ddd_mode = CONFIG.dddMode || 'local';
+            data.ddd_port = CONFIG.dddPort;
+            data.ddd_client = CONFIG.dddClient;
+            if (CONFIG.dddToken) data.ddd_token = CONFIG.dddToken;
+
+            return data;
+        }
+
         function activate(session) {
             if (!session || !session.sid) return;
             if (!canUse()) return;
 
             activeSid = session.sid;
             lastTs = 0;
+            lastPingAt = 0;
+            lastGoodAt = 0;
+            lastEventsError = '';
+            lastStateError = '';
+
+            Utils.log('DDD activate', activeSid, session.url || '');
+            Utils.noty('DDD: activate ' + activeSid, true, 1);
 
             startPolling();
         }
@@ -1675,6 +1867,7 @@
             else if (rawType === 'playback_state_changed') type = payload.isPlaying ? 'play' : 'pause';
             else if (rawType === 'seek_completed') type = 'time';
             else if (rawType === 'playlist_item_changed') type = 'playlist_item_changed';
+            else if (rawType === 'before_playlist_item_changed') type = 'before_playlist_item_changed';
             else if (rawType === 'playback_ended') type = 'ended';
             else if (rawType === 'session_finished') type = 'stop';
             else if (rawType === 'error') type = 'error';
@@ -1691,7 +1884,7 @@
                 rawType: rawType,
                 sid: event.sessionId || payload.sessionId || activeSid,
                 ts: event.ts || payload.ts || Utils.now(),
-                url: payload.uri || (payload.currentItem && payload.currentItem.uri) || '',
+                url: payload.uri || (payload.currentItem && (payload.currentItem.uri || payload.currentItem.url)) || '',
                 title: payload.title || (payload.currentItem && payload.currentItem.title) || '',
                 time: time,
                 duration: duration,
@@ -1708,6 +1901,8 @@
             var normalized = normalizeBridgeEvent(event);
             if (!normalized) return;
 
+            Utils.log('DDD event', normalized.rawType, 'idx=' + normalized.playlist_index, 't=' + normalized.time, normalized.title || '');
+
             if (normalized.playlist_index !== undefined && normalized.playlist_index !== null) {
                 SessionManager.updateByPlaylistIndex(normalized.playlist_index, normalized.rawPayload || normalized);
             }
@@ -1717,23 +1912,44 @@
             Core.consume(normalized);
         }
 
+        function eventParamVariants() {
+            var limit = CONFIG.dddEventsLimit;
+            var since = lastTs || 0;
+
+            return [
+                { sid: activeSid, since: since, limit: limit },
+                { sessionId: activeSid, since: since, limit: limit },
+                { session_id: activeSid, since: since, limit: limit },
+                { sid: activeSid, limit: limit },
+                { sessionId: activeSid, limit: limit },
+                { session_id: activeSid, limit: limit },
+                { sid: activeSid },
+                { sessionId: activeSid },
+                { session_id: activeSid },
+                {}
+            ];
+        }
+
+        function stateParamVariants() {
+            return [
+                { sid: activeSid },
+                { sessionId: activeSid },
+                { session_id: activeSid },
+                {}
+            ];
+        }
+
         function pollEvents() {
             if (!activeSid) return;
 
-            var url = endpoint('/events', {
-                sid: activeSid,
-                since: lastTs || 0,
-                limit: CONFIG.dddEventsLimit
-            });
-
-            fetchJson(url, function (err, json) {
+            fetchFirstJson(endpointList('/events', eventParamVariants()), 'events', function (err, json) {
                 if (err || !json || json.ok === false || !Array.isArray(json.events)) {
-                    if (DEBUG.pollFail) Utils.warn('DDD events poll failed', err && err.message ? err.message : err);
-                    pollState();
+                    lastEventsError = err && err.message ? err.message : (json ? 'bad events response' : 'empty events response');
+                    if (DEBUG.pollFail) Utils.warn('DDD events poll failed', lastEventsError);
                     return;
                 }
 
-                if (DEBUG.pollSuccess) Utils.log('DDD events', json.events.length);
+                if (DEBUG.pollSuccess) Utils.noty('DDD events: ' + json.events.length, false, 3);
 
                 json.events.sort(function (a, b) {
                     return Number(a.ts || 0) - Number(b.ts || 0);
@@ -1749,10 +1965,14 @@
         function pollState() {
             if (!activeSid) return;
 
-            var url = endpoint('/state', { sid: activeSid });
+            fetchFirstJson(endpointList('/state', stateParamVariants()), 'state', function (err, json) {
+                if (err || !json || json.ok === false || !json.state) {
+                    lastStateError = err && err.message ? err.message : (json ? 'bad state response' : 'empty state response');
+                    if (DEBUG.pollFail) Utils.warn('DDD state poll failed', lastStateError);
+                    return;
+                }
 
-            fetchJson(url, function (err, json) {
-                if (err || !json || json.ok === false || !json.state) return;
+                if (DEBUG.pollSuccess) Utils.noty('DDD state: ok', false, 3);
 
                 var event = json.state.lastEvent || json.state.event || null;
                 if (!event) return;
@@ -1764,26 +1984,12 @@
             });
         }
 
-        function startPolling() {
-            if (pollTimer) clearInterval(pollTimer);
+        function pollPing(force) {
+            var current = Utils.now();
+            if (!force && current - lastPingAt < 5000) return;
+            lastPingAt = current;
 
-            pollEvents();
-
-            pollTimer = setInterval(function () {
-                pollEvents();
-            }, CONFIG.dddPollIntervalMs);
-        }
-
-        function stopPolling() {
-            if (pollTimer) clearInterval(pollTimer);
-            pollTimer = null;
-            activeSid = '';
-        }
-
-        function probe(force) {
-            var url = endpoint('/ping', {});
-
-            fetchJson(url, function (err, json) {
+            fetchFirstJson(endpointList('/ping', [{}]), 'ping', function (err, json) {
                 lastProbeResult = {
                     ok: !err && !!json && json.ok !== false,
                     error: err ? String(err.message || err) : '',
@@ -1791,10 +1997,39 @@
                     time: Utils.now()
                 };
 
-                if (force) {
-                    Utils.noty(lastProbeResult.ok ? 'DDD bridge: ok' : 'DDD bridge: fail ' + lastProbeResult.error, true, 0);
+                if (DEBUG.pollSuccess || force) {
+                    Utils.noty(lastProbeResult.ok ? 'DDD ping: ok' : 'DDD ping: fail ' + lastProbeResult.error, true, lastProbeResult.ok ? 2 : 0);
                 }
             });
+        }
+
+        function pollCycle() {
+            if (!activeSid) return;
+
+            pollPing(false);
+            pollState();
+            pollEvents();
+        }
+
+        function startPolling() {
+            if (pollTimer) clearInterval(pollTimer);
+
+            pollCycle();
+
+            pollTimer = setInterval(function () {
+                pollCycle();
+            }, CONFIG.dddPollIntervalMs);
+        }
+
+        function stopPolling() {
+            if (pollTimer) clearInterval(pollTimer);
+            pollTimer = null;
+            activeSid = '';
+            Utils.log('DDD polling stopped');
+        }
+
+        function probe(force) {
+            pollPing(!!force);
         }
 
         function getStatus() {
@@ -1802,14 +2037,19 @@
                 activeSid: activeSid,
                 lastTs: lastTs,
                 lastProbeResult: lastProbeResult,
+                lastEventsError: lastEventsError,
+                lastStateError: lastStateError,
+                lastGoodAt: lastGoodAt,
                 canUse: canUse(),
-                baseUrl: baseUrl()
+                baseUrl: baseUrl(),
+                baseUrls: baseUrls()
             };
         }
 
         return {
             canUse: canUse,
             appendToUrl: appendToUrl,
+            applyBridgeExtras: applyBridgeExtras,
             activate: activate,
             stopPolling: stopPolling,
             probe: probe,
@@ -2013,6 +2253,7 @@
                         });
 
                         if (DDDTransport.canUse() && Utils.isStreamUrl(data.url)) {
+                            DDDTransport.applyBridgeExtras(data, session);
                             data.url = DDDTransport.appendToUrl(data.url, session.sid);
                             session.url = Utils.stripFragment(data.url);
                             session.params = SessionManager.buildParams(session);
