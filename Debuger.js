@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.5-android-ddd-playlist-fragment-20260513';
+    var BOOT_VERSION = 'v4.0.6-ddd-legacy-fragment-restore-20260513';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -1191,7 +1191,7 @@
                 data && (data.episode || data.episode_number || '') || ''
             ].join('|');
 
-            return 'cw-' + Lampa.Utils.hash(seed);
+            return 'ddd_' + Lampa.Utils.hash(seed) + '_' + Utils.now() + '_' + Math.floor(Math.random() * 100000);
         }
 
         function buildParams(session) {
@@ -1797,15 +1797,20 @@
             return Utils.shouldUseDDDLayer();
         }
 
-        function appendToUrl(url, sid) {
+        function appendToUrl(url, sid, index, startIndex) {
             if (!url || typeof url !== 'string') return url;
+
+            index = Number(index || 0);
+            startIndex = Number(startIndex || 0);
 
             return Utils.appendFragmentParams(url, {
                 ddd_mode: CONFIG.dddMode || 'local',
+                ddd_client: CONFIG.dddClient,
                 ddd_sid: sid,
                 ddd_port: CONFIG.dddPort,
-                ddd_client: CONFIG.dddClient,
-                ddd_token: CONFIG.dddToken || ''
+                ddd_token: CONFIG.dddToken || sid,
+                ddd_i: index,
+                ddd_start: startIndex
             });
         }
 
@@ -1822,13 +1827,15 @@
             data.bridge_schema_version = 1;
             data.bridge_local_port = CONFIG.dddPort;
 
-            if (CONFIG.dddToken) data.bridge_local_token = CONFIG.dddToken;
+            data.bridge_local_token = CONFIG.dddToken || session.sid;
 
             data.ddd_sid = session.sid;
             data.ddd_mode = CONFIG.dddMode || 'local';
             data.ddd_port = CONFIG.dddPort;
             data.ddd_client = CONFIG.dddClient;
-            if (CONFIG.dddToken) data.ddd_token = CONFIG.dddToken;
+            data.ddd_token = CONFIG.dddToken || session.sid;
+            data.ddd_i = Number(data.playlist_index || data.start_index || session.playlistIndex || session.startIndex || 0);
+            data.ddd_start = Number(data.playlist_index || data.start_index || session.playlistIndex || session.startIndex || 0);
 
             return data;
         }
@@ -1853,14 +1860,14 @@
 
             var patchedCount = 0;
 
-            data.playlist.forEach(function (item) {
+            data.playlist.forEach(function (item, i) {
                 if (!item || typeof item !== 'object') return;
 
                 var url = item.url || item.uri || item.src || '';
                 if (!url || typeof url !== 'string') return;
                 if (!Utils.isStreamUrl(url)) return;
 
-                var patched = appendToUrl(url, session.sid);
+                var patched = appendToUrl(url, session.sid, i, startIndex);
 
                 if (item.url !== undefined) item.url = patched;
                 else if (item.uri !== undefined) item.uri = patched;
@@ -1961,21 +1968,22 @@
             var since = lastTs || 0;
 
             return [
+                { sid: activeSid, token: CONFIG.dddToken || activeSid, since: since, limit: limit },
+                { sid: activeSid, token: CONFIG.dddToken || activeSid, limit: limit },
+                { sid: activeSid, token: CONFIG.dddToken || activeSid },
+                { sessionId: activeSid, token: CONFIG.dddToken || activeSid, since: since, limit: limit },
+                { session_id: activeSid, token: CONFIG.dddToken || activeSid, since: since, limit: limit },
                 { sid: activeSid, since: since, limit: limit },
-                { sessionId: activeSid, since: since, limit: limit },
-                { session_id: activeSid, since: since, limit: limit },
                 { sid: activeSid, limit: limit },
-                { sessionId: activeSid, limit: limit },
-                { session_id: activeSid, limit: limit },
-                { sid: activeSid },
-                { sessionId: activeSid },
-                { session_id: activeSid },
-                {}
+                { sid: activeSid }
             ];
         }
 
         function stateParamVariants() {
             return [
+                { sid: activeSid, token: CONFIG.dddToken || activeSid },
+                { sessionId: activeSid, token: CONFIG.dddToken || activeSid },
+                { session_id: activeSid, token: CONFIG.dddToken || activeSid },
                 { sid: activeSid },
                 { sessionId: activeSid },
                 { session_id: activeSid },
@@ -2300,7 +2308,7 @@
                         if (DDDTransport.canUse() && Utils.isStreamUrl(data.url)) {
                             DDDTransport.applyBridgeExtras(data, session);
                             DDDTransport.applyBridgeToPlaylist(data, session);
-                            data.url = DDDTransport.appendToUrl(data.url, session.sid);
+                            data.url = DDDTransport.appendToUrl(data.url, session.sid, data.playlist_index || session.playlistIndex || 0, data.start_index || session.startIndex || 0);
                             session.url = Utils.stripFragment(data.url);
                             session.params = SessionManager.buildParams(session);
                             SessionManager.register(session);
