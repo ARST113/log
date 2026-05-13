@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.7-continue-ring-ui-20260513';
+    var BOOT_VERSION = 'v4.0.8-buttons-plugin-compat-20260513';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -2330,8 +2330,47 @@
             patched = true;
         }
 
+        function makeLaunchLockKey(movie, params) {
+            var movieKey = '';
+
+            try {
+                movieKey = StorageManager.getMovieKey(movie) || '';
+            } catch (e) {}
+
+            return [
+                movieKey,
+                params && params.torrent_link || '',
+                params && params.file_index !== undefined ? params.file_index : '',
+                params && params.playlist_index !== undefined ? params.playlist_index : '',
+                params && params.season || 0,
+                params && params.episode || 0
+            ].join('|');
+        }
+
+        function acquireLaunchLock(movie, params) {
+            var current = Utils.now();
+            var key = makeLaunchLockKey(movie, params);
+            var lock = window.__CONTINUE_WATCH_UNIVERSAL_LAUNCH_LOCK__;
+
+            if (!lock || typeof lock !== 'object') {
+                lock = { key: '', ts: 0 };
+                window.__CONTINUE_WATCH_UNIVERSAL_LAUNCH_LOCK__ = lock;
+            }
+
+            if (lock.key === key && current - Number(lock.ts || 0) < 3000) {
+                Utils.log('Duplicate continue launch suppressed', key);
+                return false;
+            }
+
+            lock.key = key;
+            lock.ts = current;
+
+            return true;
+        }
+
         function launchFromContinue(movie, params) {
             if (!movie || !params) return;
+            if (!acquireLaunchLock(movie, params)) return;
 
             var url = StorageManager.buildStreamUrl(params);
             if (!url) return;
@@ -2385,6 +2424,7 @@
 
     var UIManager = (function () {
         var installed = false;
+        var delegatedReady = false;
 
         function removeContinueButtons(render) {
             try {
@@ -2478,28 +2518,79 @@
             return parts.join(' · ');
         }
 
+        function getActiveMovieFromCard() {
+            try {
+                var activity = Lampa.Activity && Lampa.Activity.active ? Lampa.Activity.active() : null;
+
+                if (activity && activity.movie) return activity.movie;
+                if (activity && activity.card) return activity.card;
+                if (activity && activity.params && activity.params.movie) return activity.params.movie;
+            } catch (e) {}
+
+            return null;
+        }
+
+        function getMovieFromButton(button) {
+            try {
+                var dataMovie = $(button).data('continueWatchUniversalMovie');
+                if (dataMovie) return dataMovie;
+            } catch (e) {}
+
+            return getActiveMovieFromCard();
+        }
+
+        function bindDelegatedLaunchHandler() {
+            if (delegatedReady) return;
+            delegatedReady = true;
+
+            try {
+                $(document)
+                    .off('hover:enter.continueWatchUniversalLaunch click.continueWatchUniversalLaunch', '.button--continue-watch-ddd')
+                    .on('hover:enter.continueWatchUniversalLaunch click.continueWatchUniversalLaunch', '.button--continue-watch-ddd', function (event) {
+                        var movie = getMovieFromButton(this);
+                        var params = movie ? StorageManager.getLastStreamParams(movie) : null;
+
+                        if (event && event.preventDefault) event.preventDefault();
+                        if (event && event.stopPropagation) event.stopPropagation();
+                        if (event && event.stopImmediatePropagation) event.stopImmediatePropagation();
+
+                        if (!movie || !params) {
+                            try { Lampa.Noty.show('Нет истории просмотров'); } catch (e) {}
+                            return false;
+                        }
+
+                        PlayerManager.launchFromContinue(movie, params);
+                        return false;
+                    });
+            } catch (e) {
+                Utils.warn('Delegated continue handler failed', e);
+            }
+        }
+
         function createButton(movie, params) {
             var road = getContinueRoad(movie, params);
             var details = formatContinueDetails(params, road);
             var label = 'Продолжить' + (details ? ' · ' + details : '');
             var dash = (road.percent * 65.97 / 100).toFixed(2);
-            var subtitle = details || '';
+            var movieKey = '';
+
+            try {
+                movieKey = StorageManager.getMovieKey(movie) || '';
+            } catch (e) {}
 
             var html = '' +
-                '<div class="full-start__button selector button--continue-watch-ddd view--continue-watch" data-subtitle="' + escapeHtml(subtitle) + '" title="' + escapeHtml(label) + '">' +
+                '<div class="full-start__button selector button--continue-watch-ddd view--continue-watch continue-watch-ddd-torrent" data-cwu-movie-key="' + escapeHtml(movieKey) + '" data-cwu-label="' + escapeHtml(label) + '" title="' + escapeHtml(label) + '" style="opacity:1;">' +
                     '<svg class="continue-watch-ddd-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">' +
                         '<circle cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="1.7" fill="none" opacity="0.22"></circle>' +
                         '<circle class="continue-watch-ddd-progress" cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="' + dash + ' 65.97" transform="rotate(-90 12 12)"></circle>' +
                         '<path d="M9 7.7v8.6c0 .55.6.89 1.08.6l6.62-4.3a.72.72 0 0 0 0-1.2l-6.62-4.3A.7.7 0 0 0 9 7.7z" fill="currentColor"></path>' +
                     '</svg>' +
-                    '<span class="continue-watch-ddd-text">' + escapeHtml(label) + '</span>' +
+                    '<span class="continue-watch-ddd-text">Продолжить просмотр</span>' +
+                    '<em class="continue-watch-ddd-extra">' + escapeHtml(details ? ' · ' + details : '') + '</em>' +
                 '</div>';
 
             var button = $(html);
-
-            button.off('hover:enter.continueWatchUniversal click.continueWatchUniversal').on('hover:enter.continueWatchUniversal click.continueWatchUniversal', function () {
-                PlayerManager.launchFromContinue(movie, StorageManager.getLastStreamParams(movie));
-            });
+            button.data('continueWatchUniversalMovie', movie);
 
             return button;
         }
@@ -2544,17 +2635,43 @@
         }
 
         function insertAfterBestPlace(render, button) {
-            var torrentButton = render.find('.view--torrent').last();
             var buttonsContainer = render.find('.full-start-new__buttons, .full-start__buttons').first();
+            var torrentButton = buttonsContainer.length
+                ? buttonsContainer.find('.view--torrent').not('.button--continue-watch-ddd').last()
+                : render.find('.view--torrent').not('.button--continue-watch-ddd').last();
 
             if (torrentButton.length) torrentButton.after(button);
             else if (buttonsContainer.length) buttonsContainer.append(button);
             else render.find('.full-start__button').last().after(button);
         }
 
+        function injectButtonCompatStyles() {
+            try {
+                if (document.getElementById('continue-watch-universal-button-compat-style')) return;
+
+                var css = '' +
+                    '.button--continue-watch-ddd .continue-watch-ddd-extra{font-style:normal;opacity:.72;}' +
+                    '.button--continue-watch-ddd.button-mode-1 .continue-watch-ddd-extra{display:none!important;}' +
+                    '.button--continue-watch-ddd.button-mode-1.focus .continue-watch-ddd-extra,' +
+                    '.button--continue-watch-ddd.button-mode-1:hover .continue-watch-ddd-extra{display:inline!important;}' +
+                    '.button--continue-watch-ddd.button-mode-2 .continue-watch-ddd-extra{display:none!important;}' +
+                    '.button--continue-watch-ddd.button-mode-3 .continue-watch-ddd-extra{display:inline!important;}' +
+                    '.button--continue-watch-ddd .continue-watch-ddd-icon{flex-shrink:0;}' +
+                    '.button--continue-watch-ddd{opacity:1!important;}';
+
+                var style = document.createElement('style');
+                style.id = 'continue-watch-universal-button-compat-style';
+                style.type = 'text/css';
+                style.appendChild(document.createTextNode(css));
+                document.head.appendChild(style);
+            } catch (e) {}
+        }
+
         function install() {
             if (installed) return;
             installed = true;
+            bindDelegatedLaunchHandler();
+            injectButtonCompatStyles();
 
             Lampa.Listener.follow('full', function (event) {
                 if (!event || event.type !== 'complite') return;
