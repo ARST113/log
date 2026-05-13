@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.4-android-ddd-debug-restore-20260513';
+    var BOOT_VERSION = 'v4.0.5-android-ddd-playlist-fragment-20260513';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -1833,6 +1833,50 @@
             return data;
         }
 
+        function applyBridgeToPlaylist(data, session) {
+            if (!data || !session || !session.sid) return data;
+            if (!Array.isArray(data.playlist) || !data.playlist.length) return data;
+
+            var startIndex = Number(
+                data.start_index !== undefined ? data.start_index :
+                data.playlist_index !== undefined ? data.playlist_index :
+                session.playlistIndex !== undefined ? session.playlistIndex :
+                session.startIndex !== undefined ? session.startIndex :
+                0
+            );
+
+            if (isNaN(startIndex) || startIndex < 0) startIndex = 0;
+            if (startIndex >= data.playlist.length) startIndex = data.playlist.length - 1;
+
+            data.start_index = startIndex;
+            data.playlist_index = startIndex;
+
+            var patchedCount = 0;
+
+            data.playlist.forEach(function (item) {
+                if (!item || typeof item !== 'object') return;
+
+                var url = item.url || item.uri || item.src || '';
+                if (!url || typeof url !== 'string') return;
+                if (!Utils.isStreamUrl(url)) return;
+
+                var patched = appendToUrl(url, session.sid);
+
+                if (item.url !== undefined) item.url = patched;
+                else if (item.uri !== undefined) item.uri = patched;
+                else if (item.src !== undefined) item.src = patched;
+
+                patchedCount++;
+            });
+
+            if (patchedCount) {
+                Utils.log('DDD playlist bridge applied', 'sid=' + session.sid, 'start=' + startIndex, 'items=' + patchedCount);
+                Utils.noty('DDD playlist bridge: start=' + startIndex + ' items=' + patchedCount, false, 2);
+            }
+
+            return data;
+        }
+
         function activate(session) {
             if (!session || !session.sid) return;
             if (!canUse()) return;
@@ -2050,6 +2094,7 @@
             canUse: canUse,
             appendToUrl: appendToUrl,
             applyBridgeExtras: applyBridgeExtras,
+            applyBridgeToPlaylist: applyBridgeToPlaylist,
             activate: activate,
             stopPolling: stopPolling,
             probe: probe,
@@ -2254,6 +2299,7 @@
 
                         if (DDDTransport.canUse() && Utils.isStreamUrl(data.url)) {
                             DDDTransport.applyBridgeExtras(data, session);
+                            DDDTransport.applyBridgeToPlaylist(data, session);
                             data.url = DDDTransport.appendToUrl(data.url, session.sid);
                             session.url = Utils.stripFragment(data.url);
                             session.params = SessionManager.buildParams(session);
