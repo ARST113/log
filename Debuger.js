@@ -2876,9 +2876,10 @@
             } catch (e) {}
 
             var html =
-                '<div class="full-start__button selector view--continue-watch button--continue-watch-ddd continue-watch-ddd-torrent" ' +
+                '<div class="full-start__button selector view--continue-watch button--continue-watch-ddd continue-watch-ddd-source" ' +
+                    'data-buttons-plugin-id="continue_watch_universal" ' +
                     'data-cwu-movie-key="' + escapeHtml(movieKey) + '" ' +
-                    'data-subtitle="' + escapeHtml(subtitle) + '">' +
+                    'data-cwu-subtitle="' + escapeHtml(subtitle) + '">' +
                     '<svg class="continue-watch-ddd-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">' +
                         '<circle cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="1.7" fill="none" opacity="0.22"></circle>' +
                         '<circle class="continue-watch-ddd-progress" cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="' + dash + ' 65.97" transform="rotate(-90 12 12)"></circle>' +
@@ -3003,9 +3004,7 @@
                 var css =
                     '.button--continue-watch-ddd .continue-watch-ddd-icon{flex-shrink:0;}' +
                     '.button--continue-watch-ddd{opacity:1!important;}' +
-                    '.button--continue-watch-ddd span{white-space:nowrap;}' +
-                    '.full-start-new__buttons>.button--continue-watch-ddd{display:none!important;}' +
-                    '.full-start__buttons>.button--continue-watch-ddd{display:none!important;}';
+                    '.button--continue-watch-ddd span{white-space:nowrap;}';
 
                 var style = document.createElement('style');
                 style.id = 'continue-watch-universal-source-button-style';
@@ -3078,17 +3077,14 @@
 
                         if (!params) return;
 
-                        removeContinueButtons(render);
-
-                        var button = createButton(movie, params);
-
-                        insertIntoWatchContainer(render, button);
-                        installMutationGuard(render, movie);
-
-                        setTimeout(function () { ensureButtonInsideWatchContainer(render, movie); }, 250);
-                        setTimeout(function () { ensureButtonInsideWatchContainer(render, movie); }, 700);
-                        setTimeout(function () { ensureButtonInsideWatchContainer(render, movie); }, 1300);
-                        setTimeout(function () { ensureButtonInsideWatchContainer(render, movie); }, 2200);
+                        var existing = render.find('.button--continue-watch-ddd').first();
+                        
+                        if (existing.length) {
+                            bindLaunch(existing, movie);
+                        } else {
+                            var button = createButton(movie, params);
+                            insertIntoWatchContainer(render, button);
+                        }
 
                         if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty) {
                             var debugButton = createStatusButton(movie);
