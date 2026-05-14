@@ -2644,7 +2644,7 @@
         function createButton(movie, params) {
             var road = getContinueRoad(movie, params);
             var details = formatContinueDetails(params, road);
-            var label = 'Продолжить просмотр' + (details ? ' · ' + details : '');
+            var label = 'Продолжить' + (details ? ' · ' + details : '');
             var dash = (road.percent * 65.97 / 100).toFixed(2);
             var movieKey = '';
 
