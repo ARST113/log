@@ -18,7 +18,7 @@
     var PLUGIN_NAME = 'ContinueWatchUniversal';
     var PLUGIN_VERSION = BOOT_VERSION;
 
-    var DDD_DEBUG = true;
+    var DDD_DEBUG = false;
 
     var DEBUG = {
         enabled: !!DDD_DEBUG,
