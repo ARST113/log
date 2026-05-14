@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.11-buttons-plugin-compatible-20260514';
+    var BOOT_VERSION = 'v4.0.11-buttons-plugin-compatible-20260515';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -2926,32 +2926,6 @@
 
             try {
                 render.find('.button--play').removeClass('hide');
-            } catch (e) {}
-        }
-
-            ensureTimer = setTimeout(function () {
-                ensureTimer = null;
-                ensureButtonInsideWatchContainer(render, movie);
-            }, 80);
-        }
-
-        function installMutationGuard(render, movie) {
-            try {
-                if (!window.MutationObserver) return;
-
-                if (observer) {
-                    observer.disconnect();
-                    observer = null;
-                }
-
-                observer = new MutationObserver(function () {
-                    scheduleEnsure(render, movie);
-                });
-
-                observer.observe(render[0], {
-                    childList: true,
-                    subtree: true
-                });
             } catch (e) {}
         }
 
