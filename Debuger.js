@@ -2931,21 +2931,67 @@
 
         function injectButtonCompatStyles() {
             try {
-                if (document.getElementById('continue-watch-universal-source-button-style')) return;
-
                 var css =
-                    '.button--continue-watch-ddd .continue-watch-ddd-icon{flex-shrink:0;}' +
-                    '.button--continue-watch-ddd{opacity:1!important;}' +
-                    '.button--continue-watch-ddd span{white-space:nowrap;}';
-
-                var style = document.createElement('style');
-                style.id = 'continue-watch-universal-source-button-style';
-                style.type = 'text/css';
-                style.appendChild(document.createTextNode(css));
-                document.head.appendChild(style);
+                    '.button--continue-watch-ddd .continue-watch-ddd-icon{' +
+                        'flex-shrink:0;' +
+                    '}' +
+        
+                    '.button--continue-watch-ddd{' +
+                        'opacity:1!important;' +
+                    '}' +
+        
+                    '.button--continue-watch-ddd span{' +
+                        'white-space:nowrap;' +
+                    '}' +
+        
+                    '.button--continue-watch-ddd[data-cwu-subtitle]:after{' +
+                        'content:attr(data-cwu-subtitle);' +
+                        'display:inline-block;' +
+                        'margin-left:.45em;' +
+                        'font-size:.72em;' +
+                        'line-height:1;' +
+                        'opacity:.65;' +
+                        'white-space:nowrap;' +
+                        'transform:translateY(.06em);' +
+                    '}' +
+        
+                    '.button--continue-watch-ddd[data-cwu-subtitle=""]:after{' +
+                        'content:"";' +
+                        'display:none!important;' +
+                    '}' +
+        
+                    '/* buttons.js mode 1: текст и подпись раскрываются только на hover/focus */' +
+                    '.button--continue-watch-ddd.button-mode-1:after{' +
+                        'display:none!important;' +
+                    '}' +
+        
+                    '.button--continue-watch-ddd.button-mode-1:hover:after,' +
+                    '.button--continue-watch-ddd.button-mode-1.focus:after{' +
+                        'display:inline-block!important;' +
+                    '}' +
+        
+                    '/* buttons.js mode 2: только иконка, подписи нет */' +
+                    '.button--continue-watch-ddd.button-mode-2:after{' +
+                        'display:none!important;' +
+                    '}' +
+        
+                    '/* buttons.js mode 3: текст и подпись всегда видны */' +
+                    '.button--continue-watch-ddd.button-mode-3:after{' +
+                        'display:inline-block!important;' +
+                    '}';
+        
+                var style = document.getElementById('continue-watch-universal-source-button-style');
+        
+                if (!style) {
+                    style = document.createElement('style');
+                    style.id = 'continue-watch-universal-source-button-style';
+                    style.type = 'text/css';
+                    document.head.appendChild(style);
+                }
+        
+                style.textContent = css;
             } catch (e) {}
         }
-
         function createStatusButton(movie) {
             var html =
                 '<div class="full-start__button selector button--continue-watch-ddd-debug">' +
