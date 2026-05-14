@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.10-watch-container-hover-only-images-20260514';
+    var BOOT_VERSION = 'v4.0.11-buttons-plugin-compatible-20260514';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -2737,8 +2737,6 @@
 
     var UIManager = (function () {
         var installed = false;
-        var observer = null;
-        var ensureTimer = null;
 
         function removeContinueButtons(render) {
             try {
@@ -2930,46 +2928,6 @@
                 render.find('.button--play').removeClass('hide');
             } catch (e) {}
         }
-
-        function ensureButtonInsideWatchContainer(render, movie) {
-            try {
-                if (!render || !render.length) return;
-
-                var params = StorageManager.getLastStreamParams(movie);
-
-                if (!params) return;
-
-                var container = getWatchContainer(render);
-                var sourceButton = container.find('> .button--continue-watch-ddd').first();
-                var anyButton = render.find('.button--continue-watch-ddd').first();
-
-                render.find('.full-start-new__buttons > .button--continue-watch-ddd, .full-start__buttons > .button--continue-watch-ddd').remove();
-
-                if (!sourceButton.length) {
-                    if (anyButton.length) {
-                        sourceButton = anyButton.detach();
-                    } else {
-                        sourceButton = createButton(movie, params);
-                    }
-
-                    insertIntoWatchContainer(render, sourceButton);
-                }
-
-                container.find('> .button--continue-watch-ddd').slice(1).remove();
-
-                bindLaunch(container.find('> .button--continue-watch-ddd').first(), movie);
-
-                render.find('.button--play').removeClass('hide');
-            } catch (e) {
-                Utils.warn('ensure continue button failed', e);
-            }
-        }
-
-        function scheduleEnsure(render, movie) {
-            if (ensureTimer) {
-                clearTimeout(ensureTimer);
-                ensureTimer = null;
-            }
 
             ensureTimer = setTimeout(function () {
                 ensureTimer = null;
