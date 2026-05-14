@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.9-buttons-block-images-20260513';
+    var BOOT_VERSION = 'v4.0.8-buttons-plugin-compat-20260513';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -1072,33 +1072,6 @@
             return !!(hash && hashMetaByHash[String(hash)]);
         }
 
-        function clonePlaylistItem(item) {
-            var normalized = {};
-
-            item = item || {};
-
-            Object.keys(item).forEach(function (key) {
-                var value = item[key];
-
-                if (value === undefined) return;
-                if (typeof value === 'function') return;
-
-                normalized[key] = value;
-            });
-
-            return normalized;
-        }
-
-        function firstDefined() {
-            for (var i = 0; i < arguments.length; i++) {
-                if (arguments[i] !== undefined && arguments[i] !== null && arguments[i] !== '') {
-                    return arguments[i];
-                }
-            }
-
-            return '';
-        }
-
         function normalizePlaylist(playlist) {
             if (!Array.isArray(playlist)) return [];
 
@@ -1109,34 +1082,18 @@
                 .map(function (item, index) {
                     var url = item.url || item.uri || item.src || '';
                     var parsed = Utils.parseStreamUrl(url);
-                    var normalized = clonePlaylistItem(item);
 
-                    normalized.url = Utils.stripFragment(url || '');
-                    normalized.title = firstDefined(item.title, item.name, item.label);
-                    normalized.name = firstDefined(item.name, item.title, item.label);
-                    normalized.filename = firstDefined(item.filename, item.file_name, item.path, parsed ? parsed.file_name : '');
-                    normalized.file_name = firstDefined(item.file_name, item.filename, item.path, parsed ? parsed.file_name : '');
-                    normalized.index = index;
-                    normalized.season = Number(firstDefined(item.season, item.season_number, item.s, 0) || 0);
-                    normalized.episode = Number(firstDefined(item.episode, item.episode_number, item.e, 0) || 0);
-
-                    /*
-                     * Важно для внутреннего плеера Lampa, LG/Samsung и некоторых Android wrappers:
-                     * старые версии сохраняли playlist почти целиком, поэтому в плеер уходили
-                     * превью серий. v4.0.8 нормализовал список слишком агрессивно и оставлял
-                     * только технические поля; из-за этого в списке файлов/плеере пропадали картинки.
-                     */
-                    normalized.img = firstDefined(item.img, normalized.img, item.image, item.picture, item.poster, item.cover, item.thumb, item.thumbnail, item.still_path, item.preview);
-                    normalized.image = firstDefined(item.image, normalized.image, item.img, item.picture, item.poster, item.cover, item.thumb, item.thumbnail, item.still_path, item.preview);
-                    normalized.picture = firstDefined(item.picture, normalized.picture, item.img, item.image, item.poster, item.cover, item.thumb, item.thumbnail, item.still_path, item.preview);
-                    normalized.poster = firstDefined(item.poster, normalized.poster, item.img, item.image, item.picture, item.cover, item.thumb, item.thumbnail, item.still_path, item.preview);
-                    normalized.cover = firstDefined(item.cover, normalized.cover, item.img, item.image, item.picture, item.poster, item.thumb, item.thumbnail, item.still_path, item.preview);
-                    normalized.thumb = firstDefined(item.thumb, normalized.thumb, item.thumbnail, item.img, item.image, item.picture, item.poster, item.cover, item.still_path, item.preview);
-                    normalized.thumbnail = firstDefined(item.thumbnail, normalized.thumbnail, item.thumb, item.img, item.image, item.picture, item.poster, item.cover, item.still_path, item.preview);
-                    normalized.preview = firstDefined(item.preview, normalized.preview, item.img, item.image, item.picture, item.poster, item.cover, item.thumb, item.thumbnail, item.still_path);
-                    normalized.still_path = firstDefined(item.still_path, normalized.still_path, item.img, item.image, item.picture, item.poster, item.cover, item.thumb, item.thumbnail, item.preview);
-
-                    return normalized;
+                    return {
+                        url: Utils.stripFragment(url || ''),
+                        title: item.title || item.name || item.label || '',
+                        name: item.name || item.title || '',
+                        filename: item.filename || item.file_name || item.path || (parsed ? parsed.file_name : ''),
+                        file_name: item.file_name || item.filename || item.path || (parsed ? parsed.file_name : ''),
+                        index: index,
+                        season: item.season || item.season_number || item.s || 0,
+                        episode: item.episode || item.episode_number || item.e || 0,
+                        raw: item
+                    };
                 });
         }
 
@@ -2435,49 +2392,18 @@
                 return clone;
             }) : null;
 
-            var playlistIndex = Number(params.playlist_index || params.file_index || 0);
-            if (playlist && playlist.length) {
-                if (isNaN(playlistIndex) || playlistIndex < 0) playlistIndex = 0;
-                if (playlistIndex >= playlist.length) playlistIndex = playlist.length - 1;
-            }
-
-            var activeItem = playlist && playlist.length ? playlist[playlistIndex] : null;
-            var activeImage = activeItem ? (
-                activeItem.img ||
-                activeItem.image ||
-                activeItem.picture ||
-                activeItem.poster ||
-                activeItem.cover ||
-                activeItem.thumb ||
-                activeItem.thumbnail ||
-                activeItem.preview ||
-                activeItem.still_path ||
-                ''
-            ) : '';
-
             var data = {
                 url: url,
                 title: params.episode_title || params.title || Utils.getMovieTitle(movie),
                 card: movie,
                 timeline: timeline,
                 playlist: playlist,
-                playlist_index: playlistIndex,
-                start_index: playlistIndex,
+                playlist_index: Number(params.playlist_index || params.file_index || 0),
                 season: season,
                 episode: episode,
                 torrent_hash: params.torrent_link || '',
                 continue_watch_universal: true
             };
-
-            if (activeImage) {
-                data.img = data.img || activeImage;
-                data.image = data.image || activeImage;
-                data.picture = data.picture || activeImage;
-                data.poster = data.poster || activeImage;
-                data.thumb = data.thumb || activeImage;
-                data.thumbnail = data.thumbnail || activeImage;
-                data.preview = data.preview || activeImage;
-            }
 
             try {
                 Lampa.Player.play(data);
@@ -2659,7 +2585,7 @@
                         '<circle class="continue-watch-ddd-progress" cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="' + dash + ' 65.97" transform="rotate(-90 12 12)"></circle>' +
                         '<path d="M9 7.7v8.6c0 .55.6.89 1.08.6l6.62-4.3a.72.72 0 0 0 0-1.2l-6.62-4.3A.7.7 0 0 0 9 7.7z" fill="currentColor"></path>' +
                     '</svg>' +
-                    '<span class="continue-watch-ddd-text">Продолжить просмотр</span>' +
+                    '<span class="continue-watch-ddd-text">Продолжить</span>' +
                     '<em class="continue-watch-ddd-extra">' + escapeHtml(details ? ' · ' + details : '') + '</em>' +
                 '</div>';
 
@@ -2712,39 +2638,11 @@
             var buttonsContainer = render.find('.full-start-new__buttons, .full-start__buttons').first();
             var torrentButton = buttonsContainer.length
                 ? buttonsContainer.find('.view--torrent').not('.button--continue-watch-ddd').last()
-                : $();
-
-            if (buttonsContainer.length) {
-                if (torrentButton.length) torrentButton.after(button);
-                else buttonsContainer.append(button);
-                return;
-            }
-
-            torrentButton = render.find('.view--torrent').not('.button--continue-watch-ddd').last();
+                : render.find('.view--torrent').not('.button--continue-watch-ddd').last();
 
             if (torrentButton.length) torrentButton.after(button);
+            else if (buttonsContainer.length) buttonsContainer.append(button);
             else render.find('.full-start__button').last().after(button);
-        }
-
-        function ensureButtonInsideButtonsBlock(render) {
-            try {
-                var buttonsContainer = render.find('.full-start-new__buttons, .full-start__buttons').first();
-                if (!buttonsContainer.length) return;
-
-                var button = render.find('.button--continue-watch-ddd').first();
-                if (!button.length) return;
-
-                var isInside = button.closest('.full-start-new__buttons, .full-start__buttons')[0] === buttonsContainer[0];
-
-                if (isInside) return;
-
-                var torrentButton = buttonsContainer.find('.view--torrent').not('.button--continue-watch-ddd').last();
-
-                button.detach();
-
-                if (torrentButton.length) torrentButton.after(button);
-                else buttonsContainer.append(button);
-            } catch (e) {}
         }
 
         function injectButtonCompatStyles() {
@@ -2793,12 +2691,6 @@
 
                         var button = createButton(movie, params);
                         insertAfterBestPlace(render, button);
-
-                        /* buttons.js переупорядочивает кнопки с задержкой; после него проверяем,
-                           что кнопка не оказалась вне основного блока кнопок. */
-                        setTimeout(function () { ensureButtonInsideButtonsBlock(render); }, 250);
-                        setTimeout(function () { ensureButtonInsideButtonsBlock(render); }, 700);
-                        setTimeout(function () { ensureButtonInsideButtonsBlock(render); }, 1300);
 
                         if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty) {
                             var debugButton = createStatusButton(movie);
