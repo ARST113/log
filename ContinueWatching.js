@@ -40,7 +40,7 @@
         debounceDelayMs: 1000,
 
         dddEnabled: true,
-        dddAndroidOnly: true,
+        dddAndroidOnly: false,
         dddHost: 'http://127.0.0.1',
         dddPort: 39677,
         dddClient: 'lampa',
