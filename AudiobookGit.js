@@ -1,13 +1,13 @@
 (function() {
   'use strict';
 
-  if (window.lampacAudiobooksPluginVersion == '0.2.15') return;
-  window.lampacAudiobooksPluginVersion = '0.2.15';
+  if (window.lampacAudiobooksPluginVersion == '0.3.0') return;
+  window.lampacAudiobooksPluginVersion = '0.3.0';
   window.lampacAudiobooksPluginReady = true;
 
   var COMPONENT = 'lampac_audiobooks';
   var SOURCE = 'lampac_audiobooks';
-  var VERSION = '0.2.15';
+  var VERSION = '0.3.0';
   var PAGE_SIZE = 20;
   var API_BASE = detectApiBase();
   var BOOK_CACHE = {};
@@ -519,11 +519,15 @@
 
       return {
         title: title,
+        name: title,
+        first_title: book.name || title,
+        movie_title: book.name || title,
         original_title: book.author || '',
         url: audioUrl(item.fileurl),
         timeline: Lampa.Timeline.view(timelineHash),
         img: image,
         poster: image,
+        background_image: image,
         card: card,
         source_name: source,
         from_lampac_audiobooks: true
@@ -534,6 +538,8 @@
   function makePlayerCard(book) {
     return cardFromBook(book);
   }
+
+  var AUDIOBOOK_PLAYER_ACTIVE = false;
 
   function playVoice(voices, voice) {
     if (!voice || !voice.playlist || !voice.playlist.length) {
@@ -589,6 +595,12 @@
     }
 
     first.title = voice.book.name || first.title;
+    first.name = voice.book.name || first.name || first.title;
+    first.first_title = voice.book.name || first.first_title || first.title;
+    first.movie_title = voice.book.name || first.movie_title || first.title;
+    first.img = absoluteUrl(voice.book.preview) || first.img || './img/img_broken.svg';
+    first.poster = first.img;
+    first.background_image = first.img;
     first.translate_name = voice.title;
     first.voiceovers = voiceovers;
     first.error = handleError;
@@ -603,6 +615,7 @@
       } catch (e) {}
     }
 
+    AUDIOBOOK_PLAYER_ACTIVE = true;
     Lampa.Player.runas('inner');
     Lampa.Player.play(first);
     Lampa.Player.playlist(playlist);
@@ -1031,25 +1044,19 @@
 
   window.lampacAudiobooksOpen = openCatalog;
 
-  var MENU_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M5 3h11a4 4 0 0 1 4 4v14H8a4 4 0 0 1-4-4V4a1 1 0 0 1 1-1Zm1 2v12a2 2 0 0 0 2 2h10V7a2 2 0 0 0-2-2H6Zm3 3h6v2H9V8Zm0 4h6v2H9v-2Zm11-2h1a3 3 0 0 1 3 3v3a3 3 0 0 1-3 3h-1v-2h1a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-1v-2Z"/></svg>';
-  var FULL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" height="70" viewBox="0 0 48 48" fill="none"><path d="M11 10h18c4.4 0 8 3.6 8 8v20H17c-3.3 0-6-2.7-6-6V10Z" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M17 10v28M23 18h8M23 26h8" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M38 21c3.3 0 6 2.7 6 6v4c0 3.3-2.7 6-6 6" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>';
+  // Inline audiobook icon. No external request and no SVG size overrides.
+  var AUDIOBOOK_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" aria-hidden="true" focusable="false"><path fill="currentColor" d="M256 94.8C205.8 57.4 143.5 42.1 82 51.4c-12.8 1.9-22 13-22 25.9v259.2c0 15.9 14.7 27.7 30.1 24.1 55.4-12.8 111.4-.7 150.8 32.3 8.7 7.3 21.4 7.3 30.1 0 39.4-33 95.4-45.1 150.8-32.3 15.4 3.6 30.1-8.2 30.1-24.1V77.3c0-12.9-9.2-24-22-25.9-61.5-9.3-123.8 6-174 43.4ZM236 341.7c-39.7-23.5-84.8-32.8-128-26.2V96.2c43.2-6.6 88.3 2.7 128 26.2v219.3Zm168-26.2c-43.2-6.6-88.3 2.7-128 26.2V122.4c39.7-23.5 84.8-32.8 128-26.2v219.3Z"/><path fill="currentColor" d="M256 0C132.3 0 32 100.3 32 224v18.4C13.4 247.8 0 265 0 285.3v69.4C0 378.7 19.3 398 43.3 398H76V225.3H64V224C64 118 150 32 256 32s192 86 192 192v1.3h-12V398h32.7c24 0 43.3-19.3 43.3-43.3v-69.4c0-20.3-13.4-37.5-32-42.9V224C480 100.3 379.7 0 256 0Z"/></svg>';
 
-  function bindMenuButton(button) {
-    button.find('.menu__ico').html(MENU_ICON);
-    button.off('hover:enter.lampac-audiobooks click.lampac-audiobooks');
-    button.on('hover:enter.lampac-audiobooks click.lampac-audiobooks', openCatalog);
-  }
-
-  function createMenuButton() {
-    var button = $(
-      '<li class="menu__item selector" data-action="lampac-audiobooks">' +
-        '<div class="menu__ico">' + MENU_ICON + '</div>' +
+  function createMenuItem() {
+    var menuItem = $(
+      '<li data-action="lampac-audiobooks" class="menu__item selector">' +
+        '<div class="menu__ico">' + AUDIOBOOK_ICON + '</div>' +
         '<div class="menu__text">\u0410\u0443\u0434\u0438\u043e\u043a\u043d\u0438\u0433\u0438</div>' +
       '</li>'
     );
 
-    bindMenuButton(button);
-    return button;
+    menuItem.on('hover:enter click', openCatalog);
+    return menuItem;
   }
 
   function findMenuList() {
@@ -1088,8 +1095,8 @@
   function addMenuButton(attempt) {
     var list = findMenuList();
     var existing;
+    var menuItem;
     var anchor;
-    var button;
 
     if (!list.length) {
       if ((attempt || 0) < 40) {
@@ -1101,16 +1108,13 @@
     }
 
     existing = $('.menu .menu__item[data-action="lampac-audiobooks"]');
-    button = existing.first();
-    existing.not(button).remove();
+    existing.remove();
 
-    if (!button.length) button = createMenuButton();
-    else bindMenuButton(button);
-
+    menuItem = createMenuItem();
     anchor = findMenuAnchor(list);
 
-    if (anchor.length) anchor.after(button.detach());
-    else list.append(button);
+    if (anchor.length) anchor.after(menuItem);
+    else list.append(menuItem);
 
     if ((attempt || 0) < 12) {
       setTimeout(function() {
@@ -1120,7 +1124,13 @@
   }
 
   function watchMenu() {
-    if (!window.MutationObserver || window.lampacAudiobooksMenuWatcher) return;
+    if (!window.MutationObserver) return;
+
+    if (window.lampacAudiobooksMenuWatcher && window.lampacAudiobooksMenuWatcher.disconnect) {
+      try {
+        window.lampacAudiobooksMenuWatcher.disconnect();
+      } catch (e) {}
+    }
 
     var timer = 0;
     window.lampacAudiobooksMenuWatcher = new MutationObserver(function() {
@@ -1169,15 +1179,16 @@
         var torrentButton;
         var lastButton;
         var listenButton;
+        var fallbackContainer;
 
         if (!render || !render.length) return;
 
         render.find('.view--audiobook-listen').remove();
         removeWatchButton(render);
 
-        listenButton = $(
+        var listenButton = $(
           '<div class="full-start__button selector view--audiobook-listen button--book">' +
-            FULL_ICON +
+            AUDIOBOOK_ICON +
             '<span>\u0421\u043b\u0443\u0448\u0430\u0442\u044c</span>' +
           '</div>'
         );
@@ -1193,7 +1204,12 @@
           torrentButton.before(listenButton);
         } else {
           lastButton = render.find('.full-start__button:last');
-          if (lastButton.length) lastButton.after(listenButton);
+          if (lastButton.length) {
+            lastButton.after(listenButton);
+          } else {
+            fallbackContainer = render.find('.full-start-new__buttons, .full-start__buttons, .full-start__buttons-wrap, .full-start').first();
+            if (fallbackContainer.length) fallbackContainer.append(listenButton);
+          }
         }
 
         try {
@@ -1204,11 +1220,10 @@
   }
 
   function injectStyles() {
-    if ($('#lampac-audiobooks-style').length) return;
+    $('#lampac-audiobooks-style').remove();
 
     $('body').append(
-      '<style id="lampac-audiobooks-style">' +
-      '.lampac-audiobooks-list{padding-bottom:2em}' +
+      '<style id="lampac-audiobooks-style">' +      '.lampac-audiobooks-list{padding-bottom:2em}' +
       '.lampac-audiobook-card{position:relative;display:flex;align-items:stretch;gap:1.2em;padding:1em 1.2em;margin:0 0 .8em 0;border-radius:.45em;background:rgba(255,255,255,.055);border:2px solid transparent;min-height:11em;overflow:hidden}' +
       '.lampac-audiobook-card.focus,.lampac-audiobook-card:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.28)}' +
       '.lampac-audiobook-card__cover{width:7em;min-width:7em;height:9.8em;border-radius:.35em;background:rgba(255,255,255,.08);overflow:hidden}' +
@@ -1232,9 +1247,9 @@
       '.lampac-audiobook-detail__listen{margin:0}' +
       '.player-audiobook-visualizer{position:fixed;left:50%;bottom:9em;transform:translateX(-50%);width:86%;max-width:64em;height:9em;z-index:99999;pointer-events:none;display:block}' +
       '.player-audiobook-visualizer canvas{width:100%;height:100%;display:block;background:transparent}' +
-      '.full-start__button.view--audiobook-listen.focus,.full-start__button.view--audiobook-listen:hover{color:#111!important}' +
-      '.full-start__button.view--audiobook-listen.focus svg,.full-start__button.view--audiobook-listen:hover svg{color:#111!important;stroke:currentColor!important}' +
-      '@media(max-width:700px){.lampac-audiobook-card{gap:.8em;padding:.8em;min-height:9.5em}.lampac-audiobook-card__cover{width:5.8em;min-width:5.8em;height:8.2em}.lampac-audiobook-card__body{padding-right:0}.lampac-audiobook-card__action{position:static;align-self:flex-end;transform:none;margin-left:auto}.lampac-audiobook-card__descr{display:none}.lampac-audiobook-detail{display:block}.lampac-audiobook-detail__cover{width:9em;min-width:9em;margin-bottom:1em}.lampac-audiobook-detail__title{font-size:1.8em}}' +
+      '.player-audiobook-visualizer__wave{display:none;justify-content:space-around;align-items:flex-end;width:100%;height:100%;background:transparent}' +
+      '.player-audiobook-visualizer__wave div{width:.45em;min-height:2em;animation:lampac-audiobook-wave .35s ease-in-out infinite alternate}' +
+      '@keyframes lampac-audiobook-wave{0%{height:35%;opacity:.6}100%{height:100%;opacity:.9}}' +      '@media(max-width:700px){.lampac-audiobook-card{gap:.8em;padding:.8em;min-height:9.5em}.lampac-audiobook-card__cover{width:5.8em;min-width:5.8em;height:8.2em}.lampac-audiobook-card__body{padding-right:0}.lampac-audiobook-card__action{position:static;align-self:flex-end;transform:none;margin-left:auto}.lampac-audiobook-card__descr{display:none}.lampac-audiobook-detail{display:block}.lampac-audiobook-detail__cover{width:9em;min-width:9em;margin-bottom:1em}.lampac-audiobook-detail__title{font-size:1.8em}}' +
       '</style>'
     );
   }
@@ -1248,41 +1263,81 @@
     ctx: null,
     raf: 0,
     data: null,
-    init: function(video) {
-      if (!video || this.active) return;
-      if (!/\.(mp3|m4a|aac|ogg|wav|flac)(\?|$)/i.test(video.currentSrc || video.src || '')) return;
+    wave: null,
+    wrap: null,
+    video: null,
+    frame: 0,
+    useWebAudio: true,
 
-      this.active = true;
-      this.canvas = document.createElement('canvas');
-      this.canvas.width = 900;
-      this.canvas.height = 140;
-      this.ctx = this.canvas.getContext('2d');
+    isAudiobookAudio: function(video) {
+      var url = '';
+      if (!video) return false;
 
-      var wrap = document.createElement('div');
-      wrap.className = 'player-audiobook-visualizer';
-      wrap.appendChild(this.canvas);
-      document.body.appendChild(wrap);
-      this.wrap = wrap;
+      url = (video.currentSrc || video.src || '').toString();
+
+      if (AUDIOBOOK_PLAYER_ACTIVE) return true;
+      if (url.indexOf('/audiobooks/audio') >= 0) return true;
 
       try {
+        url = decodeURIComponent(url);
+      } catch (e) {}
+
+      return /\.(mp3|m4a|aac|ogg|wav|flac|ape|wma|alac|dts|ac3)(?:[?#&]|$)/i.test(url);
+    },
+
+    create: function() {
+      var old = document.querySelectorAll('.player-audiobook-visualizer');
+      for (var i = 0; i < old.length; i++) old[i].remove();
+
+      this.wrap = document.createElement('div');
+      this.wrap.className = 'player-audiobook-visualizer';
+
+      this.wave = document.createElement('div');
+      this.wave.className = 'player-audiobook-visualizer__wave';
+
+      this.canvas = document.createElement('canvas');
+      this.canvas.width = 1000;
+      this.canvas.height = 220;
+      this.ctx = this.canvas.getContext('2d');
+
+      this.wrap.appendChild(this.wave);
+      this.wrap.appendChild(this.canvas);
+      document.body.appendChild(this.wrap);
+    },
+
+    init: function(video) {
+      if (!video || this.active || !this.isAudiobookAudio(video)) return false;
+
+      this.active = true;
+      this.video = video;
+      this.create();
+
+      try {
+        if (!window.AudioContext && !window.webkitAudioContext) throw new Error('AudioContext is unavailable');
+
         this.context = new (window.AudioContext || window.webkitAudioContext)();
         this.analyser = this.context.createAnalyser();
         this.analyser.fftSize = 256;
-        this.analyser.smoothingTimeConstant = .84;
+        this.analyser.smoothingTimeConstant = .85;
         this.source = this.context.createMediaElementSource(video);
         this.source.connect(this.analyser);
         this.analyser.connect(this.context.destination);
         this.data = new Uint8Array(this.analyser.frequencyBinCount);
+        this.canvas.style.display = 'block';
+        this.wave.style.display = 'none';
         this.draw();
       } catch (e) {
-        this.destroy();
+        this.useWebAudio = false;
+        this.initCssWave();
       }
+
+      return true;
     },
+
     draw: function() {
       var self = this;
-      var ctx;
-      var w;
-      var h;
+      var width;
+      var height;
       var step;
       var x;
 
@@ -1293,73 +1348,134 @@
       });
 
       this.analyser.getByteFrequencyData(this.data);
-      ctx = this.ctx;
-      w = this.canvas.width;
-      h = this.canvas.height;
-      step = w / this.data.length * 2.4;
+      this.frame++;
+
+      width = this.canvas.width;
+      height = this.canvas.height;
+      step = width / this.data.length * 2.5;
       x = 0;
 
-      ctx.clearRect(0, 0, w, h);
+      this.ctx.clearRect(0, 0, width, height);
 
       for (var i = 0; i < this.data.length; i++) {
-        var bar = Math.max(4, this.data[i] / 255 * h);
-        var gradient = ctx.createLinearGradient(0, h - bar, 0, h);
+        var bar = Math.max(3, this.data[i] / 255 * height * .95);
+        var gradient = this.ctx.createLinearGradient(0, height - bar, 0, height);
+
         gradient.addColorStop(0, 'rgba(100,180,255,.7)');
-        gradient.addColorStop(.4, 'rgba(180,120,255,.65)');
-        gradient.addColorStop(.75, 'rgba(255,105,175,.62)');
-        gradient.addColorStop(1, 'rgba(255,145,80,.7)');
-        ctx.fillStyle = gradient;
-        ctx.fillRect(x, h - bar, Math.max(2, step - 2), bar);
+        gradient.addColorStop(.3, 'rgba(150,120,255,.7)');
+        gradient.addColorStop(.6, 'rgba(255,100,180,.7)');
+        gradient.addColorStop(1, 'rgba(255,140,80,.7)');
+
+        this.ctx.fillStyle = gradient;
+        this.ctx.fillRect(x, height - bar, Math.max(2, step - 2), bar);
         x += step;
       }
     },
-    toggle: function(play) {
-      if (!this.context) return;
-      if (play && this.context.state == 'suspended') this.context.resume();
-      else if (!play && this.context.state == 'running') this.context.suspend();
+
+    initCssWave: function() {
+      if (!this.wave || !this.canvas) return;
+
+      this.canvas.style.display = 'none';
+      this.wave.style.display = 'flex';
+      this.wave.innerHTML = '';
+
+      for (var i = 0; i < 40; i++) {
+        var bar = document.createElement('div');
+        var hue = Math.floor(Math.random() * 360);
+
+        bar.style.background = 'linear-gradient(to top, hsla(' + hue + ',70%,60%,.7), hsla(' + ((hue + 60) % 360) + ',70%,60%,.7))';
+        bar.style.animationDuration = (200 + Math.random() * 300) + 'ms';
+        bar.style.animationDelay = (Math.random() * 150) + 'ms';
+
+        this.wave.appendChild(bar);
+      }
     },
+
+    toggle: function(play) {
+      if (!this.active) return;
+
+      if (this.useWebAudio && this.context) {
+        if (play && this.context.state == 'suspended') this.context.resume();
+        else if (!play && this.context.state == 'running') this.context.suspend();
+      } else if (this.wave) {
+        var bars = this.wave.querySelectorAll('div');
+        for (var i = 0; i < bars.length; i++) bars[i].style.animationPlayState = play ? 'running' : 'paused';
+      }
+    },
+
     destroy: function() {
       this.active = false;
+
       if (this.raf) cancelAnimationFrame(this.raf);
+
       if (this.source) {
         try {
           this.source.disconnect();
         } catch (e) {}
       }
+
       if (this.context) {
         try {
           this.context.close();
         } catch (e) {}
       }
+
       if (this.wrap) this.wrap.remove();
+
       this.context = null;
       this.analyser = null;
       this.source = null;
       this.canvas = null;
       this.ctx = null;
+      this.wave = null;
       this.wrap = null;
+      this.video = null;
+      this.raf = 0;
+      this.data = null;
+      this.frame = 0;
+      this.useWebAudio = true;
     }
   };
 
   function integrateVisualizer() {
-    if (!Lampa.Player || !Lampa.Player.listener || Lampa.Player._lampacAudiobookVisualizer) return;
-    Lampa.Player._lampacAudiobookVisualizer = true;
+    if (!Lampa.Player || !Lampa.Player.listener || Lampa.Player._lampacAudiobookVisualizerVersion == VERSION) return;
+    Lampa.Player._lampacAudiobookVisualizerVersion = VERSION;
+
+    function getVideo() {
+      return document.querySelector('.player video') || document.querySelector('video');
+    }
+
+    function tryInitialize() {
+      var attempt = 0;
+      var timer = setInterval(function() {
+        var video = getVideo();
+        attempt++;
+
+        if (video && AudioWave.init(video)) {
+          clearInterval(timer);
+
+          video.addEventListener('play', function() {
+            AudioWave.toggle(true);
+          });
+
+          video.addEventListener('pause', function() {
+            AudioWave.toggle(false);
+          });
+
+          if (!video.paused) AudioWave.toggle(true);
+        } else if (attempt >= 15) {
+          clearInterval(timer);
+        }
+      }, 300);
+    }
 
     Lampa.Player.listener.follow('start', function() {
-      setTimeout(function() {
-        var video = document.querySelector('.player video') || document.querySelector('video');
-        if (!video) return;
-        AudioWave.init(video);
-        video.addEventListener('play', function() {
-          AudioWave.toggle(true);
-        });
-        video.addEventListener('pause', function() {
-          AudioWave.toggle(false);
-        });
-      }, 700);
+      if (!AUDIOBOOK_PLAYER_ACTIVE) return;
+      setTimeout(tryInitialize, 500);
     });
 
     Lampa.Player.listener.follow('destroy', function() {
+      AUDIOBOOK_PLAYER_ACTIVE = false;
       AudioWave.destroy();
     });
   }
