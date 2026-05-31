@@ -1,7 +1,7 @@
 (function() {
   'use strict';
 
-  var VERSION = '0.3.3';
+  var VERSION = '0.3.9';
   var RUNTIME_KEY = '__lampacAudiobooksRuntime';
   var previousRuntime = window[RUNTIME_KEY];
 
@@ -18,10 +18,12 @@
     active: true,
     timers: [],
     menuObserver: null,
+    fullObserver: null,
     searchSource: null,
     fullHookInstalled: false,
     visualizerHookInstalled: false,
-    visualizerInitTimer: 0
+    visualizerInitTimer: 0,
+    playerMonitor: 0
   };
 
   window[RUNTIME_KEY] = runtime;
@@ -54,9 +56,20 @@
       runtime.visualizerInitTimer = 0;
     }
 
+    if (runtime.playerMonitor) {
+      clearInterval(runtime.playerMonitor);
+      runtime.playerMonitor = 0;
+    }
+
     if (runtime.menuObserver && runtime.menuObserver.disconnect) {
       try {
         runtime.menuObserver.disconnect();
+      } catch (e) {}
+    }
+
+    if (runtime.fullObserver && runtime.fullObserver.disconnect) {
+      try {
+        runtime.fullObserver.disconnect();
       } catch (e) {}
     }
 
@@ -66,19 +79,21 @@
       } catch (e) {}
     }
 
-    if (typeof AudioWave != 'undefined' && AudioWave && AudioWave.destroy) {
+    if (typeof AudiobookPlayerView != 'undefined' && AudiobookPlayerView && AudiobookPlayerView.destroy) {
       try {
-        AudioWave.destroy();
+        AudiobookPlayerView.destroy();
       } catch (e) {}
     }
 
     if (typeof AUDIOBOOK_PLAYER_ACTIVE != 'undefined') AUDIOBOOK_PLAYER_ACTIVE = false;
     if (typeof ACTIVE_PLAYER_META != 'undefined') ACTIVE_PLAYER_META = null;
+    if (typeof CURRENT_AUDIOBOOK_PLAYLIST != 'undefined') CURRENT_AUDIOBOOK_PLAYLIST = [];
   };
 
   var COMPONENT = 'lampac_audiobooks';
   var SOURCE = 'lampac_audiobooks';
   var PAGE_SIZE = 20;
+  var DEFAULT_API_BASE = 'http://lampac.fun';
   var API_BASE = detectApiBase();
   var BOOK_CACHE = window.__lampacAudiobooksBookCache || {};
   window.__lampacAudiobooksBookCache = BOOK_CACHE;
@@ -90,13 +105,18 @@
 
   window.lampacAudiobooksDebug = {
     version: VERSION,
-    apiBase: API_BASE
+    apiBase: API_BASE,
+    defaultApiBase: DEFAULT_API_BASE
   };
 
-  function detectApiBase() {
+  function cleanApiBase(value) {
+    return (value || '').toString().replace(/\/$/, '');
+  }
+
+  function scriptApiBase() {
     var src = '';
     var scripts;
-    var anchor;
+    var match;
 
     if (document.currentScript && document.currentScript.src) {
       src = document.currentScript.src;
@@ -112,24 +132,33 @@
       }
     }
 
-    if (src) {
-      try {
-        anchor = document.createElement('a');
-        anchor.href = src;
-        if (anchor.protocol && anchor.host) return (anchor.protocol + '//' + anchor.host).replace(/\/$/, '');
-      } catch (e) {}
+    match = src.match(/[?&](?:api|server)=([^&#]+)/i);
+    if (!match || !match[1]) return '';
 
-      if (src.indexOf('://') >= 0) {
-        return src
-          .replace(/[?#].*$/, '')
-          .replace(/\/[^\/]+\.js$/i, '')
-          .replace(/\/$/, '');
+    try {
+      return cleanApiBase(decodeURIComponent(match[1]));
+    } catch (e) {
+      return cleanApiBase(match[1]);
+    }
+  }
+
+  function detectApiBase() {
+    var explicit = cleanApiBase(window.lampacAudiobooksApiBase || '');
+    var fromScript = scriptApiBase();
+    var pageOrigin = '';
+
+    if (explicit) return explicit;
+    if (fromScript) return fromScript;
+
+    if (window.location && window.location.origin) {
+      pageOrigin = cleanApiBase(window.location.origin);
+
+      if (/^https?:\/\/(?:www\.)?lampac\.fun(?::\d+)?$/i.test(pageOrigin)) {
+        return pageOrigin;
       }
     }
 
-    if (window.location && window.location.origin) return window.location.origin.replace(/\/$/, '');
-
-    return '';
+    return cleanApiBase(DEFAULT_API_BASE);
   }
 
   function addParam(url, key, value) {
@@ -603,14 +632,23 @@
     return items.filter(function(item) {
       return !!item.fileurl;
     }).map(function(item, index) {
-      var title = item.title || book.name || ('\u0424\u0430\u0439\u043b ' + (index + 1));
+      var chapterTitle = item.title || book.name || ('\u0424\u0430\u0439\u043b ' + (index + 1));
+      var bookTitle = book.name || chapterTitle;
       var timelineHash = Lampa.Utils.hash(['audiobook', book.source, book.url, item.fileIndex, index].join(':'));
+      var meta = {
+        title: bookTitle,
+        chapter: chapterTitle,
+        author: book.author || '',
+        reader: book.reader || '',
+        duration: book.duration || '',
+        image: image
+      };
 
       return {
-        title: title,
-        name: title,
-        first_title: book.name || title,
-        movie_title: book.name || title,
+        title: chapterTitle,
+        name: chapterTitle,
+        first_title: bookTitle,
+        movie_title: bookTitle,
         original_title: book.author || '',
         url: audioUrl(item.fileurl),
         timeline: Lampa.Timeline.view(timelineHash),
@@ -619,6 +657,7 @@
         background_image: image,
         card: card,
         source_name: source,
+        audiobook_meta: meta,
         from_lampac_audiobooks: true
       };
     });
@@ -630,6 +669,42 @@
 
   var AUDIOBOOK_PLAYER_ACTIVE = false;
   var ACTIVE_PLAYER_META = null;
+  var CURRENT_AUDIOBOOK_PLAYLIST = [];
+  var LAST_AUDIOBOOK_TRACK_AT = 0;
+
+  function getAudiobookMeta(item) {
+    item = item || {};
+    var meta = item.audiobook_meta || {};
+    var card = item.card || {};
+
+    return {
+      title: meta.title || item.movie_title || item.first_title || card.title || card.name || item.title || '\u0410\u0443\u0434\u0438\u043e\u043a\u043d\u0438\u0433\u0430',
+      chapter: meta.chapter || item.title || item.name || '',
+      author: meta.author || item.original_title || card.original_title || card.original_name || '',
+      reader: meta.reader || card.audiobook_reader || '',
+      duration: meta.duration || card.audiobook_duration || '',
+      image: absoluteUrl(meta.image || item.img || item.poster || item.background_image || card.img || card.poster || card.background_image || '') || './img/img_broken.svg'
+    };
+  }
+
+  function activateAudiobookTrack(item) {
+    if (!item || !item.from_lampac_audiobooks) return false;
+
+    AUDIOBOOK_PLAYER_ACTIVE = true;
+    LAST_AUDIOBOOK_TRACK_AT = Date.now();
+    ACTIVE_PLAYER_META = getAudiobookMeta(item);
+
+    if (typeof AudiobookPlayerView != 'undefined' && AudiobookPlayerView && AudiobookPlayerView.refresh) {
+      AudiobookPlayerView.refresh(ACTIVE_PLAYER_META);
+    }
+
+    later(function() {
+      if (typeof AudiobookPlayerView != 'undefined' && AudiobookPlayerView && AudiobookPlayerView.refresh) {
+        AudiobookPlayerView.refresh(ACTIVE_PLAYER_META);
+      }
+    }, 120);
+    return true;
+  }
 
   function playVoice(voices, voice) {
     if (!voice || !voice.playlist || !voice.playlist.length) {
@@ -705,18 +780,25 @@
       } catch (e) {}
     }
 
-    AUDIOBOOK_PLAYER_ACTIVE = true;
-    ACTIVE_PLAYER_META = {
-      title: voice.book.name || first.title || '\u0410\u0443\u0434\u0438\u043e\u043a\u043d\u0438\u0433\u0430',
+    first.audiobook_meta = {
+      title: voice.book.name || first.movie_title || first.title || '\u0410\u0443\u0434\u0438\u043e\u043a\u043d\u0438\u0433\u0430',
+      chapter: playlist[0].title || first.title || '',
       author: voice.book.author || '',
       reader: voice.book.reader || '',
+      duration: voice.book.duration || '',
       image: first.img || './img/img_broken.svg'
     };
 
+    CURRENT_AUDIOBOOK_PLAYLIST = playlist;
+    activateAudiobookTrack(first);
     Lampa.Player.runas('inner');
     Lampa.Player.play(first);
     Lampa.Player.playlist(playlist);
-    later(tryInitializeVisualizer, 350);
+    later(function() {
+      if (typeof AudiobookPlayerView != 'undefined' && AudiobookPlayerView && AudiobookPlayerView.refresh) {
+        AudiobookPlayerView.refresh(ACTIVE_PLAYER_META);
+      }
+    }, 350);
     Lampa.Player.callback(function() {
       Lampa.Controller.toggle('content');
     });
@@ -868,7 +950,7 @@
       if (!Array.isArray(items)) items = [];
 
       var cards = items.map(cardFromBook);
-      var hasMore = cards.length >= PAGE_SIZE;
+      var hasMore = cards.length > 0;
       var nextPage = hasMore ? page + 1 : false;
 
       onComplete({
@@ -876,9 +958,9 @@
         title: query ? '\u041f\u043e\u0438\u0441\u043a: ' + query : '\u0410\u0443\u0434\u0438\u043e\u043a\u043d\u0438\u0433\u0438',
         source: SOURCE,
         page: page,
-        pages: hasMore ? page + 1 : page,
-        total_pages: hasMore ? page + 1 : page,
-        total_results: (page - 1) * PAGE_SIZE + cards.length + (hasMore ? 1 : 0),
+        pages: hasMore ? 999999 : page,
+        total_pages: hasMore ? 999999 : page,
+        total_results: hasMore ? 999999 * PAGE_SIZE : ((page - 1) * PAGE_SIZE + cards.length),
         more: hasMore,
         next: nextPage,
         nomore: !hasMore,
@@ -1267,78 +1349,200 @@
 
   window.lampacAudiobooksAddMenuButton = addMenuButton;
 
-  function removeWatchButton(render) {
-    render.find('.full-start__button').filter(function() {
-      var item = $(this);
-      var text = item.text().replace(/\s+/g, ' ').trim().toLowerCase();
-      var classes = item.attr('class') || '';
+  function getActiveFullContext(event) {
+    var active = null;
+    var object = event && event.object ? event.object : {};
+    var data = event && event.data ? event.data : {};
+    var activity = object.activity || null;
+    var movie = null;
+    var source = '';
+    var candidates = [];
 
-      if (item.hasClass('view--audiobook-listen')) return false;
-      if (classes.indexOf('button--play') >= 0 || classes.indexOf('view--play') >= 0 || classes.indexOf('view--watch') >= 0) return true;
-      if (text == '\u0441\u043c\u043e\u0442\u0440\u0435\u0442\u044c' || text == 'watch' || text == 'play') return true;
+    try {
+      active = Lampa.Activity && Lampa.Activity.active ? Lampa.Activity.active() : null;
+    } catch (e) {}
 
-      return false;
-    }).remove();
+    if (!activity && active && active.activity) activity = active.activity;
+
+    candidates.push(data.movie);
+    candidates.push(data.card);
+    candidates.push(object.movie);
+    candidates.push(object.card);
+    candidates.push(active && active.movie);
+    candidates.push(active && active.card);
+    candidates.push(activity && activity.movie);
+    candidates.push(activity && activity.card);
+    candidates.push(data);
+
+    for (var i = 0; i < candidates.length; i++) {
+      if (isAudiobookCard(candidates[i])) {
+        movie = candidates[i];
+        break;
+      }
+    }
+
+    source = object.source || data.source || (active && active.source) || (movie && movie.source) || '';
+
+    if (!movie && source == SOURCE) {
+      movie = (active && (active.movie || active.card)) || (activity && (activity.movie || activity.card)) || data.movie || data.card || data;
+    }
+
+    return {
+      active: active,
+      activity: activity,
+      movie: movie,
+      source: source,
+      isAudiobook: !!(movie && isAudiobookCard(movie)) || source == SOURCE
+    };
   }
 
-  function ensureFullListenButton(event, movie) {
-    if (!isCurrentRuntime()) return;
+  function getFullRender(context) {
+    var render = $();
 
-    var render = event.object && event.object.activity && event.object.activity.render ? event.object.activity.render() : $('.full-start').closest('.activity');
-    var current;
-    var listenButton;
-    var torrentButton;
-    var lastButton;
-    var playbackBook;
-    var lastEnter = 0;
-
-    if (!render || !render.length) return;
-
-    render.find('.view--audiobook-torrent').remove();
-    current = render.find('.view--audiobook-listen');
-    current.slice(1).remove();
-    removeWatchButton(render);
-
-    playbackBook = bookFromCard(movie);
-
-    if (current.length) {
-      current.find('svg').replaceWith(AUDIOBOOK_ICON);
-      current.find('span').text('\u0421\u043b\u0443\u0448\u0430\u0442\u044c');
-      current.off('.lampac-audiobooks');
-      listenButton = current.first();
-    } else {
-      var listenButton = $(
-        '<div class="full-start__button selector view--audiobook-listen button--book">' +
-          AUDIOBOOK_ICON +
-          '<span>\u0421\u043b\u0443\u0448\u0430\u0442\u044c</span>' +
-        '</div>'
-      );
+    if (context && context.activity && context.activity.render) {
+      try {
+        render = context.activity.render();
+      } catch (e) {}
     }
+
+    if (!render || !render.length) {
+      render = $('.full-start, .full-start-new').closest('.activity').first();
+    }
+
+    if (!render || !render.length) {
+      render = $('.full-start, .full-start-new').first().parent();
+    }
+
+    return render || $();
+  }
+
+  function makeListenButton(playbackBook) {
+    var lastEnter = 0;
+    var listenButton = $(
+      '<div class="full-start__button selector view--audiobook-listen button--book" data-subtitle="\u0421\u043b\u0443\u0448\u0430\u0442\u044c">' +
+        AUDIOBOOK_ICON +
+        '<span>\u0421\u043b\u0443\u0448\u0430\u0442\u044c</span>' +
+      '</div>'
+    );
+
+    listenButton.css({ opacity: '1', animation: 'none' });
 
     listenButton.on('hover:enter.lampac-audiobooks click.lampac-audiobooks', function() {
       var now = Date.now();
       if (now - lastEnter < 500) return;
       lastEnter = now;
-
       if (!isCurrentRuntime()) return;
-      Lampa.Controller.toggle('content');
       startPlayback(playbackBook);
     });
 
-    if (!current.length) {
-      torrentButton = render.find('.view--torrent, .button--torrent').first();
+    return listenButton;
+  }
 
-      if (torrentButton.length) {
-        torrentButton.before(listenButton);
-      } else {
-        lastButton = render.find('.full-start__button:last');
-        if (lastButton.length) lastButton.after(listenButton);
-      }
+  function findDirectFullButtonsContainer(render) {
+    var container = $();
+    var selectors = [
+      '.full-start-new__buttons',
+      '.full-start__buttons',
+      '.full-start__buttons-wrap',
+      '.full-start__buttons-container'
+    ];
+
+    for (var i = 0; i < selectors.length; i++) {
+      container = render.find(selectors[i]).first();
+      if (container.length) return container;
     }
 
-    try {
-      Lampa.Controller.toggle('full_start');
-    } catch (e) {}
+    for (var j = 0; j < selectors.length; j++) {
+      container = $(selectors[j] + ':visible').first();
+      if (container.length) return container;
+    }
+
+    container = render.find('.button--play, .view--bookmark, .button--bookmark, .view--more, .button--more').first().parent();
+    if (container.length) return container;
+    return $();
+  }
+
+  function expandDirectFullButtons(render) {
+    var container = findDirectFullButtonsContainer(render);
+    var torrentButton;
+    if (!container.length) return container;
+
+    container.find('.button--play, .view--play, .view--watch').remove();
+
+    torrentButton = render.find('.full-start__button.view--torrent, .full-start__button.button--torrent').not('.view--audiobook-torrent').first();
+    if (torrentButton.length && !torrentButton.closest(container).length) container.append(torrentButton.detach());
+
+    container.find('.view--torrent, .button--torrent').removeClass('hide hidden').css({ display: '', opacity: '1' });
+    return container;
+  }
+
+  function insertListenButton(container, listenButton) {
+    var anchor;
+    if (!container || !container.length) return false;
+
+    anchor = container.find('.view--torrent, .button--torrent').first();
+    if (anchor.length) { anchor.before(listenButton); return true; }
+
+    anchor = container.find('.view--bookmark, .button--bookmark, .view--favorite, .button--favorite').first();
+    if (anchor.length) { anchor.before(listenButton); return true; }
+
+    anchor = container.find('.view--more, .button--more').first();
+    if (anchor.length) { anchor.before(listenButton); return true; }
+
+    container.prepend(listenButton);
+    return true;
+  }
+
+  function ensureFullListenButton(event) {
+    var context;
+    var render;
+    var container;
+    var playbackBook;
+    var current;
+    var listenButton;
+
+    if (!isCurrentRuntime()) return false;
+    context = getActiveFullContext(event);
+    if (!context.isAudiobook || !context.movie) return false;
+
+    render = getFullRender(context);
+    if (!render.length) return false;
+
+    container = expandDirectFullButtons(render);
+    if (!container.length) {
+      if (window.console && console.warn) console.warn('[Audiobooks] direct full buttons container not found');
+      return false;
+    }
+
+    render.find('.view--audiobook-torrent').remove();
+    current = container.find('.view--audiobook-listen');
+    current.slice(1).remove();
+
+    if (current.length) {
+      current.css({ opacity: '1', animation: 'none' });
+      return true;
+    }
+
+    playbackBook = bookFromCard(context.movie);
+    listenButton = makeListenButton(playbackBook);
+    if (!insertListenButton(container, listenButton)) return false;
+    if (window.console && console.log) console.log('[Audiobooks] direct listen button inserted');
+    return true;
+  }
+
+  function refreshActiveFullListenButton() { ensureFullListenButton(null); }
+
+  function watchFullButtons() {
+    if (!window.MutationObserver || runtime.fullObserver) return;
+    var timer = 0;
+    runtime.fullObserver = new MutationObserver(function() {
+      clearTimeout(timer);
+      timer = setTimeout(function() {
+        if (!isCurrentRuntime()) return;
+        refreshActiveFullListenButton();
+      }, 180);
+    });
+    runtime.fullObserver.observe(document.body, { childList: true, subtree: true });
   }
 
   function addFullListenButton() {
@@ -1347,21 +1551,15 @@
 
     Lampa.Listener.follow('full', function(event) {
       if (!isCurrentRuntime() || !event || event.type != 'complite') return;
-
-      var data = event.data || {};
-      var movie = data.movie || data.card || data;
-
-      if (!isAudiobookCard(movie)) return;
-
-      later(function() {
-        ensureFullListenButton(event, movie);
-      }, 120);
-
-      later(function() {
-        var render = event.object && event.object.activity && event.object.activity.render ? event.object.activity.render() : $();
-        if (render.length && !render.find('.view--audiobook-listen').length) ensureFullListenButton(event, movie);
-      }, 450);
+      later(function() { ensureFullListenButton(event); }, 80);
+      later(function() { ensureFullListenButton(event); }, 450);
+      later(function() { ensureFullListenButton(event); }, 900);
+      later(function() { ensureFullListenButton(event); }, 1600);
     });
+
+    watchFullButtons();
+    later(refreshActiveFullListenButton, 350);
+    later(refreshActiveFullListenButton, 900);
   }
 
   function injectStyles() {
@@ -1391,273 +1589,227 @@
       '.lampac-audiobook-detail__descr{font-size:1.08em;line-height:1.5;opacity:.68;max-height:13.5em;overflow:hidden}' +
       '.lampac-audiobook-detail__footer{display:flex;margin-top:1.6em}' +
       '.lampac-audiobook-detail__listen{margin:0}' +
-      '.player-audiobook-visualizer{position:fixed;left:50%;bottom:9em;transform:translateX(-50%);width:86%;max-width:64em;height:9em;z-index:99999;pointer-events:none;display:block}' +
-      '.player-audiobook-visualizer canvas{width:100%;height:100%;display:block;background:transparent}' +
-      '.player-audiobook-visualizer__wave{display:none;justify-content:space-around;align-items:flex-end;width:100%;height:100%;background:transparent}' +
-      '.player-audiobook-visualizer__wave div{width:.45em;min-height:2em;animation:lampac-audiobook-wave .35s ease-in-out infinite alternate}' +
-      '.player-audiobook-meta{position:fixed;left:4.5%;bottom:18em;z-index:99998;display:flex;align-items:center;gap:1em;max-width:72%;pointer-events:none}' +
-      '.player-audiobook-meta__cover{width:7em;height:10em;object-fit:cover;border-radius:.45em;background:rgba(255,255,255,.08)}' +
-      '.player-audiobook-meta__title{font-size:1.55em;line-height:1.15;font-weight:600}' +
-      '.player-audiobook-meta__author{margin-top:.45em;font-size:1em;opacity:.72}' +
-      '@keyframes lampac-audiobook-wave{0%{height:35%;opacity:.6}100%{height:100%;opacity:.9}}' +
-      '@media(max-width:700px){.lampac-audiobook-card{gap:.8em;padding:.8em;min-height:9.5em}.lampac-audiobook-card__cover{width:5.8em;min-width:5.8em;height:8.2em}.lampac-audiobook-card__body{padding-right:0}.lampac-audiobook-card__action{position:static;align-self:flex-end;transform:none;margin-left:auto}.lampac-audiobook-card__descr{display:none}.lampac-audiobook-detail{display:block}.lampac-audiobook-detail__cover{width:9em;min-width:9em;margin-bottom:1em}.lampac-audiobook-detail__title{font-size:1.8em}.player-audiobook-meta{left:4%;bottom:17em;max-width:92%}.player-audiobook-meta__cover{width:5em;height:7em}.player-audiobook-meta__title{font-size:1.2em}}' +
+      '.full-start-new__buttons .view--audiobook-listen,.full-start__buttons .view--audiobook-listen{opacity:1!important;animation:none!important}' +
+      '.player.player--audiobook{background:#000!important}' +
+      '.player.player--audiobook .player-video__display{opacity:0!important}' +
+      '.player.player--audiobook .player-info{display:none!important}' +
+      '.player.player--audiobook .player-audiobook-view{position:absolute;top:0;right:0;bottom:0;left:0;z-index:3;display:-webkit-flex;display:flex;-webkit-flex-direction:column;flex-direction:column;-webkit-align-items:center;align-items:center;pointer-events:none;box-sizing:border-box;color:#fff}' +
+      '.player.player--audiobook .player-audiobook-view__top{position:absolute;top:2.2em;left:4.8em;right:4.8em;display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;gap:1em;min-width:0}' +
+      '.player.player--audiobook .player-audiobook-view__heading{min-width:0;flex:1}' +
+      '.player.player--audiobook .player-audiobook-view__title{font-size:1.45em;font-weight:600;line-height:1.18;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.player.player--audiobook .player-audiobook-view__author{margin-top:.3em;font-size:1.02em;opacity:.58;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.player.player--audiobook .player-audiobook-view__center{position:absolute;left:50%;top:43%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%);display:-webkit-flex;display:flex;-webkit-flex-direction:column;flex-direction:column;-webkit-align-items:center;align-items:center;text-align:center}' +
+      '.player.player--audiobook .player-audiobook-view__cover{width:16em;height:16em;object-fit:cover;border-radius:.55em;background:rgba(255,255,255,.08);box-shadow:0 .8em 2.3em rgba(0,0,0,.52)}' +
+      '.player.player--audiobook .player-audiobook-view__duration{margin-top:1.1em;font-size:1.02em;font-weight:600;opacity:.42}' +
+      '.player.player--audiobook .player-audiobook-view__chapter{position:absolute;left:50%;bottom:9.2em;-webkit-transform:translateX(-50%);transform:translateX(-50%);display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;gap:.55em;padding:.65em 1em;border-radius:1.4em;pointer-events:auto;background:rgba(255,255,255,.06)}' +
+      '.player.player--audiobook .player-audiobook-view__chapter svg{width:1.15em;height:1.15em}' +
+      '.player.player--audiobook .player-panel,.player.player--audiobook .player-footer{z-index:4;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}' +
+      '.player.player--audiobook .player-panel__body,.player.player--audiobook .player-footer__body{background:transparent!important}' +
+      '.audiobook-chapters{padding:.4em 0}' +
+      '.audiobook-chapters__item{display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;padding:1em 1.2em;border-bottom:1px solid rgba(255,255,255,.1)}' +
+      '.audiobook-chapters__index{width:3em;opacity:.5}' +
+      '.audiobook-chapters__title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.audiobook-chapters__item.focus{background:rgba(255,255,255,.12)}' +
+      '@media(max-width:700px) and (orientation:portrait){.lampac-audiobook-card{gap:.8em;padding:.8em;min-height:9.5em}.lampac-audiobook-card__cover{width:5.8em;min-width:5.8em;height:8.2em}.lampac-audiobook-card__body{padding-right:0}.lampac-audiobook-card__action{position:static;align-self:flex-end;transform:none;margin-left:auto}.lampac-audiobook-card__descr{display:none}.lampac-audiobook-detail{display:block}.lampac-audiobook-detail__cover{width:9em;min-width:9em;margin-bottom:1em}.lampac-audiobook-detail__title{font-size:1.8em}.player.player--audiobook .player-audiobook-view__top{top:5.6em;left:1.6em;right:1.6em}.player.player--audiobook .player-audiobook-view__title{font-size:1.1em}.player.player--audiobook .player-audiobook-view__author{font-size:.92em}.player.player--audiobook .player-audiobook-view__center{top:39%}.player.player--audiobook .player-audiobook-view__cover{width:78vw;height:78vw;max-width:22em;max-height:22em;border-radius:.35em}.player.player--audiobook .player-audiobook-view__duration{margin-top:1.25em}.player.player--audiobook .player-audiobook-view__chapter{bottom:11.4em;font-size:.95em}.player.player--audiobook .player-panel{bottom:1.1em!important}}' +
+      '@media(min-width:701px), (orientation:landscape){.player.player--audiobook .player-audiobook-view__cover{width:15em;height:15em}.player.player--audiobook .player-audiobook-view__chapter{bottom:8.6em}}' +
       '</style>'
     );
   }
 
-  var AudioWave = {
-    active: false,
-    context: null,
-    analyser: null,
-    source: null,
-    canvas: null,
-    ctx: null,
-    raf: 0,
-    data: null,
-    wave: null,
-    wrap: null,
-    meta: null,
-    video: null,
-    onPlay: null,
-    onPause: null,
+  function compactPlayerTitle(value) {
+    var title = (value || '').toString().replace(/\s+/g, ' ').trim();
+    var shortTitle;
 
-    isAudiobookAudio: function(video) {
-      var url = '';
-      if (!video) return false;
+    if (!title) return '';
 
-      if (AUDIOBOOK_PLAYER_ACTIVE) return true;
+    shortTitle = title.split(/[.:]/)[0].trim() || title;
 
-      url = (video.currentSrc || video.src || '').toString();
-      if (url.indexOf('/audiobooks/audio') >= 0) return true;
+    if (/^[\u0410-\u042f\u04010-9\s\-]+$/.test(shortTitle)) {
+      shortTitle = shortTitle.toLowerCase();
+      shortTitle = shortTitle.charAt(0).toUpperCase() + shortTitle.slice(1);
+    }
 
+    return shortTitle;
+  }
+
+  var AudiobookPlayerView = {
+    root: null,
+    view: null,
+    title: null,
+    author: null,
+    cover: null,
+    duration: null,
+    chapter: null,
+    chapterText: null,
+
+    renderRoot: function() {
+      var render;
       try {
-        url = decodeURIComponent(url);
-      } catch (e) {}
-
-      return /\.(mp3|m4a|aac|ogg|wav|flac|ape|wma|alac|dts|ac3)(?:[?#&]|$)/i.test(url);
-    },
-
-    create: function() {
-      var oldWave = document.querySelectorAll('.player-audiobook-visualizer');
-      var oldMeta = document.querySelectorAll('.player-audiobook-meta');
-      var i;
-
-      for (i = 0; i < oldWave.length; i++) oldWave[i].remove();
-      for (i = 0; i < oldMeta.length; i++) oldMeta[i].remove();
-
-      this.wrap = document.createElement('div');
-      this.wrap.className = 'player-audiobook-visualizer';
-
-      this.wave = document.createElement('div');
-      this.wave.className = 'player-audiobook-visualizer__wave';
-
-      this.canvas = document.createElement('canvas');
-      this.canvas.width = 1000;
-      this.canvas.height = 220;
-      this.ctx = this.canvas.getContext('2d');
-
-      this.wrap.appendChild(this.wave);
-      this.wrap.appendChild(this.canvas);
-      document.body.appendChild(this.wrap);
-
-      if (ACTIVE_PLAYER_META) {
-        this.meta = document.createElement('div');
-        this.meta.className = 'player-audiobook-meta';
-        this.meta.innerHTML =
-          '<img class="player-audiobook-meta__cover" src="' + escapeHtml(ACTIVE_PLAYER_META.image || './img/img_broken.svg') + '" />' +
-          '<div class="player-audiobook-meta__body">' +
-            '<div class="player-audiobook-meta__title">' + escapeHtml(ACTIVE_PLAYER_META.title || '') + '</div>' +
-            '<div class="player-audiobook-meta__author">' + escapeHtml(ACTIVE_PLAYER_META.author || ACTIVE_PLAYER_META.reader || '') + '</div>' +
-          '</div>';
-        document.body.appendChild(this.meta);
-      }
-    },
-
-    init: function(video) {
-      if (!video || this.active || !this.isAudiobookAudio(video)) return false;
-
-      this.active = true;
-      this.video = video;
-      this.create();
-
-      try {
-        if (!window.AudioContext && !window.webkitAudioContext) throw new Error('AudioContext is unavailable');
-
-        this.context = new (window.AudioContext || window.webkitAudioContext)();
-        this.analyser = this.context.createAnalyser();
-        this.analyser.fftSize = 256;
-        this.analyser.smoothingTimeConstant = .85;
-        this.source = this.context.createMediaElementSource(video);
-        this.source.connect(this.analyser);
-        this.analyser.connect(this.context.destination);
-        this.data = new Uint8Array(this.analyser.frequencyBinCount);
-        this.canvas.style.display = 'block';
-        this.wave.style.display = 'none';
-        this.draw();
+        render = Lampa.Player && Lampa.Player.render ? Lampa.Player.render() : null;
       } catch (e) {
-        this.initCssWave();
+        render = null;
       }
-
-      this.onPlay = function() {
-        AudioWave.toggle(true);
-      };
-      this.onPause = function() {
-        AudioWave.toggle(false);
-      };
-
-      video.addEventListener('play', this.onPlay);
-      video.addEventListener('pause', this.onPause);
-
-      if (!video.paused) this.toggle(true);
-      return true;
+      if (!render || !render.length) render = $('.player').first();
+      return render;
     },
 
-    draw: function() {
-      var self = this;
-      var width;
-      var height;
-      var step;
-      var x;
+    ensure: function() {
+      var root = this.renderRoot();
+      if (!root || !root.length) return null;
 
-      if (!this.active || !this.analyser || !this.ctx) return;
+      if (this.root && this.root.length && this.root[0] !== root[0]) this.destroy();
+      this.root = root;
+      this.root.addClass('player--audiobook');
 
-      this.raf = requestAnimationFrame(function() {
-        self.draw();
+      this.view = this.root.find('.player-audiobook-view').first();
+      if (!this.view.length) {
+        this.view = $(
+          '<div class="player-audiobook-view">' +
+            '<div class="player-audiobook-view__top">' +
+              '<div class="player-audiobook-view__heading">' +
+                '<div class="player-audiobook-view__title"></div>' +
+                '<div class="player-audiobook-view__author"></div>' +
+              '</div>' +
+            '</div>' +
+            '<div class="player-audiobook-view__center">' +
+              '<img class="player-audiobook-view__cover" src="./img/img_broken.svg" />' +
+              '<div class="player-audiobook-view__duration"></div>' +
+            '</div>' +
+            '<div class="player-audiobook-view__chapter selector">' +
+              '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>' +
+              '<span class="player-audiobook-view__chapter-text"></span>' +
+            '</div>' +
+          '</div>'
+        );
+        this.root.append(this.view);
+      }
+
+      this.title = this.view.find('.player-audiobook-view__title');
+      this.author = this.view.find('.player-audiobook-view__author');
+      this.cover = this.view.find('.player-audiobook-view__cover');
+      this.duration = this.view.find('.player-audiobook-view__duration');
+      this.chapter = this.view.find('.player-audiobook-view__chapter');
+      this.chapterText = this.view.find('.player-audiobook-view__chapter-text');
+
+      this.chapter.off('hover:enter.lampac-audiobooks click.lampac-audiobooks');
+      this.chapter.on('hover:enter.lampac-audiobooks click.lampac-audiobooks', function() {
+        openAudiobookChapters();
       });
 
-      this.analyser.getByteFrequencyData(this.data);
-      width = this.canvas.width;
-      height = this.canvas.height;
-      step = width / this.data.length * 2.5;
-      x = 0;
-
-      this.ctx.clearRect(0, 0, width, height);
-
-      for (var i = 0; i < this.data.length; i++) {
-        var bar = Math.max(3, this.data[i] / 255 * height * .95);
-        var gradient = this.ctx.createLinearGradient(0, height - bar, 0, height);
-
-        gradient.addColorStop(0, 'rgba(100,180,255,.7)');
-        gradient.addColorStop(.3, 'rgba(150,120,255,.7)');
-        gradient.addColorStop(.6, 'rgba(255,100,180,.7)');
-        gradient.addColorStop(1, 'rgba(255,140,80,.7)');
-
-        this.ctx.fillStyle = gradient;
-        this.ctx.fillRect(x, height - bar, Math.max(2, step - 2), bar);
-        x += step;
-      }
+      return this.view;
     },
 
-    initCssWave: function() {
-      if (!this.wave || !this.canvas) return;
+    refresh: function(meta) {
+      var view;
+      if (meta) ACTIVE_PLAYER_META = meta;
+      if (!ACTIVE_PLAYER_META) return;
+      view = this.ensure();
+      if (!view) return;
 
-      this.canvas.style.display = 'none';
-      this.wave.style.display = 'flex';
-      this.wave.innerHTML = '';
-
-      for (var i = 0; i < 40; i++) {
-        var bar = document.createElement('div');
-        var hue = Math.floor(Math.random() * 360);
-
-        bar.style.background = 'linear-gradient(to top, hsla(' + hue + ',70%,60%,.7), hsla(' + ((hue + 60) % 360) + ',70%,60%,.7))';
-        bar.style.animationDuration = (200 + Math.random() * 300) + 'ms';
-        bar.style.animationDelay = (Math.random() * 150) + 'ms';
-        this.wave.appendChild(bar);
-      }
-    },
-
-    toggle: function(play) {
-      if (!this.active) return;
-
-      if (this.context) {
-        if (play && this.context.state == 'suspended') this.context.resume();
-        else if (!play && this.context.state == 'running') this.context.suspend();
-      } else if (this.wave) {
-        var bars = this.wave.querySelectorAll('div');
-        for (var i = 0; i < bars.length; i++) bars[i].style.animationPlayState = play ? 'running' : 'paused';
-      }
+      this.title.text(compactPlayerTitle(ACTIVE_PLAYER_META.title || ''));
+      this.author.text(ACTIVE_PLAYER_META.author || ACTIVE_PLAYER_META.reader || '');
+      this.duration.text(ACTIVE_PLAYER_META.duration ? ACTIVE_PLAYER_META.duration : '');
+      this.chapterText.text(ACTIVE_PLAYER_META.chapter || '\u0413\u043b\u0430\u0432\u0430');
+      this.cover.attr('src', ACTIVE_PLAYER_META.image || './img/img_broken.svg');
+      this.cover.off('error.lampac-audiobooks').on('error.lampac-audiobooks', function() {
+        $(this).attr('src', './img/img_broken.svg');
+      });
     },
 
     destroy: function() {
-      this.active = false;
-
-      if (this.raf) cancelAnimationFrame(this.raf);
-
-      if (this.video && this.onPlay) this.video.removeEventListener('play', this.onPlay);
-      if (this.video && this.onPause) this.video.removeEventListener('pause', this.onPause);
-
-      if (this.source) {
-        try {
-          this.source.disconnect();
-        } catch (e) {}
-      }
-
-      if (this.context) {
-        try {
-          this.context.close();
-        } catch (e) {}
-      }
-
-      if (this.wrap) this.wrap.remove();
-      if (this.meta) this.meta.remove();
-
-      this.context = null;
-      this.analyser = null;
-      this.source = null;
-      this.canvas = null;
-      this.ctx = null;
-      this.data = null;
-      this.wave = null;
-      this.wrap = null;
-      this.meta = null;
-      this.video = null;
-      this.onPlay = null;
-      this.onPause = null;
+      if (this.view && this.view.length) this.view.remove();
+      if (this.root && this.root.length) this.root.removeClass('player--audiobook');
+      this.root = null;
+      this.view = null;
+      this.title = null;
+      this.author = null;
+      this.cover = null;
+      this.duration = null;
+      this.chapter = null;
+      this.chapterText = null;
     }
   };
 
-  function tryInitializeVisualizer() {
-    var attempts = 0;
+  function openAudiobookChapters() {
+    var enabled = Lampa.Controller && Lampa.Controller.enabled ? Lampa.Controller.enabled().name : 'player';
+    var html = $('<div class="audiobook-chapters"></div>');
+    var playlist = CURRENT_AUDIOBOOK_PLAYLIST || [];
 
-    if (!isCurrentRuntime() || !AUDIOBOOK_PLAYER_ACTIVE) return;
-    if (runtime.visualizerInitTimer) clearInterval(runtime.visualizerInitTimer);
+    if (!playlist.length) return;
 
-    runtime.visualizerInitTimer = setInterval(function() {
-      var video;
-      attempts++;
+    playlist.forEach(function(item, index) {
+      var row = $(
+        '<div class="audiobook-chapters__item selector">' +
+          '<div class="audiobook-chapters__index"></div>' +
+          '<div class="audiobook-chapters__title"></div>' +
+        '</div>'
+      );
+      row.find('.audiobook-chapters__index').text((index + 1) + '.');
+      row.find('.audiobook-chapters__title').text(item.title || item.name || ('\u0413\u043b\u0430\u0432\u0430 ' + (index + 1)));
+      row.on('hover:enter click', function() {
+        Lampa.Modal.close();
+        activateAudiobookTrack(item);
+        Lampa.Player.play(item);
+        Lampa.Player.playlist(playlist);
+      });
+      html.append(row);
+    });
 
-      if (!isCurrentRuntime() || !AUDIOBOOK_PLAYER_ACTIVE) {
-        clearInterval(runtime.visualizerInitTimer);
-        runtime.visualizerInitTimer = 0;
-        return;
+    Lampa.Modal.open({
+      title: '\u0421\u043e\u0434\u0435\u0440\u0436\u0430\u043d\u0438\u0435',
+      html: html,
+      size: 'large',
+      mask: true,
+      onBack: function() {
+        Lampa.Modal.close();
+        try { Lampa.Controller.toggle(enabled || 'player'); } catch (e) {}
       }
-
-      video = document.querySelector('.player video') || document.querySelector('video');
-
-      if (video && AudioWave.init(video)) {
-        clearInterval(runtime.visualizerInitTimer);
-        runtime.visualizerInitTimer = 0;
-      } else if (attempts >= 15) {
-        clearInterval(runtime.visualizerInitTimer);
-        runtime.visualizerInitTimer = 0;
-      }
-    }, 300);
+    });
   }
 
-  function integrateVisualizer() {
+  function installPlayerPlayBridge() {
+    if (!Lampa.Player || !Lampa.Player.play) return;
+    if (!Lampa.Player._lampacAudiobooksOriginalPlay) Lampa.Player._lampacAudiobooksOriginalPlay = Lampa.Player.play;
+    runtime.onPlayerPlay = function(object) {
+      if (object && object.from_lampac_audiobooks) activateAudiobookTrack(object);
+    };
+    if (Lampa.Player._lampacAudiobooksPlayBridgeInstalled) return;
+    Lampa.Player.play = function(object) {
+      var activeRuntime = window[RUNTIME_KEY];
+      if (activeRuntime && activeRuntime.active && activeRuntime.onPlayerPlay) {
+        try { activeRuntime.onPlayerPlay(object); } catch (e) {}
+      }
+      return Lampa.Player._lampacAudiobooksOriginalPlay.apply(this, arguments);
+    };
+    Lampa.Player._lampacAudiobooksPlayBridgeInstalled = true;
+  }
+
+  function integrateAudiobookPlayer() {
     if (!Lampa.Player || !Lampa.Player.listener || runtime.visualizerHookInstalled) return;
     runtime.visualizerHookInstalled = true;
 
-    Lampa.Player.listener.follow('start', function() {
-      if (!isCurrentRuntime() || !AUDIOBOOK_PLAYER_ACTIVE) return;
-      later(tryInitializeVisualizer, 500);
+    Lampa.Player.listener.follow('start', function(data) {
+      if (!isCurrentRuntime()) return;
+      if (data && data.from_lampac_audiobooks) activateAudiobookTrack(data);
+      if (!AUDIOBOOK_PLAYER_ACTIVE) return;
+      later(function() { AudiobookPlayerView.refresh(ACTIVE_PLAYER_META); }, 80);
+      later(function() { AudiobookPlayerView.refresh(ACTIVE_PLAYER_META); }, 350);
     });
 
     Lampa.Player.listener.follow('destroy', function() {
       if (!isCurrentRuntime()) return;
-      AUDIOBOOK_PLAYER_ACTIVE = false;
-      ACTIVE_PLAYER_META = null;
-      AudioWave.destroy();
+      later(function() {
+        var opened = false;
+        try { opened = !!(Lampa.Player.opened && Lampa.Player.opened()); } catch (e) {}
+        if ((opened && AUDIOBOOK_PLAYER_ACTIVE) || (AUDIOBOOK_PLAYER_ACTIVE && Date.now() - LAST_AUDIOBOOK_TRACK_AT < 1600)) {
+          AudiobookPlayerView.refresh(ACTIVE_PLAYER_META);
+          return;
+        }
+        AUDIOBOOK_PLAYER_ACTIVE = false;
+        ACTIVE_PLAYER_META = null;
+        CURRENT_AUDIOBOOK_PLAYLIST = [];
+        AudiobookPlayerView.destroy();
+      }, 700);
     });
   }
 
@@ -1684,7 +1836,8 @@
     scheduleReapplyPluginBindings();
     watchMenu();
     addFullListenButton();
-    integrateVisualizer();
+    installPlayerPlayBridge();
+    integrateAudiobookPlayer();
   }
 
   function ready() {
