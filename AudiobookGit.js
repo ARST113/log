@@ -1,7 +1,7 @@
 (function() {
   'use strict';
 
-  var VERSION = '0.3.2';
+  var VERSION = '0.3.3';
   var RUNTIME_KEY = '__lampacAudiobooksRuntime';
   var previousRuntime = window[RUNTIME_KEY];
 
@@ -88,25 +88,43 @@
     akniga: 'Akniga'
   };
 
+  window.lampacAudiobooksDebug = {
+    version: VERSION,
+    apiBase: API_BASE
+  };
+
   function detectApiBase() {
     var src = '';
+    var scripts;
+    var anchor;
 
     if (document.currentScript && document.currentScript.src) {
       src = document.currentScript.src;
     }
 
     if (!src) {
-      var scripts = document.getElementsByTagName('script');
+      scripts = document.getElementsByTagName('script');
       for (var i = scripts.length - 1; i >= 0; i--) {
-        if (scripts[i].src && scripts[i].src.indexOf('/audiobooks.js') >= 0) {
+        if (scripts[i].src && scripts[i].src.indexOf('audiobook') >= 0) {
           src = scripts[i].src;
           break;
         }
       }
     }
 
-    if (src && src.indexOf('://') >= 0) {
-      return src.replace(/\/audiobooks\.js(?:\?.*)?$/, '').replace(/\/$/, '');
+    if (src) {
+      try {
+        anchor = document.createElement('a');
+        anchor.href = src;
+        if (anchor.protocol && anchor.host) return (anchor.protocol + '//' + anchor.host).replace(/\/$/, '');
+      } catch (e) {}
+
+      if (src.indexOf('://') >= 0) {
+        return src
+          .replace(/[?#].*$/, '')
+          .replace(/\/[^\/]+\.js$/i, '')
+          .replace(/\/$/, '');
+      }
     }
 
     if (window.location && window.location.origin) return window.location.origin.replace(/\/$/, '');
@@ -124,7 +142,7 @@
     if (/^https?:\/\//i.test(url)) return url;
     if (url.indexOf('//') === 0) return (location.protocol || 'https:') + url;
     if (url.charAt(0) === '/') return API_BASE + url;
-    return url;
+    return API_BASE ? API_BASE + '/' + url.replace(/^\/+/, '') : url;
   }
 
   function normalizeAudiobookImageUrl(url) {
@@ -833,13 +851,21 @@
       query = rawQuery || '';
     }
 
-    requestJSON(apiUrl('/audiobooks/search', {
+    var catalogUrl = apiUrl('/audiobooks/search', {
       source: 'knigavuhe',
       query: query,
       limit: PAGE_SIZE,
       offset: (page - 1) * PAGE_SIZE
-    }), function(items) {
+    });
+
+    requestJSON(catalogUrl, function(items) {
       items = items || [];
+
+      if (!Array.isArray(items)) {
+        items = items.results || items.items || items.data || [];
+      }
+
+      if (!Array.isArray(items)) items = [];
 
       var cards = items.map(cardFromBook);
       var hasMore = cards.length >= PAGE_SIZE;
@@ -858,7 +884,10 @@
         nomore: !hasMore,
         results: cards
       });
-    }, onError || function() {}, 45000);
+    }, function(error) {
+      if (window.console && console.error) console.error('[Audiobooks] catalog request failed:', catalogUrl, error);
+      if (onError) onError(error);
+    }, 45000);
   }
 
   function sourceCategory(params, onComplete, onError) {
