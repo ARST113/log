@@ -1,7 +1,7 @@
 (function() {
   'use strict';
 
-  var VERSION = '0.3.14';
+  var VERSION = '0.3.16';
   var RUNTIME_KEY = '__lampacAudiobooksRuntime';
   var previousRuntime = window[RUNTIME_KEY];
 
@@ -1601,7 +1601,8 @@
       '.player.player--audiobook{background:#000!important}' +
       '.player.player--audiobook .player-video__display{opacity:0!important}' +
       '.player.player--audiobook .player-info,.player.player--audiobook .player-footer{display:none!important}' +
-      '.player.player--audiobook .player-panel{display:none!important}' +
+      '.player.player--audiobook .player-panel{display:block!important;position:absolute!important;top:0!important;right:0!important;bottom:0!important;left:0!important;background:transparent!important;visibility:visible!important;opacity:1!important}' +
+      '.player.player--audiobook .player-panel> :not(.player-audiobook-books){display:none!important}' +
       '.player.player--audiobook .player-audiobook-view{position:absolute;top:0;right:0;bottom:0;left:0;z-index:6;display:-webkit-flex;display:flex;-webkit-flex-direction:column;flex-direction:column;-webkit-align-items:center;align-items:center;box-sizing:border-box;color:#fff;pointer-events:none}' +
       '.player.player--audiobook .player-audiobook-view__top{position:absolute;top:2.2em;left:3em;right:3em;min-width:0}' +
       '.player.player--audiobook .player-audiobook-view__title{font-size:1.35em;font-weight:600;line-height:1.18;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
@@ -1650,6 +1651,7 @@
       '.player.player--audiobook .player-audiobook-books__title{font-size:1.28em;font-weight:600;line-height:1.18;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
       '.player.player--audiobook .player-audiobook-books__author{margin-top:.28em;font-size:1em;line-height:1.15;opacity:.52;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
       '.player.player--audiobook .player-audiobook-books__top-actions{display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;gap:.75em}' +
+      '.player.player--audiobook .player-audiobook-books__more{display:none!important}' +
       '.player.player--audiobook .player-audiobook-books__center{position:absolute;left:50%;top:40%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%);display:-webkit-flex;display:flex;-webkit-flex-direction:column;flex-direction:column;-webkit-align-items:center;align-items:center;text-align:center;pointer-events:auto}' +
       '.player.player--audiobook .player-audiobook-books__cover{width:20em;height:20em;object-fit:cover;border-radius:.4em;background:rgba(255,255,255,.06);box-shadow:0 1.3em 3em rgba(0,0,0,.64)}' +
       '.player.player--audiobook .player-audiobook-books__duration{margin-top:1.3em;font-size:1.12em;font-weight:600;opacity:.43;white-space:nowrap}' +
@@ -1657,11 +1659,14 @@
       '.player.player--audiobook .player-audiobook-books__chapter.focus,.player.player--audiobook .player-audiobook-books__chapter:hover{background:rgba(255,255,255,.13)}' +
       '.player.player--audiobook .player-audiobook-books__chapter svg{width:1.15em;height:1.15em;min-width:1.15em;opacity:.78}' +
       '.player.player--audiobook .player-audiobook-books__chapter-text{font-size:1em;font-weight:600;line-height:1.18;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
-      '.player.player--audiobook .player-audiobook-books__controls{position:absolute;left:50%;bottom:9.6em;-webkit-transform:translateX(-50%);transform:translateX(-50%);display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;-webkit-justify-content:space-between;justify-content:space-between;width:min(82vw,42em);pointer-events:auto}' +
-      '.player.player--audiobook .player-audiobook-books__control{display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;-webkit-justify-content:center;justify-content:center;width:3.45em;height:3.45em;border-radius:50%;box-sizing:border-box;font-size:1em}' +
-      '.player.player--audiobook .player-audiobook-books__control.focus,.player.player--audiobook .player-audiobook-books__control:hover{background:rgba(255,255,255,.13)}' +
+      '.player.player--audiobook .player-audiobook-books__controls{position:absolute;left:50%;bottom:9.6em;-webkit-transform:translateX(-50%);transform:translateX(-50%);display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;-webkit-justify-content:center;justify-content:center;gap:.72em;width:min(94vw,54em);pointer-events:auto}' +
+      '.player.player--audiobook .player-audiobook-books__control-group{display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;-webkit-justify-content:center;justify-content:center;gap:.22em}' +
+      '.player.player--audiobook .player-audiobook-books__control,.player.player--audiobook .player-audiobook-books__chapter-nav-slot{display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;-webkit-justify-content:center;justify-content:center;width:3.45em;height:3.45em;border-radius:50%;box-sizing:border-box;font-size:1em}' +
+      '.player.player--audiobook .player-audiobook-books__control.focus,.player.player--audiobook .player-audiobook-books__control:hover,.player.player--audiobook .player-audiobook-books__chapter-nav-slot .button.focus{background:rgba(255,255,255,.13)}' +
       '.player.player--audiobook .player-audiobook-books__timer.active{background:rgba(255,255,255,.2)}' +
       '.player.player--audiobook .player-audiobook-books__control svg{width:2em;height:2em}' +
+      '.player.player--audiobook .player-audiobook-books__chapter-nav-slot .button{display:-webkit-flex!important;display:flex!important;-webkit-align-items:center!important;align-items:center!important;-webkit-justify-content:center!important;justify-content:center!important;margin:0!important;padding:.62em!important;width:3.45em!important;height:3.45em!important;border-radius:50%!important;background:transparent!important;box-sizing:border-box!important}' +
+      '.player.player--audiobook .player-audiobook-books__chapter-nav-slot .button svg{width:1.55em!important;height:1.55em!important}' +
       '.player.player--audiobook .player-audiobook-books__control--play{width:5.5em;height:5.5em;background:rgba(255,255,255,.78);color:#000}' +
       '.player.player--audiobook .player-audiobook-books__control--play.focus,.player.player--audiobook .player-audiobook-books__control--play:hover{background:#fff}' +
       '.player.player--audiobook .player-audiobook-books__control--play svg{width:2.6em;height:2.6em}' +
@@ -1677,8 +1682,8 @@
       '.player.player--audiobook .player-audiobook-books__utilities-slot svg{width:1.35em!important;height:1.35em!important}' +
       '.player.player--audiobook .player-audiobook-books__utilities-slot:empty{display:none}' +
       '.player.player--audiobook.player--audiobook-modal-open .player-audiobook-books{visibility:hidden!important}' +
-      '@media(max-width:700px) and (orientation:portrait){.player.player--audiobook .player-audiobook-books__top{top:4.9em;left:1.55em;right:1.55em;gap:.8em}.player.player--audiobook .player-audiobook-books__back,.player.player--audiobook .player-audiobook-books__top-button{width:3.05em;height:3.05em;min-width:3.05em}.player.player--audiobook .player-audiobook-books__title{font-size:1.08em}.player.player--audiobook .player-audiobook-books__author{font-size:.92em}.player.player--audiobook .player-audiobook-books__center{top:37.2%}.player.player--audiobook .player-audiobook-books__cover{width:77vw;height:77vw;max-width:22em;max-height:22em}.player.player--audiobook .player-audiobook-books__duration{margin-top:1.35em;font-size:1em}.player.player--audiobook .player-audiobook-books__chapter{margin-top:.82em;max-width:calc(100vw - 4em);font-size:.95em}.player.player--audiobook .player-audiobook-books__controls{bottom:15.5em;width:calc(100% - 3.5em)}.player.player--audiobook .player-audiobook-books__control{width:3.1em;height:3.1em}.player.player--audiobook .player-audiobook-books__control--play{width:5.3em;height:5.3em}.player.player--audiobook .player-audiobook-books__timeline{left:1.55em;right:1.55em;bottom:9.5em}.player.player--audiobook .player-audiobook-books__utilities{left:1.4em;right:1.4em;bottom:3.35em}}' +
-      '@media(min-width:701px) and (orientation:landscape){.player.player--audiobook .player-audiobook-books__top{top:1.45em;left:2em;right:2em}.player.player--audiobook .player-audiobook-books__center{left:31%;top:46%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)}.player.player--audiobook .player-audiobook-books__cover{width:min(42vh,15em);height:min(42vh,15em)}.player.player--audiobook .player-audiobook-books__duration{margin-top:.85em;font-size:1em}.player.player--audiobook .player-audiobook-books__chapter{margin-top:.65em;max-width:min(36vw,30em);font-size:.92em}.player.player--audiobook .player-audiobook-books__controls{left:68%;top:48%;bottom:auto;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%);width:min(44vw,34em)}.player.player--audiobook .player-audiobook-books__timeline{left:2em;right:2em;bottom:4.75em}.player.player--audiobook .player-audiobook-books__utilities{left:2em;right:2em;bottom:.55em}}' +
+      '@media(max-width:700px) and (orientation:portrait){.player.player--audiobook .player-audiobook-books__top{top:4.9em;left:1.55em;right:1.55em;gap:.8em}.player.player--audiobook .player-audiobook-books__back,.player.player--audiobook .player-audiobook-books__top-button{width:3.05em;height:3.05em;min-width:3.05em}.player.player--audiobook .player-audiobook-books__title{font-size:1.08em}.player.player--audiobook .player-audiobook-books__author{font-size:.92em}.player.player--audiobook .player-audiobook-books__center{top:37.2%}.player.player--audiobook .player-audiobook-books__cover{width:77vw;height:77vw;max-width:22em;max-height:22em}.player.player--audiobook .player-audiobook-books__duration{margin-top:1.35em;font-size:1em}.player.player--audiobook .player-audiobook-books__chapter{margin-top:.82em;max-width:calc(100vw - 4em);font-size:.95em}.player.player--audiobook .player-audiobook-books__controls{bottom:15.5em;width:calc(100% - 2em);gap:.18em}.player.player--audiobook .player-audiobook-books__control-group{gap:.08em}.player.player--audiobook .player-audiobook-books__control,.player.player--audiobook .player-audiobook-books__chapter-nav-slot{width:2.5em;height:2.5em}.player.player--audiobook .player-audiobook-books__chapter-nav-slot .button{width:2.5em!important;height:2.5em!important;padding:.42em!important}.player.player--audiobook .player-audiobook-books__chapter-nav-slot .button svg{width:1.22em!important;height:1.22em!important}.player.player--audiobook .player-audiobook-books__control svg{width:1.62em;height:1.62em}.player.player--audiobook .player-audiobook-books__control--play{width:4.2em;height:4.2em}.player.player--audiobook .player-audiobook-books__control--play svg{width:2.18em;height:2.18em}.player.player--audiobook .player-audiobook-books__speed{font-size:.98em}.player.player--audiobook .player-audiobook-books__timeline{left:1.55em;right:1.55em;bottom:9.5em}.player.player--audiobook .player-audiobook-books__utilities{left:1.4em;right:1.4em;bottom:3.35em}}' +
+      '@media(min-width:701px) and (orientation:landscape){.player.player--audiobook .player-audiobook-books__top{top:1.45em;left:2em;right:2em}.player.player--audiobook .player-audiobook-books__center{left:31%;top:46%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)}.player.player--audiobook .player-audiobook-books__cover{width:min(42vh,15em);height:min(42vh,15em)}.player.player--audiobook .player-audiobook-books__duration{margin-top:.85em;font-size:1em}.player.player--audiobook .player-audiobook-books__chapter{margin-top:.65em;max-width:min(36vw,30em);font-size:.92em}.player.player--audiobook .player-audiobook-books__controls{left:68%;top:48%;bottom:auto;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%);width:min(58vw,48em);gap:.55em}.player.player--audiobook .player-audiobook-books__timeline{left:2em;right:2em;bottom:4.75em}.player.player--audiobook .player-audiobook-books__utilities{left:2em;right:2em;bottom:.55em}}' +
       '</style>'
     );
   }
@@ -1748,25 +1753,44 @@
   }
 
   function audiobookTogglePlayback() {
-    var media;
+    var media = audiobookCurrentMedia();
 
-    if (triggerNativePlayerControl('.player-panel__playpause')) return;
+    if (media) {
+      try {
+        if (media.paused) {
+          var promise = media.play();
+          if (promise && promise.catch) {
+            promise.catch(function() {
+              triggerNativePlayerControl('.player-panel__playpause');
+            });
+          }
+        } else {
+          media.pause();
+        }
+        return;
+      } catch (e) {}
+    }
 
-    media = audiobookCurrentMedia();
-    if (!media) return;
+    triggerNativePlayerControl('.player-panel__playpause');
+  }
 
-    try {
-      if (media.paused) {
-        var promise = media.play();
-        if (promise && promise.catch) promise.catch(function() {});
-      } else {
-        media.pause();
-      }
-    } catch (e) {}
+  function bindAudiobookAction(element, handler) {
+    var lastAt = 0;
+    if (!element || !element.length) return;
+
+    element
+      .off('hover:enter.lampac-audiobooks click.lampac-audiobooks')
+      .on('hover:enter.lampac-audiobooks click.lampac-audiobooks', function(event) {
+        var now = Date.now();
+        if (now - lastAt < 140) return;
+        lastAt = now;
+        handler.call(this, event);
+      });
   }
 
   var AudiobookPlayerView = {
     root: null,
+    panel: null,
     view: null,
     title: null,
     author: null,
@@ -1775,6 +1799,7 @@
     chapter: null,
     chapterText: null,
     speed: null,
+    timerButton: null,
     playIcon: null,
     pauseIcon: null,
     utilitySlot: null,
@@ -1877,13 +1902,15 @@
       timeline = this.findMovable('.player-panel__timeline', 'timeline');
       if (timeline && timeline.length) this.storeAndMove('timeline', timeline, this.view.find('.player-audiobook-books__timeline-slot'));
 
-      this.moveUtility('utility-prev', '.player-panel__prev');
-      this.moveUtility('utility-next', '.player-panel__next');
-      this.moveUtility('utility-flow', '.player-panel__flow');
-      this.moveUtility('utility-subs', '.player-panel__subs');
+      var prev = this.findMovable('.player-panel__prev', 'chapter-prev');
+      var next = this.findMovable('.player-panel__next', 'chapter-next');
+      var prevSlot = this.view.find('.player-audiobook-books__prev-slot');
+      var nextSlot = this.view.find('.player-audiobook-books__next-slot');
+
+      if (prev && prev.length && prevSlot.length) this.storeAndMove('chapter-prev', prev, prevSlot);
+      if (next && next.length && nextSlot.length) this.storeAndMove('chapter-next', next, nextSlot);
+
       this.moveUtility('utility-tracks', '.player-panel__tracks');
-      this.moveUtility('utility-quality', '.player-panel__quality');
-      this.moveUtility('utility-playlist', '.player-panel__playlist');
 
       if (this.utilitySlot && this.utilitySlot.length) {
         this.utilitySlot.toggleClass('hide', !this.utilitySlot.children().length);
@@ -2008,10 +2035,12 @@
         items: items,
         onBack: function() {
           try { Lampa.Controller.toggle(enabled); } catch (e) {}
+          later(function() { self.syncPanelCollection(self.timerButton); }, 0);
         },
         onSelect: function(item) {
           self.setSleepTimer(item.minutes || 0);
           try { Lampa.Controller.toggle(enabled); } catch (e) {}
+          later(function() { self.syncPanelCollection(self.timerButton); }, 0);
         }
       });
     },
@@ -2029,21 +2058,25 @@
     },
 
     syncPanelCollection: function(focusTarget) {
-      var enabled;
+      var enabled = '';
       var target;
+      var panel = this.panel && this.panel.length ? this.panel : audiobookNativePanel();
 
-      if (!this.view || !this.view.length || !Lampa.Controller) return;
-
-      try { enabled = Lampa.Controller.enabled && Lampa.Controller.enabled().name; } catch (e) { enabled = ''; }
-      if (enabled != 'player_panel') return;
+      if (!this.view || !this.view.length || !panel || !panel.length || !Lampa.Controller) return;
 
       this.bindPanelFocus();
       target = focusTarget || this.lastFocus || this.view.find('.player-audiobook-books__play').first();
+      if (target && target.jquery) target = target[0];
+      if (!target || !document.documentElement.contains(target)) target = this.view.find('.player-audiobook-books__play').first()[0];
 
-      try {
-        Lampa.Controller.collectionSet(this.view, false, true);
-        Lampa.Controller.collectionFocus(target, this.view, true);
-      } catch (e) {}
+      try { enabled = Lampa.Controller.enabled && Lampa.Controller.enabled().name; } catch (e) {}
+
+      if (enabled != 'player_panel') {
+        try { Lampa.Controller.toggle('player_panel'); } catch (e) {}
+      }
+
+      try { Lampa.Controller.collectionSet(this.view); } catch (e) {}
+      try { Lampa.Controller.collectionFocus(target, this.view); } catch (e) {}
     },
 
     installNativePanelHook: function() {
@@ -2054,7 +2087,10 @@
 
       Lampa.Controller.listener.follow('toggle', function(e) {
         if (!isCurrentRuntime() || !AUDIOBOOK_PLAYER_ACTIVE || !e || e.name != 'player_panel') return;
-        later(function() { self.syncPanelCollection(); }, 0);
+        later(function() {
+          if (!self.view || !self.view.length) return;
+          self.syncPanelCollection(self.lastFocus || self.view.find('.player-audiobook-books__play').first());
+        }, 0);
       });
     },
 
@@ -2085,6 +2121,7 @@
 
       this.root = root;
       this.root.addClass('player--audiobook');
+      this.panel = audiobookNativePanel();
 
       this.view = this.root.find('.player-audiobook-books').first();
 
@@ -2117,19 +2154,27 @@
               '</div>' +
             '</div>' +
             '<div class="player-audiobook-books__controls">' +
-              '<div class="player-audiobook-books__control player-audiobook-books__speed selector">1x</div>' +
-              '<div class="player-audiobook-books__control player-audiobook-books__rewind selector">' +
-                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><text x="8.1" y="15.2" fill="currentColor" stroke="none" font-size="7.6" font-family="Arial">15</text></svg>' +
+              '<div class="player-audiobook-books__control-group player-audiobook-books__control-group--seek">' +
+                '<div class="player-audiobook-books__control player-audiobook-books__rewind selector">' +
+                  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><text x="8.1" y="15.2" fill="currentColor" stroke="none" font-size="7.6" font-family="Arial">15</text></svg>' +
+                '</div>' +
+                '<div class="player-audiobook-books__control player-audiobook-books__control--play player-audiobook-books__play selector">' +
+                  '<svg class="player-audiobook-books__play-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>' +
+                  '<svg class="player-audiobook-books__pause-icon hide" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>' +
+                '</div>' +
+                '<div class="player-audiobook-books__control player-audiobook-books__forward selector">' +
+                  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/><text x="8.1" y="15.2" fill="currentColor" stroke="none" font-size="7.6" font-family="Arial">30</text></svg>' +
+                '</div>' +
               '</div>' +
-              '<div class="player-audiobook-books__control player-audiobook-books__control--play player-audiobook-books__play selector">' +
-                '<svg class="player-audiobook-books__play-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>' +
-                '<svg class="player-audiobook-books__pause-icon hide" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>' +
+              '<div class="player-audiobook-books__control-group player-audiobook-books__control-group--chapters">' +
+                '<div class="player-audiobook-books__chapter-nav-slot player-audiobook-books__prev-slot"></div>' +
+                '<div class="player-audiobook-books__chapter-nav-slot player-audiobook-books__next-slot"></div>' +
               '</div>' +
-              '<div class="player-audiobook-books__control player-audiobook-books__forward selector">' +
-                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/><text x="8.1" y="15.2" fill="currentColor" stroke="none" font-size="7.6" font-family="Arial">30</text></svg>' +
-              '</div>' +
-              '<div class="player-audiobook-books__control player-audiobook-books__timer selector">' +
-                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="7"/><path d="M12 13V9M9 2h6M12 6V4"/></svg>' +
+              '<div class="player-audiobook-books__control-group player-audiobook-books__control-group--tools">' +
+                '<div class="player-audiobook-books__control player-audiobook-books__timer selector">' +
+                  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="7"/><path d="M12 13V9M9 2h6M12 6V4"/></svg>' +
+                '</div>' +
+                '<div class="player-audiobook-books__control player-audiobook-books__speed selector">1x</div>' +
               '</div>' +
             '</div>' +
             '<div class="player-audiobook-books__timeline">' +
@@ -2141,7 +2186,7 @@
           '</div>'
         );
 
-        this.root.append(this.view);
+        (this.panel && this.panel.length ? this.panel : this.root).append(this.view);
       }
 
       this.title = this.view.find('.player-audiobook-books__title');
@@ -2151,43 +2196,44 @@
       this.chapter = this.view.find('.player-audiobook-books__chapter');
       this.chapterText = this.view.find('.player-audiobook-books__chapter-text');
       this.speed = this.view.find('.player-audiobook-books__speed');
+      this.timerButton = this.view.find('.player-audiobook-books__timer');
       this.playIcon = this.view.find('.player-audiobook-books__play-icon');
       this.pauseIcon = this.view.find('.player-audiobook-books__pause-icon');
       this.utilitySlot = this.view.find('.player-audiobook-books__utilities-slot');
 
-      this.view.find('.player-audiobook-books__back').off('hover:enter.lampac-audiobooks click.lampac-audiobooks').on('hover:enter.lampac-audiobooks', function() {
+      bindAudiobookAction(this.view.find('.player-audiobook-books__back'), function() {
         self.closePlayer();
       });
 
-      this.view.find('.player-audiobook-books__add').off('hover:enter.lampac-audiobooks click.lampac-audiobooks').on('hover:enter.lampac-audiobooks', function() {
+      bindAudiobookAction(this.view.find('.player-audiobook-books__add'), function() {
         self.addCurrentBook();
       });
 
-      this.view.find('.player-audiobook-books__more').off('hover:enter.lampac-audiobooks click.lampac-audiobooks').on('hover:enter.lampac-audiobooks', function() {
-        openAudiobookDescription();
-      });
+      this.view.find('.player-audiobook-books__more')
+        .removeClass('selector')
+        .off('hover:enter.lampac-audiobooks click.lampac-audiobooks');
 
-      this.chapter.off('hover:enter.lampac-audiobooks click.lampac-audiobooks').on('hover:enter.lampac-audiobooks', function() {
+      bindAudiobookAction(this.chapter, function() {
         openAudiobookChapters();
       });
 
-      this.speed.off('hover:enter.lampac-audiobooks click.lampac-audiobooks').on('hover:enter.lampac-audiobooks', function() {
+      bindAudiobookAction(this.speed, function() {
         self.cycleSpeed();
       });
 
-      this.view.find('.player-audiobook-books__rewind').off('hover:enter.lampac-audiobooks click.lampac-audiobooks').on('hover:enter.lampac-audiobooks', function() {
+      bindAudiobookAction(this.view.find('.player-audiobook-books__rewind'), function() {
         audiobookSeekBy(-15);
       });
 
-      this.view.find('.player-audiobook-books__play').off('hover:enter.lampac-audiobooks click.lampac-audiobooks').on('hover:enter.lampac-audiobooks', function() {
+      bindAudiobookAction(this.view.find('.player-audiobook-books__play'), function() {
         audiobookTogglePlayback();
       });
 
-      this.view.find('.player-audiobook-books__forward').off('hover:enter.lampac-audiobooks click.lampac-audiobooks').on('hover:enter.lampac-audiobooks', function() {
+      bindAudiobookAction(this.view.find('.player-audiobook-books__forward'), function() {
         audiobookSeekBy(30);
       });
 
-      this.view.find('.player-audiobook-books__timer').off('hover:enter.lampac-audiobooks click.lampac-audiobooks').on('hover:enter.lampac-audiobooks', function() {
+      bindAudiobookAction(this.view.find('.player-audiobook-books__timer'), function() {
         self.openSleepTimer();
       });
 
@@ -2240,6 +2286,7 @@
       if (this.root && this.root.length) this.root.removeClass('player--audiobook player--audiobook-modal-open');
 
       this.root = null;
+      this.panel = null;
       this.view = null;
       this.title = null;
       this.author = null;
@@ -2248,11 +2295,14 @@
       this.chapter = null;
       this.chapterText = null;
       this.speed = null;
+      this.timerButton = null;
       this.playIcon = null;
       this.pauseIcon = null;
       this.utilitySlot = null;
     }
   };
+
+  var AUDIOBOOK_MODAL_CLOSING = false;
 
   function setAudiobookModalState(opened) {
     var root = AudiobookPlayerView && AudiobookPlayerView.root;
@@ -2261,42 +2311,19 @@
   }
 
   function closeAudiobookModal(enabled) {
+    if (AUDIOBOOK_MODAL_CLOSING) return;
+    AUDIOBOOK_MODAL_CLOSING = true;
     setAudiobookModalState(false);
-    Lampa.Modal.close();
-    try { Lampa.Controller.toggle(enabled || 'player_panel'); } catch (e) {}
-    later(function() { AudiobookPlayerView.syncPanelCollection(); }, 0);
+    try { Lampa.Modal.close(); } catch (e) {}
+    later(function() {
+      AUDIOBOOK_MODAL_CLOSING = false;
+      try { Lampa.Controller.toggle('player_panel'); } catch (e) {}
+      AudiobookPlayerView.syncPanelCollection();
+    }, 0);
   }
 
   function openAudiobookDescription() {
-    var enabled = Lampa.Controller && Lampa.Controller.enabled ? Lampa.Controller.enabled().name : 'player';
-    var text = ACTIVE_PLAYER_META && (ACTIVE_PLAYER_META.description || ACTIVE_PLAYER_META.chapter) || '';
-    var html;
-
-    if (!text) return;
-
-    html = $(
-      '<div class="audiobook-description">' +
-        '<div class="audiobook-description__text"></div>' +
-        '<div class="audiobook-description__footer">' +
-          '<div class="simple-button selector audiobook-description__close"><span>\u0417\u0430\u043a\u0440\u044b\u0442\u044c</span></div>' +
-        '</div>' +
-      '</div>'
-    );
-    html.find('.audiobook-description__text').text(text);
-    html.find('.audiobook-description__close').on('hover:enter', function() {
-      closeAudiobookModal(enabled);
-    });
-    setAudiobookModalState(true);
-
-    Lampa.Modal.open({
-      title: '\u041e\u043f\u0438\u0441\u0430\u043d\u0438\u0435',
-      html: html,
-      size: 'large',
-      mask: true,
-      onBack: function() {
-        closeAudiobookModal(enabled);
-      }
-    });
+    return;
   }
 
   function openAudiobookChapters() {
@@ -2319,10 +2346,11 @@
       row.find('.audiobook-chapters__title').text(item.title || item.name || ('\u0413\u043b\u0430\u0432\u0430 ' + (index + 1)));
       row.on('hover:enter', function() {
         setAudiobookModalState(false);
-        Lampa.Modal.close();
+        try { Lampa.Modal.close(); } catch (e) {}
         activateAudiobookTrack(item);
         Lampa.Player.play(item);
         Lampa.Player.playlist(playlist);
+        later(function() { AudiobookPlayerView.syncPanelCollection(); }, 0);
       });
       html.append(row);
     });
