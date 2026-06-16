@@ -21,16 +21,8 @@
   }
 
   var parsersInfo = [{
-    base: '89.106.89.250:9117',
-    name: 'MyJackred2',
-    settings: {
-      url: '89.106.89.250:9117',
-      key: '1',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
     base: 'jac.maxvol.pro',
-    name: 'Music',
+    name: 'Jacket2',
     settings: {
       url: 'jac.maxvol.pro',
       key: '1',
@@ -38,17 +30,17 @@
     }
   }, {
     base: 'lampac.fun:8117',
-    name: 'Myjacket',
+    name: 'Jacket',
     settings: {
       url: 'lampac.fun:8117',
       key: 'cvy139co64s9pu791s2ao7egzzgogocw',
       parser_torrent_type: 'jackett'
     }
   }, {
-    base: 'Lampac.fun',
+    base: 'Lampac.fun:9117',
     name: 'Lampac',
     settings: {
-      url: 'Lampac.fun',
+      url: 'Lampac.fun:9117',
       key: '1',
       parser_torrent_type: 'jackett'
     }
