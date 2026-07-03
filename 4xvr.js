@@ -38,6 +38,50 @@
         return data;
     }
 
+    function normalizePlayerDataString(dataString) {
+        if (typeof dataString !== 'string') return dataString;
+
+        try {
+            return JSON.stringify(normalizePlayerData(JSON.parse(dataString)));
+        }
+        catch (e) {
+            return dataString;
+        }
+    }
+
+    function patchAndroidJsOpenPlayer() {
+        if (typeof AndroidJS === 'undefined' || typeof AndroidJS.openPlayer !== 'function') {
+            return false;
+        }
+
+        if (window[pluginId + '_androidjs_patched']) {
+            return true;
+        }
+
+        try {
+            var originalOpenPlayer = AndroidJS.openPlayer;
+
+            AndroidJS.openPlayer = function (link, dataString) {
+                return originalOpenPlayer.call(
+                    AndroidJS,
+                    normalizePlayerUrl(link),
+                    normalizePlayerDataString(dataString)
+                );
+            };
+
+            window[pluginId + '_androidjs_patched'] = true;
+        }
+        catch (e) {
+            return false;
+        }
+
+        if (window.console && console.log) {
+            console.log('[4XVR URL Fix] AndroidJS.openPlayer URL normalizer enabled');
+        }
+
+        return true;
+    }
+
     function patchAndroidOpenPlayer() {
         if (!window.Lampa || !Lampa.Android || typeof Lampa.Android.openPlayer !== 'function') {
             return false;
@@ -66,7 +110,10 @@
     }
 
     function waitAndPatch(attempt) {
-        if (patchAndroidOpenPlayer()) return;
+        var androidJsReady = patchAndroidJsOpenPlayer();
+        var lampaAndroidReady = patchAndroidOpenPlayer();
+
+        if (androidJsReady && lampaAndroidReady) return;
 
         if (attempt < 60) {
             setTimeout(function () {
