@@ -99,34 +99,50 @@
             ';end';
     }
 
-    function openIntent(intentUrl) {
-        var anchor = document.createElement('a');
+    function tryOpenBrowser(intentUrl) {
+        if (typeof AndroidJS === 'undefined' || typeof AndroidJS.openBrowser !== 'function') {
+            return false;
+        }
 
-        anchor.href = intentUrl;
-        anchor.style.display = 'none';
-
-        (document.body || document.documentElement).appendChild(anchor);
-        anchor.click();
-
-        setTimeout(function () {
-            if (anchor.parentNode) {
-                anchor.parentNode.removeChild(anchor);
-            }
-        }, 1000);
+        try {
+            AndroidJS.openBrowser(intentUrl);
+            return true;
+        }
+        catch (e) {
+            log('AndroidJS.openBrowser failed: ' + (e && e.message ? e.message : e));
+            return false;
+        }
     }
 
-    function open4xvr(url, data) {
+    function resetNativePlayerChoice() {
+        if (typeof AndroidJS === 'undefined' || typeof AndroidJS.clearDefaultPlayer !== 'function') {
+            return false;
+        }
+
+        try {
+            AndroidJS.clearDefaultPlayer();
+            return true;
+        }
+        catch (e) {
+            log('AndroidJS.clearDefaultPlayer failed: ' + (e && e.message ? e.message : e));
+            return false;
+        }
+    }
+
+    function open4xvr(url, data, fallback) {
         var normalizedUrl = normalizePlayerUrl(url);
         var normalizedData = normalizePlayerData(data);
         var intentUrl = build4xvrIntentUrl(normalizedUrl);
 
         log('launch ' + fourXvrPackage + ' -> ' + normalizedUrl);
 
-        try {
-            openIntent(intentUrl);
+        if (tryOpenBrowser(intentUrl)) {
+            return null;
         }
-        catch (e) {
-            window.location.href = intentUrl;
+
+        if (typeof fallback === 'function') {
+            resetNativePlayerChoice();
+            return fallback(normalizedUrl, normalizedData);
         }
 
         return null;
@@ -153,7 +169,13 @@
                 }
 
                 if (shouldUse4xvr(normalizedLink, data)) {
-                    return open4xvr(normalizedLink, data);
+                    return open4xvr(normalizedLink, data, function (fallbackLink, fallbackData) {
+                        return originalOpenPlayer.call(
+                            AndroidJS,
+                            fallbackLink,
+                            fallbackData ? JSON.stringify(fallbackData) : normalizePlayerDataString(dataString)
+                        );
+                    });
                 }
 
                 return originalOpenPlayer.call(
@@ -190,7 +212,9 @@
             var normalizedData = normalizePlayerData(data);
 
             if (shouldUse4xvr(normalizedLink, normalizedData)) {
-                return open4xvr(normalizedLink, normalizedData);
+                return open4xvr(normalizedLink, normalizedData, function (fallbackLink, fallbackData) {
+                    return originalOpenPlayer.call(this, fallbackLink, fallbackData);
+                }.bind(this));
             }
 
             return originalOpenPlayer.call(this, normalizedLink, normalizedData);
