@@ -2,6 +2,9 @@
     'use strict';
 
     var pluginId = 'lampa_4xvr_url_fix';
+    var resetDelayMs = 800;
+    var bypassAndroidJsOnce = false;
+
     if (window[pluginId + '_ready']) return;
 
     window[pluginId + '_ready'] = true;
@@ -97,7 +100,10 @@
 
         if (typeof fallback === 'function') {
             resetNativePlayerChoice();
-            return fallback(normalizedUrl, normalizedData);
+
+            setTimeout(function () {
+                fallback(normalizedUrl, normalizedData);
+            }, resetDelayMs);
         }
 
         return null;
@@ -121,6 +127,16 @@
 
                 if (data) {
                     normalizePlayerData(data);
+                }
+
+                if (bypassAndroidJsOnce) {
+                    bypassAndroidJsOnce = false;
+
+                    return originalOpenPlayer.call(
+                        AndroidJS,
+                        normalizedLink,
+                        data ? JSON.stringify(data) : normalizePlayerDataString(dataString)
+                    );
                 }
 
                 if (shouldUse4xvr(normalizedLink, data)) {
@@ -168,6 +184,8 @@
 
             if (shouldUse4xvr(normalizedLink, normalizedData)) {
                 return openViaNativeChooser(normalizedLink, normalizedData, function (fallbackLink, fallbackData) {
+                    bypassAndroidJsOnce = true;
+
                     return originalOpenPlayer.call(this, fallbackLink, fallbackData);
                 }.bind(this));
             }
