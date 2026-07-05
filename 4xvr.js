@@ -2,8 +2,6 @@
     'use strict';
 
     var pluginId = 'lampa_4xvr_url_fix';
-    var fourXvrPackage = 'cn.vr4p.oculus4xvrplayerovPl';
-
     if (window[pluginId + '_ready']) return;
 
     window[pluginId + '_ready'] = true;
@@ -76,44 +74,6 @@
         return true;
     }
 
-    function sanitizeIntentDataUrl(url) {
-        return normalizePlayerUrl(url)
-            .trim()
-            .replace(/ /g, '%20')
-            .replace(/\(/g, '%28')
-            .replace(/\)/g, '%29')
-            .replace(/#/g, '%23');
-    }
-
-    function build4xvrIntentUrl(url) {
-        var dataUrl = sanitizeIntentDataUrl(url);
-        var match = dataUrl.match(/^([a-z][a-z0-9+.-]*):\/\/(.+)$/i);
-        var scheme = match ? match[1].toLowerCase() : 'http';
-        var rest = match ? match[2] : dataUrl;
-
-        return 'intent://' + rest +
-            '#Intent;scheme=' + scheme +
-            ';action=android.intent.action.VIEW' +
-            ';type=video/*' +
-            ';package=' + fourXvrPackage +
-            ';end';
-    }
-
-    function tryOpenBrowser(intentUrl) {
-        if (typeof AndroidJS === 'undefined' || typeof AndroidJS.openBrowser !== 'function') {
-            return false;
-        }
-
-        try {
-            AndroidJS.openBrowser(intentUrl);
-            return true;
-        }
-        catch (e) {
-            log('AndroidJS.openBrowser failed: ' + (e && e.message ? e.message : e));
-            return false;
-        }
-    }
-
     function resetNativePlayerChoice() {
         if (typeof AndroidJS === 'undefined' || typeof AndroidJS.clearDefaultPlayer !== 'function') {
             return false;
@@ -129,16 +89,11 @@
         }
     }
 
-    function open4xvr(url, data, fallback) {
+    function openViaNativeChooser(url, data, fallback) {
         var normalizedUrl = normalizePlayerUrl(url);
         var normalizedData = normalizePlayerData(data);
-        var intentUrl = build4xvrIntentUrl(normalizedUrl);
 
-        log('launch ' + fourXvrPackage + ' -> ' + normalizedUrl);
-
-        if (tryOpenBrowser(intentUrl)) {
-            return null;
-        }
+        log('reset broken saved player and delegate -> ' + normalizedUrl);
 
         if (typeof fallback === 'function') {
             resetNativePlayerChoice();
@@ -169,7 +124,7 @@
                 }
 
                 if (shouldUse4xvr(normalizedLink, data)) {
-                    return open4xvr(normalizedLink, data, function (fallbackLink, fallbackData) {
+                    return openViaNativeChooser(normalizedLink, data, function (fallbackLink, fallbackData) {
                         return originalOpenPlayer.call(
                             AndroidJS,
                             fallbackLink,
@@ -212,7 +167,7 @@
             var normalizedData = normalizePlayerData(data);
 
             if (shouldUse4xvr(normalizedLink, normalizedData)) {
-                return open4xvr(normalizedLink, normalizedData, function (fallbackLink, fallbackData) {
+                return openViaNativeChooser(normalizedLink, normalizedData, function (fallbackLink, fallbackData) {
                     return originalOpenPlayer.call(this, fallbackLink, fallbackData);
                 }.bind(this));
             }
