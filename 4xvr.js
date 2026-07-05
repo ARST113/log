@@ -2,10 +2,17 @@
     'use strict';
 
     var pluginId = 'lampa_4xvr_url_fix';
+    var fourXvrPackage = 'cn.vr4p.oculus4xvrplayerovPl';
 
     if (window[pluginId + '_ready']) return;
 
     window[pluginId + '_ready'] = true;
+
+    function log(message) {
+        if (window.console && console.log) {
+            console.log('[4XVR Fix] ' + message);
+        }
+    }
 
     function normalizePlayerUrl(url) {
         if (typeof url !== 'string') return url;
@@ -38,15 +45,91 @@
         return data;
     }
 
-    function normalizePlayerDataString(dataString) {
-        if (typeof dataString !== 'string') return dataString;
+    function parsePlayerData(dataString) {
+        if (typeof dataString !== 'string') return null;
 
         try {
-            return JSON.stringify(normalizePlayerData(JSON.parse(dataString)));
+            return JSON.parse(dataString);
         }
         catch (e) {
-            return dataString;
+            return null;
         }
+    }
+
+    function normalizePlayerDataString(dataString) {
+        var data = parsePlayerData(dataString);
+
+        if (!data) return dataString;
+
+        return JSON.stringify(normalizePlayerData(data));
+    }
+
+    function shouldUse4xvr(url, data) {
+        if (typeof url !== 'string') return false;
+
+        if (!/^https?:\/\//i.test(url)) return false;
+
+        if (/\/stream\//i.test(url)) return true;
+        if (/\.(mkv|mp4|m4v|avi|mov|ts|m2ts|webm)(\?|$)/i.test(url)) return true;
+        if (data && (data.torrent_hash || data.torrent || data.url)) return true;
+
+        return true;
+    }
+
+    function sanitizeIntentDataUrl(url) {
+        return normalizePlayerUrl(url)
+            .trim()
+            .replace(/ /g, '%20')
+            .replace(/\(/g, '%28')
+            .replace(/\)/g, '%29')
+            .replace(/#/g, '%23');
+    }
+
+    function build4xvrIntentUrl(url) {
+        var dataUrl = sanitizeIntentDataUrl(url);
+        var match = dataUrl.match(/^([a-z][a-z0-9+.-]*):\/\/(.+)$/i);
+        var scheme = match ? match[1].toLowerCase() : 'http';
+        var rest = match ? match[2] : dataUrl;
+
+        return 'intent://' + rest +
+            '#Intent;scheme=' + scheme +
+            ';action=android.intent.action.VIEW' +
+            ';type=video/*' +
+            ';package=' + fourXvrPackage +
+            ';end';
+    }
+
+    function openIntent(intentUrl) {
+        var anchor = document.createElement('a');
+
+        anchor.href = intentUrl;
+        anchor.style.display = 'none';
+
+        (document.body || document.documentElement).appendChild(anchor);
+        anchor.click();
+
+        setTimeout(function () {
+            if (anchor.parentNode) {
+                anchor.parentNode.removeChild(anchor);
+            }
+        }, 1000);
+    }
+
+    function open4xvr(url, data) {
+        var normalizedUrl = normalizePlayerUrl(url);
+        var normalizedData = normalizePlayerData(data);
+        var intentUrl = build4xvrIntentUrl(normalizedUrl);
+
+        log('launch ' + fourXvrPackage + ' -> ' + normalizedUrl);
+
+        try {
+            openIntent(intentUrl);
+        }
+        catch (e) {
+            window.location.href = intentUrl;
+        }
+
+        return null;
     }
 
     function patchAndroidJsOpenPlayer() {
@@ -62,10 +145,21 @@
             var originalOpenPlayer = AndroidJS.openPlayer;
 
             AndroidJS.openPlayer = function (link, dataString) {
+                var data = parsePlayerData(dataString);
+                var normalizedLink = normalizePlayerUrl(link);
+
+                if (data) {
+                    normalizePlayerData(data);
+                }
+
+                if (shouldUse4xvr(normalizedLink, data)) {
+                    return open4xvr(normalizedLink, data);
+                }
+
                 return originalOpenPlayer.call(
                     AndroidJS,
-                    normalizePlayerUrl(link),
-                    normalizePlayerDataString(dataString)
+                    normalizedLink,
+                    data ? JSON.stringify(data) : normalizePlayerDataString(dataString)
                 );
             };
 
@@ -75,9 +169,7 @@
             return false;
         }
 
-        if (window.console && console.log) {
-            console.log('[4XVR URL Fix] AndroidJS.openPlayer URL normalizer enabled');
-        }
+        log('AndroidJS.openPlayer bypass enabled');
 
         return true;
     }
@@ -97,14 +189,16 @@
             var normalizedLink = normalizePlayerUrl(link);
             var normalizedData = normalizePlayerData(data);
 
+            if (shouldUse4xvr(normalizedLink, normalizedData)) {
+                return open4xvr(normalizedLink, normalizedData);
+            }
+
             return originalOpenPlayer.call(this, normalizedLink, normalizedData);
         };
 
         Lampa.Android.openPlayer[pluginId] = true;
 
-        if (window.console && console.log) {
-            console.log('[4XVR URL Fix] Android.openPlayer URL normalizer enabled');
-        }
+        log('Lampa.Android.openPlayer bypass enabled');
 
         return true;
     }
