@@ -2125,8 +2125,12 @@
             return Utils.shouldUseDDDLayer();
         }
 
-        function canInlinePlaylistJson(playlistJson) {
+        function canInlinePlaylistInUrl(playlistJson) {
             return playlistJson && playlistJson.length <= 3000;
+        }
+
+        function canInlinePlaylistInIntent(playlistJson) {
+            return playlistJson && playlistJson.length <= 200000;
         }
 
         function serializePlaylistForBridge(playlist) {
@@ -2173,7 +2177,7 @@
 
             if (playlistJson) {
                 params.ddd_playlist_size = Array.isArray(playlist) ? playlist.length : 0;
-                if (canInlinePlaylistJson(playlistJson)) params.ddd_playlist = playlistJson;
+                if (canInlinePlaylistInUrl(playlistJson)) params.ddd_playlist = playlistJson;
             }
 
             return Utils.appendFragmentParams(url, params);
@@ -2205,7 +2209,7 @@
             var playlistJson = serializePlaylistForBridge(data.playlist || session.playlist);
             if (playlistJson) {
                 data.ddd_playlist_size = Array.isArray(data.playlist) ? data.playlist.length : session.playlistSize || 0;
-                if (canInlinePlaylistJson(playlistJson)) data.ddd_playlist = playlistJson;
+                if (canInlinePlaylistInIntent(playlistJson)) data.ddd_playlist = playlistJson;
                 else delete data.ddd_playlist;
             }
 
