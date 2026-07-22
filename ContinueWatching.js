@@ -1793,6 +1793,8 @@
         var lastGoodAt = 0;
         var lastEventsError = '';
         var lastStateError = '';
+        var lastPlaylistUpdateKey = '';
+        var lastPlaylistUpdateAt = 0;
 
         function baseUrl() {
             return CONFIG.dddHost.replace(/\/$/, '') + ':' + CONFIG.dddPort;
@@ -2015,17 +2017,151 @@
             next();
         }
 
+        function postFormJson(url, params, call) {
+            var body = Utils.encodeParams(params || {});
+            var finished = false;
+            var timer = null;
+
+            function done(err, json) {
+                if (finished) return;
+                finished = true;
+
+                if (timer) clearTimeout(timer);
+
+                call(err, json);
+            }
+
+            timer = setTimeout(function () {
+                done(new Error('post timeout'), null);
+            }, CONFIG.dddFetchTimeoutMs);
+
+            try {
+                if (typeof fetch === 'function') {
+                    fetch(url, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                        },
+                        body: body
+                    })
+                        .then(function (res) {
+                            if (!res || !res.ok) throw new Error('post HTTP ' + (res ? res.status : 0));
+                            return res.json();
+                        })
+                        .then(function (json) {
+                            done(null, json);
+                        })
+                        .catch(function (err) {
+                            done(err || new Error('post failed'), null);
+                        });
+
+                    return;
+                }
+            } catch (e1) {
+                done(e1, null);
+                return;
+            }
+
+            try {
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', url, true);
+                xhr.timeout = CONFIG.dddFetchTimeoutMs;
+                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+
+                xhr.onreadystatechange = function () {
+                    if (xhr.readyState !== 4) return;
+
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        var json = parseJsonMaybe(xhr.responseText);
+                        if (!json) return done(new Error('post invalid json'), null);
+                        return done(null, json);
+                    }
+
+                    done(new Error('post HTTP ' + xhr.status), null);
+                };
+
+                xhr.onerror = function () {
+                    done(new Error('post network error'), null);
+                };
+
+                xhr.ontimeout = function () {
+                    done(new Error('post timeout'), null);
+                };
+
+                xhr.send(body);
+            } catch (e2) {
+                done(e2, null);
+            }
+        }
+
+        function postFirstJson(urls, label, params, call) {
+            var index = 0;
+            var errors = [];
+
+            function next() {
+                if (index >= urls.length) {
+                    return call(new Error(errors.join(' || ') || 'all posts failed'), null);
+                }
+
+                var url = urls[index++];
+
+                postFormJson(url, params, function (err, json) {
+                    if (!err && json && json.ok !== false) {
+                        if (DEBUG.pollSuccess) Utils.log('DDD ' + label + ' post ok', url);
+                        lastGoodAt = Utils.now();
+
+                        return call(null, json);
+                    }
+
+                    errors.push(url + ' => ' + (err && err.message ? err.message : (json && json.error) || err));
+                    next();
+                });
+            }
+
+            next();
+        }
+
         function canUse() {
             return Utils.shouldUseDDDLayer();
         }
 
-        function appendToUrl(url, sid, index, startIndex) {
+        function canInlinePlaylistJson(playlistJson) {
+            return playlistJson && playlistJson.length <= 3000;
+        }
+
+        function serializePlaylistForBridge(playlist) {
+            if (!Array.isArray(playlist) || !playlist.length) return '';
+
+            var normalized = [];
+
+            playlist.forEach(function (item, i) {
+                if (!item || typeof item !== 'object') return;
+
+                var itemUrl = item.url || item.uri || item.src || item.link || '';
+                if (!itemUrl || typeof itemUrl !== 'string') return;
+
+                normalized.push({
+                    index: i,
+                    title: item.title || item.name || item.fname || '',
+                    subtitle: item.subtitle || '',
+                    season: item.season || 0,
+                    episode: item.episode || 0,
+                    path: item.path || '',
+                    url: Utils.stripFragment(itemUrl)
+                });
+            });
+
+            return normalized.length ? Utils.safeJson(normalized) : '';
+        }
+
+        function appendToUrl(url, sid, index, startIndex, playlist) {
             if (!url || typeof url !== 'string') return url;
 
             index = Number(index || 0);
             startIndex = Number(startIndex || 0);
 
-            return Utils.appendFragmentParams(url, {
+            var playlistJson = serializePlaylistForBridge(playlist);
+            var params = {
                 ddd_mode: CONFIG.dddMode || 'local',
                 ddd_client: CONFIG.dddClient,
                 ddd_sid: sid,
@@ -2033,7 +2169,14 @@
                 ddd_token: CONFIG.dddToken || sid,
                 ddd_i: index,
                 ddd_start: startIndex
-            });
+            };
+
+            if (playlistJson) {
+                params.ddd_playlist_size = Array.isArray(playlist) ? playlist.length : 0;
+                if (canInlinePlaylistJson(playlistJson)) params.ddd_playlist = playlistJson;
+            }
+
+            return Utils.appendFragmentParams(url, params);
         }
 
         function applyBridgeExtras(data, session) {
@@ -2059,7 +2202,79 @@
             data.ddd_i = Number(data.playlist_index || data.start_index || session.playlistIndex || session.startIndex || 0);
             data.ddd_start = Number(data.playlist_index || data.start_index || session.playlistIndex || session.startIndex || 0);
 
+            var playlistJson = serializePlaylistForBridge(data.playlist || session.playlist);
+            if (playlistJson) {
+                data.ddd_playlist_size = Array.isArray(data.playlist) ? data.playlist.length : session.playlistSize || 0;
+                if (canInlinePlaylistJson(playlistJson)) data.ddd_playlist = playlistJson;
+                else delete data.ddd_playlist;
+            }
+
             return data;
+        }
+
+        function updatePlaylist(playlist, startIndex, session, attempt) {
+            if (!canUse()) return;
+            if (!Array.isArray(playlist) || !playlist.length) return;
+
+            var sid = activeSid || (session && session.sid) || '';
+            if (!sid) return;
+
+            attempt = Number(attempt || 0);
+            startIndex = Number(startIndex || 0);
+            if (isNaN(startIndex) || startIndex < 0) startIndex = 0;
+            if (startIndex >= playlist.length) startIndex = playlist.length - 1;
+
+            var playlistJson = serializePlaylistForBridge(playlist);
+            if (!playlistJson) return;
+
+            var firstItem = playlist[0] || {};
+            var lastItem = playlist[playlist.length - 1] || {};
+            var key = [
+                sid,
+                startIndex,
+                playlist.length,
+                playlistJson.length,
+                Utils.stripFragment(firstItem.url || firstItem.uri || firstItem.src || ''),
+                Utils.stripFragment(lastItem.url || lastItem.uri || lastItem.src || '')
+            ].join('|');
+
+            if (!attempt && key === lastPlaylistUpdateKey && Utils.now() - lastPlaylistUpdateAt < 3000) return;
+            if (!attempt) {
+                lastPlaylistUpdateKey = key;
+                lastPlaylistUpdateAt = Utils.now();
+            }
+
+            var token = CONFIG.dddToken || sid;
+            var params = {
+                sid: sid,
+                token: token,
+                ddd_playlist: playlistJson,
+                ddd_playlist_size: playlist.length,
+                ddd_i: startIndex,
+                ddd_start: startIndex
+            };
+
+            var urls = endpointList('/playlist', [
+                { sid: sid, token: token },
+                { sessionId: sid, token: token },
+                { session_id: sid, token: token }
+            ]);
+
+            postFirstJson(urls, 'playlist', params, function (err, json) {
+                if (err || !json || json.ok === false) {
+                    if (attempt < 8) {
+                        return setTimeout(function () {
+                            updatePlaylist(playlist, startIndex, session, attempt + 1);
+                        }, 500 + attempt * 250);
+                    }
+
+                    Utils.warn('DDD playlist update failed', err || json);
+                    return;
+                }
+
+                Utils.log('DDD playlist updated', 'items=' + playlist.length, 'native=' + json.nativePlaylistSize, 'start=' + startIndex);
+                Utils.noty('DDD playlist updated: ' + playlist.length + ' items', false, 2);
+            });
         }
 
         function applyBridgeToPlaylist(data, session) {
@@ -2090,7 +2305,7 @@
                 if (!url || typeof url !== 'string') return;
                 if (!Utils.isStreamUrl(url)) return;
 
-                var patched = appendToUrl(url, session.sid, i, startIndex);
+                var patched = appendToUrl(url, session.sid, i, startIndex, data.playlist || session.playlist);
 
                 if (item.url !== undefined) item.url = patched;
                 else if (item.uri !== undefined) item.uri = patched;
@@ -2339,6 +2554,7 @@
             appendToUrl: appendToUrl,
             applyBridgeExtras: applyBridgeExtras,
             applyBridgeToPlaylist: applyBridgeToPlaylist,
+            updatePlaylist: updatePlaylist,
             activate: activate,
             stopPolling: stopPolling,
             probe: probe,
@@ -2518,6 +2734,9 @@
 
     var PlayerManager = (function () {
         var patched = false;
+        var pendingDDDPlay = null;
+        var recentPlaylist = null;
+        var recentPlaylistAt = 0;
 
         function patchPlayer() {
             if (patched) return;
@@ -2530,9 +2749,69 @@
 
             var originalPlay = Lampa.Player.play;
 
+            function launchPlayerRequest(request) {
+                if (!request || request.done) return;
+
+                request.done = true;
+
+                if (request.timer) clearTimeout(request.timer);
+                if (pendingDDDPlay === request) pendingDDDPlay = null;
+
+                var data = request.data;
+                var session = request.session;
+
+                try {
+                    if (session && DDDTransport.canUse() && Utils.isStreamUrl(data.url)) {
+                        if (Array.isArray(data.playlist) && data.playlist.length) {
+                            session.playlist = data.playlist;
+                            session.playlistSize = data.playlist.length;
+                        }
+
+                        DDDTransport.applyBridgeExtras(data, session);
+                        DDDTransport.applyBridgeToPlaylist(data, session);
+
+                        data.url = DDDTransport.appendToUrl(
+                            data.url,
+                            session.sid,
+                            data.playlist_index || session.playlistIndex || 0,
+                            data.start_index || session.startIndex || 0,
+                            data.playlist || session.playlist
+                        );
+
+                        session.url = Utils.stripFragment(data.url);
+                        session.params = SessionManager.buildParams(session);
+                        SessionManager.register(session);
+
+                        DDDTransport.activate(session);
+                        DDDTransport.updatePlaylist(
+                            data.playlist || session.playlist,
+                            data.playlist_index || session.playlistIndex || 0,
+                            session
+                        );
+
+                        Utils.log('DDD transport selected', session.sid, data.url);
+                    } else {
+                        Utils.log('Lampa native transport selected', Utils.getPlatformKind(), Utils.getTorrentPlayerType());
+                    }
+                } catch (e) {
+                    Utils.error('Player launch preparation failed', e);
+                }
+
+                return originalPlay.apply(request.context, request.args);
+            }
+
             Lampa.Player.play = function (data) {
+                var request;
+
                 try {
                     data = data || {};
+
+                    if ((!Array.isArray(data.playlist) || !data.playlist.length)
+                            && Array.isArray(recentPlaylist)
+                            && recentPlaylist.length
+                            && Utils.now() - recentPlaylistAt < 1000) {
+                        data.playlist = recentPlaylist;
+                    }
 
                     var session = SessionManager.buildFromPlayData(data, { source: 'player_patch' });
 
@@ -2546,35 +2825,91 @@
                             title: session.title,
                             force: true
                         });
+                    }
 
-                        if (DDDTransport.canUse() && Utils.isStreamUrl(data.url)) {
-                            DDDTransport.applyBridgeExtras(data, session);
-                            DDDTransport.applyBridgeToPlaylist(data, session);
+                    request = {
+                        context: this,
+                        args: arguments,
+                        data: data,
+                        session: session,
+                        timer: null,
+                        done: false
+                    };
 
-                            data.url = DDDTransport.appendToUrl(
-                                data.url,
-                                session.sid,
-                                data.playlist_index || session.playlistIndex || 0,
-                                data.start_index || session.startIndex || 0
-                            );
+                    if (session
+                            && DDDTransport.canUse()
+                            && Utils.isStreamUrl(data.url)
+                            && (!Array.isArray(data.playlist) || !data.playlist.length)) {
+                        if (pendingDDDPlay && !pendingDDDPlay.done) launchPlayerRequest(pendingDDDPlay);
 
-                            session.url = Utils.stripFragment(data.url);
-                            session.params = SessionManager.buildParams(session);
-                            SessionManager.register(session);
+                        pendingDDDPlay = request;
+                        request.timer = setTimeout(function () {
+                            launchPlayerRequest(request);
+                        }, 180);
 
-                            DDDTransport.activate(session);
-
-                            Utils.log('DDD transport selected', session.sid, data.url);
-                        } else {
-                            Utils.log('Lampa native transport selected', Utils.getPlatformKind(), Utils.getTorrentPlayerType());
-                        }
+                        return;
                     }
                 } catch (e) {
                     Utils.error('Player patch failed', e);
                 }
 
-                return originalPlay.apply(this, arguments);
+                if (!request) {
+                    request = {
+                        context: this,
+                        args: arguments,
+                        data: data || {},
+                        session: null,
+                        timer: null,
+                        done: false
+                    };
+                }
+
+                return launchPlayerRequest(request);
             };
+
+            if (typeof Lampa.Player.playlist === 'function' && !Lampa.Player.playlist.__continueWatchUniversalDDDPlaylistPatched) {
+                var originalPlaylist = Lampa.Player.playlist;
+
+                Lampa.Player.playlist = function (playlist) {
+                    recentPlaylist = Array.isArray(playlist) ? playlist : null;
+                    recentPlaylistAt = Utils.now();
+
+                    var result = originalPlaylist.apply(this, arguments);
+
+                    try {
+                        if (pendingDDDPlay && !pendingDDDPlay.done && Array.isArray(playlist) && playlist.length) {
+                            pendingDDDPlay.data.playlist = playlist;
+
+                            if (pendingDDDPlay.session) {
+                                pendingDDDPlay.session.playlist = playlist;
+                                pendingDDDPlay.session.playlistSize = playlist.length;
+                            }
+
+                            launchPlayerRequest(pendingDDDPlay);
+                        }
+
+                        var session = SessionManager.getCurrent();
+
+                        if (session && DDDTransport.canUse() && Array.isArray(playlist) && playlist.length) {
+                            session.playlist = playlist;
+                            session.params = SessionManager.buildParams(session);
+                            SessionManager.register(session);
+
+                            DDDTransport.updatePlaylist(
+                                playlist,
+                                session.playlistIndex || session.startIndex || 0,
+                                session
+                            );
+                        }
+                    } catch (e) {
+                        Utils.warn('DDD playlist hook failed', e);
+                    }
+
+                    return result;
+                };
+
+                Lampa.Player.playlist.__continueWatchUniversalDDDPlaylistPatched = true;
+            }
 
             Lampa.Player.__continueWatchUniversalPatched = true;
             patched = true;
