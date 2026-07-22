@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.11-buttons-plugin-compatible-20260515';
+    var BOOT_VERSION = 'v4.0.12-large-playlist-intent-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -2126,7 +2126,7 @@
         }
 
         function canInlinePlaylistInUrl(playlistJson) {
-            return playlistJson && playlistJson.length <= 3000;
+            return playlistJson && playlistJson.length <= 120000;
         }
 
         function canInlinePlaylistInIntent(playlistJson) {
