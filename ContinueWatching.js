@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.12-large-playlist-intent-20260723';
+    var BOOT_VERSION = 'v4.0.13-bridge-events-controls-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -2347,11 +2347,16 @@
             if (!event || typeof event !== 'object') return null;
 
             var payload = event.payload || {};
-            var rawType = event.type || payload.type || '';
+            var rawType = payload.type || event.type || '';
             var type = '';
             var time = 0;
             var duration = 0;
             var playlistIndex = payload.windowIndex;
+
+            rawType = String(rawType)
+                .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+                .replace(/[\s-]+/g, '_')
+                .toLowerCase();
 
             if (playlistIndex === undefined || playlistIndex === null) playlistIndex = payload.index;
 
