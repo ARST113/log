@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.14-bridge-event-cursors-20260723';
+    var BOOT_VERSION = 'v4.0.15-bridge-event-diagnostics-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -18,7 +18,7 @@
     var PLUGIN_NAME = 'ContinueWatchUniversal';
     var PLUGIN_VERSION = BOOT_VERSION;
 
-    var DDD_DEBUG = false;
+    var DDD_DEBUG = true;
 
     var DEBUG = {
         enabled: !!DDD_DEBUG,
