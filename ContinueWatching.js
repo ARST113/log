@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.13-bridge-events-controls-20260723';
+    var BOOT_VERSION = 'v4.0.14-bridge-event-cursors-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -1788,6 +1788,7 @@
         var pollTimer = null;
         var activeSid = '';
         var lastTs = 0;
+        var lastStateTs = 0;
         var lastProbeResult = null;
         var lastPingAt = 0;
         var lastGoodAt = 0;
@@ -2332,6 +2333,7 @@
 
             activeSid = session.sid;
             lastTs = 0;
+            lastStateTs = 0;
             lastPingAt = 0;
             lastGoodAt = 0;
             lastEventsError = '';
@@ -2485,8 +2487,8 @@
 
                 if (!event) return;
 
-                if (event.ts && event.ts <= lastTs) return;
-                if (event.ts) lastTs = Math.max(lastTs, Number(event.ts || 0));
+                if (event.ts && event.ts <= lastStateTs) return;
+                if (event.ts) lastStateTs = Math.max(lastStateTs, Number(event.ts || 0));
 
                 handleBridgeEvent(event);
             });
@@ -2536,6 +2538,7 @@
 
             pollTimer = null;
             activeSid = '';
+            lastStateTs = 0;
 
             Utils.log('DDD polling stopped');
         }
@@ -2548,6 +2551,7 @@
             return {
                 activeSid: activeSid,
                 lastTs: lastTs,
+                lastStateTs: lastStateTs,
                 lastProbeResult: lastProbeResult,
                 lastEventsError: lastEventsError,
                 lastStateError: lastStateError,
