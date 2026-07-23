@@ -1,9 +1,61 @@
 (function () {
     'use strict';
 
-    if (!window.Lampa) return;
+    var BOOT_VERSION = 'v4.0.51-native-player-playlists-20260723';
 
-    var BOOT_VERSION = 'v4.0.43-account-profile-storage-20260723';
+    function rememberBootStatus(phase, details) {
+        try {
+            localStorage.setItem('continue_watch_boot_status', JSON.stringify({
+                version: BOOT_VERSION,
+                phase: phase,
+                details: details || '',
+                timestamp: Date.now()
+            }));
+        } catch (e) {}
+    }
+
+    if (!window.Lampa) {
+        rememberBootStatus('waiting', 'window.Lampa is not ready');
+
+        if (!window.__CONTINUE_WATCH_WAITING_FOR_LAMPA__) {
+            window.__CONTINUE_WATCH_WAITING_FOR_LAMPA__ = true;
+
+            var waitingScriptUrl = '';
+            var waitingAttempts = 0;
+
+            try {
+                waitingScriptUrl = document.currentScript && document.currentScript.src
+                    ? document.currentScript.src
+                    : '';
+            } catch (e) {}
+
+            var waitingTimer = setInterval(function () {
+                waitingAttempts += 1;
+
+                if (window.Lampa && waitingScriptUrl) {
+                    clearInterval(waitingTimer);
+                    window.__CONTINUE_WATCH_WAITING_FOR_LAMPA__ = false;
+                    rememberBootStatus('retrying', 'Lampa became ready');
+
+                    var retryScript = document.createElement('script');
+                    retryScript.async = true;
+                    retryScript.src = waitingScriptUrl;
+                    (document.head || document.documentElement).appendChild(retryScript);
+                    return;
+                }
+
+                if (waitingAttempts >= 120) {
+                    clearInterval(waitingTimer);
+                    window.__CONTINUE_WATCH_WAITING_FOR_LAMPA__ = false;
+                    rememberBootStatus('timeout', 'Lampa did not become ready');
+                }
+            }, 250);
+        }
+
+        return;
+    }
+
+    rememberBootStatus('executing', 'window.Lampa is ready');
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -1297,7 +1349,9 @@
             updateTimeline: updateTimeline,
             getLastStreamParams: getLastStreamParams,
             cleanupOld: cleanupOld,
-            getSessionStorageKey: getSessionStorageKey
+            getSessionStorageKey: getSessionStorageKey,
+            getProfileId: getProfileId,
+            getStorageKey: getStorageKey
         };
     })();
 
@@ -1396,18 +1450,18 @@
             var cleanUrl = Utils.stripFragment(url || '');
             var identity = Utils.streamIdentity(cleanUrl);
 
-            if (data) {
-                if (data.playlist_index !== undefined) return Number(data.playlist_index || 0);
-                if (data.start_index !== undefined) return Number(data.start_index || 0);
-                if (data.index !== undefined) return Number(data.index || 0);
-                if (data.windowIndex !== undefined) return Number(data.windowIndex || 0);
-            }
-
             if (playlist && playlist.length) {
                 for (i = 0; i < playlist.length; i++) {
                     if (Utils.stripFragment(playlist[i].url || '') === cleanUrl) return i;
                     if (Utils.streamIdentity(playlist[i].url || '') === identity) return i;
                 }
+            }
+
+            if (data) {
+                if (data.playlist_index !== undefined) return Number(data.playlist_index || 0);
+                if (data.start_index !== undefined) return Number(data.start_index || 0);
+                if (data.windowIndex !== undefined) return Number(data.windowIndex || 0);
+                if (data.index !== undefined) return Number(data.index || 0);
             }
 
             var parsed = Utils.parseStreamUrl(cleanUrl);
@@ -1482,7 +1536,23 @@
                 data && (data.episode || data.episode_number || '') || ''
             ].join('|');
 
-            return 'ddd_' + Lampa.Utils.hash(seed) + '_' + Utils.now() + '_' + Math.floor(Math.random() * 100000);
+            var now = Utils.now();
+            var cache = window.__CONTINUE_WATCH_DDD_SID_CACHE__;
+
+            if (
+                cache &&
+                cache.seed === seed &&
+                cache.sid &&
+                now - Number(cache.ts || 0) >= 0 &&
+                now - Number(cache.ts || 0) <= 2500
+            ) {
+                cache.ts = now;
+                return cache.sid;
+            }
+
+            var sid = 'ddd_' + Lampa.Utils.hash(seed) + '_' + now + '_' + Math.floor(Math.random() * 100000);
+            window.__CONTINUE_WATCH_DDD_SID_CACHE__ = { seed: seed, sid: sid, ts: now };
+            return sid;
         }
 
         function buildParams(session) {
@@ -1584,12 +1654,29 @@
 
             var se = extractSEForSession(data, movie, item, playlistIndex);
 
+            var recentSid = '';
+            var now = Utils.now();
+
+            if (
+                !options.sid &&
+                options.source === 'player_patch' &&
+                currentSession &&
+                currentSession.sid &&
+                now - Number(currentSession.createdAt || 0) >= 0 &&
+                now - Number(currentSession.createdAt || 0) <= 2500 &&
+                Utils.streamIdentity(currentSession.url || '') === Utils.streamIdentity(url || '') &&
+                Number(currentSession.playlistIndex || 0) === Number(playlistIndex || 0)
+            ) {
+                recentSid = currentSession.sid;
+                Utils.log('Reuse DDD SID for duplicate Player.play', recentSid);
+            }
+
             var timelineHash = '';
             if (data.timeline && data.timeline.hash) timelineHash = data.timeline.hash;
             if (!timelineHash) timelineHash = StorageManager.generateTimelineHash(movie, se.season, se.episode);
 
             var session = {
-                sid: options.sid || createSid(timelineHash, data, url),
+                sid: options.sid || recentSid || createSid(timelineHash, data, url),
                 source: options.source || '',
                 movie: movie,
                 url: url,
@@ -1604,8 +1691,8 @@
                 episode: se.episode || 0,
                 seSource: se.source || '',
                 hash: timelineHash,
-                createdAt: Utils.now(),
-                updatedAt: Utils.now(),
+                createdAt: recentSid ? Number(currentSession.createdAt || now) : now,
+                updatedAt: now,
                 lampaTime: Number(data.time || data.position || (data.timeline && data.timeline.time) || 0),
                 lampaDuration: Number(data.duration || (data.timeline && data.timeline.duration) || 0),
                 lampaPercent: Number(data.percent || (data.timeline && data.timeline.percent) || 0),
@@ -2374,7 +2461,7 @@
                 windowsUA = /windows|win32|win64/i.test(String(navigator.userAgent || ''));
             } catch (e) {}
 
-            var result = !!CONFIG.dddPcBridgeLaunchEnabled && external && (windowsUA || !androidPlatform || mpcLike);
+            var result = !!CONFIG.dddPcBridgeLaunchEnabled && external && !androidPlatform;
 
             Utils.log(
                 'DDD local bridge decision',
@@ -2578,7 +2665,9 @@
                 params[key] = remoteParams[key];
             });
 
-            return Utils.appendFragmentParams(url, params);
+            // A play object can be reused by Lampa. Keep exactly one bridge
+            // session in its URL so the native player and event poller share a SID.
+            return Utils.appendFragmentParams(Utils.stripFragment(url), params);
         }
 
         function applyBridgeExtras(data, session) {
@@ -2692,6 +2781,12 @@
                     call(null, json);
                 });
             });
+        }
+
+        function launchWhenReady(data, session) {
+            // AndroidJS.openPlayer already sends the complete native playlist.
+            // A second bridge launch races the chooser and drops player-specific extras.
+            return;
         }
 
         function activate(session) {
@@ -2961,6 +3056,7 @@
             applyBridgeExtras: applyBridgeExtras,
             applyBridgeToPlaylist: applyBridgeToPlaylist,
             launchViaLocalBridge: launchViaLocalBridge,
+            launchWhenReady: launchWhenReady,
             fetchRemoteLatest: fetchRemoteLatest,
             activate: activate,
             stopPolling: stopPolling,
@@ -3400,14 +3496,19 @@
                                         }
 
                                         Utils.warn('DDD local bridge launch failed, fallback to Lampa player', launchErr && launchErr.message ? launchErr.message : launchErr);
+                                        DDDTransport.launchWhenReady(data, activeSession);
                                         stripBridgeFragmentsForFallback(data);
-                                        originalPlay.apply(self, playArgs);
+                                        return originalPlay.apply(self, playArgs);
                                     });
 
                                     return;
                                 }
 
-                                originalPlay.apply(self, playArgs);
+                                var nativeResult = originalPlay.apply(self, playArgs);
+
+                                DDDTransport.launchWhenReady(data, activeSession);
+
+                                return nativeResult;
                             });
 
                             return;
@@ -3791,6 +3892,28 @@
         var cardScanQueued = false;
         var lastRemoteRefreshToken = '';
         var controllerRefreshTimer = null;
+
+        function rememberUiStatus(phase, movie, params, details) {
+            try {
+                localStorage.setItem('continue_watch_ui_status', JSON.stringify({
+                    version: PLUGIN_VERSION,
+                    phase: phase,
+                    profileId: StorageManager.getProfileId(),
+                    storageKey: StorageManager.getStorageKey(),
+                    movieId: movie && (movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId || ''),
+                    title: movie ? Utils.getMovieTitle(movie) : '',
+                    originalTitle: movie && (movie.original_title || movie.original_name || ''),
+                    paramsFound: !!params,
+                    paramsTitle: params && params.title || '',
+                    paramsSeason: Number(params && params.season || 0),
+                    paramsEpisode: Number(params && params.episode || 0),
+                    paramsPlaylistSize: params && Array.isArray(params.playlist) ? params.playlist.length : 0,
+                    storedItems: Object.keys(StorageManager.getParams() || {}).length,
+                    details: details || '',
+                    timestamp: Date.now()
+                }));
+            } catch (e) {}
+        }
 
         function removeContinueButtons(render) {
             try {
@@ -4232,11 +4355,13 @@
             Utils.rememberActivityMovie(movie);
 
             var params = StorageManager.getLastStreamParams(movie);
+            rememberUiStatus('render', movie, params, 'refreshRemote=' + (!!refreshRemote));
 
             function renderButtons(currentParams) {
                 var debugButton = render.find('.button--continue-watch-ddd-debug').first();
 
                 if (!currentParams) {
+                    rememberUiStatus('no-params', movie, null, 'renderButtons');
                     if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty && !debugButton.length) {
                         getWatchContainer(render).prepend(createStatusButton(movie));
                     }
@@ -4257,6 +4382,13 @@
                 } else if (String(existing.attr('data-cwu-state') || '') !== stateKey) {
                     existing.replaceWith(createButton(movie, currentParams));
                 }
+
+                rememberUiStatus(
+                    'button-rendered',
+                    movie,
+                    currentParams,
+                    'visible=' + render.find('.button--continue-watch-ddd').length
+                );
 
                 $('.button--continue-watch-ddd').each(function () {
                     bindLaunch($(this), movie);
@@ -4309,7 +4441,10 @@
                 var movie = getEventMovie(null);
                 var render = getEventRender(null);
 
-                if (!movie || !render) return;
+                if (!movie || !render) {
+                    rememberUiStatus('scan-missing-context', movie, null, 'render=' + (!!render));
+                    return;
+                }
 
                 var params = StorageManager.getLastStreamParams(movie);
                 var movieKey = StorageManager.getMovieKey(movie) || Utils.getMovieTitle(movie) || 'movie';
@@ -4506,11 +4641,13 @@
             window.__CONTINUE_WATCH_DDD_LAYER_V3_LOADING__ = false;
             window.__CONTINUE_WATCH_DDD_LAYER_V3_VERSION__ = PLUGIN_VERSION;
             window.__CONTINUE_WATCH_TRANSPORT_NEUTRAL_READY__ = true;
+            rememberBootStatus('ready', 'init completed');
         } catch (e) {
             initStarted = false;
             window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ = false;
             window.__CONTINUE_WATCH_DDD_LAYER_V3_LOADING__ = false;
             window.__CONTINUE_WATCH_DDD_LAYER_V3_VERSION__ = PLUGIN_VERSION + ':init-error';
+            rememberBootStatus('init-error', String(e && e.message ? e.message : e));
 
             Utils.error('Init failed', e);
 
