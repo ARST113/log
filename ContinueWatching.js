@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.30-resume-card-observer-20260723';
+    var BOOT_VERSION = 'v4.0.31-focusable-resume-button-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -45,7 +45,7 @@
         notyMinIntervalMs: 1200,
         pollSuccess: false,
         pollFail: false,
-        statusButton: true,
+        statusButton: false,
         exposeApi: true
     };
 
@@ -3812,7 +3812,7 @@
                 parts.push(Utils.formatSeconds(road.time));
             }
 
-            return parts.join(' · ');
+            return parts.join(' / ');
         }
 
         function getActiveMovieFromCard() {
@@ -3877,7 +3877,7 @@
                         '<circle class="continue-watch-ddd-progress" cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="' + dash + ' 65.97" transform="rotate(-90 12 12)"></circle>' +
                         '<path d="M9 7.7v8.6c0 .55.6.89 1.08.6l6.62-4.3a.72.72 0 0 0 0-1.2l-6.62-4.3A.7.7 0 0 0 9 7.7z" fill="currentColor"></path>' +
                     '</svg>' +
-                    '<span>Продолжить</span>' +
+                    '<span>\u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0438\u0442\u044c</span>' +
                 '</div>';
 
             var button = $(html);
@@ -3944,7 +3944,7 @@
         
                     '.button--continue-watch-ddd[data-cwu-subtitle]:after{' +
                         'content:attr(data-cwu-subtitle);' +
-                        'display:inline-block;' +
+                        'display:none!important;' +
                         'margin-left:.45em;' +
                         'font-size:.72em;' +
                         'line-height:1;' +
@@ -3956,6 +3956,11 @@
                     '.button--continue-watch-ddd[data-cwu-subtitle=""]:after{' +
                         'content:"";' +
                         'display:none!important;' +
+                    '}' +
+
+                    '.button--continue-watch-ddd:hover:after,' +
+                    '.button--continue-watch-ddd.focus:after{' +
+                        'display:inline-block!important;' +
                     '}' +
         
                     '/* buttons.js mode 1: текст и подпись раскрываются только на hover/focus */' +
@@ -3975,6 +3980,11 @@
         
                     '/* buttons.js mode 3: текст и подпись всегда видны */' +
                     '.button--continue-watch-ddd.button-mode-3:after{' +
+                        'display:none!important;' +
+                    '}' +
+
+                    '.button--continue-watch-ddd.button-mode-3:hover:after,' +
+                    '.button--continue-watch-ddd.button-mode-3.focus:after{' +
                         'display:inline-block!important;' +
                     '}';
         
