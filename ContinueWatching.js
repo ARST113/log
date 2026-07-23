@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.32-refresh-card-controller-20260723';
+    var BOOT_VERSION = 'v4.0.33-register-resume-button-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -4108,10 +4108,11 @@
 
                 if (!existing.length) {
                     insertIntoWatchContainer(render, createButton(movie, currentParams));
-                    refreshCardController();
                 } else if (String(existing.attr('data-cwu-state') || '') !== stateKey) {
                     existing.replaceWith(createButton(movie, currentParams));
                 }
+
+                refreshCardController(render);
 
                 if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty && !debugButton.length) {
                     debugButton = createStatusButton(movie);
@@ -4168,21 +4169,33 @@
             setTimeout(scanActiveCard, 120);
         }
 
-        function refreshCardController() {
-            clearTimeout(controllerRefreshTimer);
-            controllerRefreshTimer = setTimeout(function () {
+        function refreshCardController(render) {
+            function appendButton() {
                 try {
                     var current = Lampa.Controller && Lampa.Controller.enabled
                         ? Lampa.Controller.enabled()
                         : null;
+                    var button = render && render.find
+                        ? render.find('.button--continue-watch-ddd').first()
+                        : null;
 
-                    if (current && current.name === 'full_start' && Lampa.Controller.enable) {
-                        Lampa.Controller.enable('full_start');
+                    if (
+                        current &&
+                        current.name === 'full_start' &&
+                        button &&
+                        button.length &&
+                        Lampa.Controller.collectionAppend
+                    ) {
+                        Lampa.Controller.collectionAppend(button);
                     }
                 } catch (e) {
                     Utils.error('Card controller refresh failed', e);
                 }
-            }, 80);
+            }
+
+            appendButton();
+            clearTimeout(controllerRefreshTimer);
+            controllerRefreshTimer = setTimeout(appendButton, 300);
         }
 
         function install() {
