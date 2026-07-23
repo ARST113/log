@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.41-merge-profile-storage-20260723';
+    var BOOT_VERSION = 'v4.0.42-live-profile-storage-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -805,7 +805,6 @@
         function getProfileId() {
             try {
                 if (
-                    accountReady &&
                     Lampa.Account &&
                     Lampa.Account.Permit &&
                     Lampa.Account.Permit.sync &&
