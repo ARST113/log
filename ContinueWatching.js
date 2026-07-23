@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.37-delegate-resume-clones-20260723';
+    var BOOT_VERSION = 'v4.0.38-pin-resume-before-torrents-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -3942,6 +3942,26 @@
             } catch (e) {}
         }
 
+        function pinVisibleContinueButtons() {
+            $('.button--continue-watch-ddd, .continue-watch-ddd-source, [data-buttons-plugin-id="continue_watch_universal"]')
+                .each(function () {
+                    var button = $(this);
+
+                    if (this.offsetParent === null) return;
+
+                    var container = button.closest('.full-start-new__buttons, .buttons--container');
+                    if (!container.length) return;
+
+                    var torrentButton = container.children('.view--torrent').first();
+
+                    if (torrentButton.length) {
+                        if (button.next()[0] !== torrentButton[0]) button.insertBefore(torrentButton);
+                    } else if (container.children().first()[0] !== button[0]) {
+                        container.prepend(button);
+                    }
+                });
+        }
+
         function injectButtonCompatStyles() {
             try {
                 var css =
@@ -4135,7 +4155,14 @@
                     bindLaunch($(this), movie);
                 });
 
+                pinVisibleContinueButtons();
+
                 refreshCardController(render);
+
+                setTimeout(function () {
+                    pinVisibleContinueButtons();
+                    refreshCardController(render);
+                }, 350);
 
                 if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty && !debugButton.length) {
                     debugButton = createStatusButton(movie);
