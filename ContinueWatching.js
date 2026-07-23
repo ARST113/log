@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.36-bind-click-resume-20260723';
+    var BOOT_VERSION = 'v4.0.37-delegate-resume-clones-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -3828,29 +3828,33 @@
             return null;
         }
 
-        function bindLaunch(button, movie) {
-            function launch() {
-                var now = Date.now();
-                var lastLaunchAt = Number(button.data('continueWatchUniversalLaunchAt') || 0);
+        function launchFromButton(button, movie) {
+            var now = Date.now();
+            var lastLaunchAt = Number(button.data('continueWatchUniversalLaunchAt') || 0);
 
-                if (now - lastLaunchAt < 900) return false;
+            if (now - lastLaunchAt < 900) return false;
 
-                button.data('continueWatchUniversalLaunchAt', now);
+            button.data('continueWatchUniversalLaunchAt', now);
 
-                var activeMovie = movie || getActiveMovieFromCard();
-                var params = activeMovie ? StorageManager.getLastStreamParams(activeMovie) : null;
+            var activeMovie = movie || getActiveMovieFromCard();
+            var params = activeMovie ? StorageManager.getLastStreamParams(activeMovie) : null;
 
-                if (!activeMovie || !params) {
-                    try {
-                        Lampa.Noty.show('Нет истории просмотров');
-                    } catch (e) {}
-
-                    return false;
-                }
-
-                PlayerManager.launchFromContinue(activeMovie, params);
+            if (!activeMovie || !params) {
+                try {
+                    Lampa.Noty.show('Нет истории просмотров');
+                } catch (e) {}
 
                 return false;
+            }
+
+            PlayerManager.launchFromContinue(activeMovie, params);
+
+            return false;
+        }
+
+        function bindLaunch(button, movie) {
+            function launch() {
+                return launchFromButton(button, movie);
             }
 
             button
@@ -4225,6 +4229,24 @@
             installed = true;
 
             injectButtonCompatStyles();
+
+            $(document)
+                .off(
+                    'click.continueWatchUniversalDelegate',
+                    '.button--continue-watch-ddd, .continue-watch-ddd-source, [data-buttons-plugin-id="continue_watch_universal"]'
+                )
+                .on(
+                    'click.continueWatchUniversalDelegate',
+                    '.button--continue-watch-ddd, .continue-watch-ddd-source, [data-buttons-plugin-id="continue_watch_universal"]',
+                    function (event) {
+                        if (event) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                        }
+
+                        return launchFromButton($(this), null);
+                    }
+                );
 
             Lampa.Listener.follow('full', function (event) {
                 if (!event) return;
