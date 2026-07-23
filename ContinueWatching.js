@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.42-live-profile-storage-20260723';
+    var BOOT_VERSION = 'v4.0.43-account-profile-storage-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -803,18 +803,33 @@
         }
 
         function getProfileId() {
+            var account = null;
+
             try {
                 if (
                     Lampa.Account &&
                     Lampa.Account.Permit &&
-                    Lampa.Account.Permit.sync &&
-                    Lampa.Account.Permit.account &&
-                    Lampa.Account.Permit.account.profile &&
-                    Lampa.Account.Permit.account.profile.id !== undefined
+                    Lampa.Account.Permit.account
                 ) {
-                    return Lampa.Account.Permit.account.profile.id;
+                    account = Lampa.Account.Permit.account;
                 }
             } catch (e) {}
+
+            try {
+                if (!account && Lampa.Storage && Lampa.Storage.get) {
+                    account = Lampa.Storage.get('account', {});
+                }
+            } catch (e) {}
+
+            if (
+                account &&
+                account.profile &&
+                account.profile.id !== undefined &&
+                account.profile.id !== null &&
+                account.profile.id !== ''
+            ) {
+                return account.profile.id;
+            }
 
             return null;
         }
