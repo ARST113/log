@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.34-bind-visible-resume-clones-20260723';
+    var BOOT_VERSION = 'v4.0.35-bind-global-resume-clones-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -4117,7 +4117,7 @@
                     existing.replaceWith(createButton(movie, currentParams));
                 }
 
-                render.find('.button--continue-watch-ddd').each(function () {
+                $('.button--continue-watch-ddd').each(function () {
                     bindLaunch($(this), movie);
                 });
 
@@ -4184,8 +4184,8 @@
                     var current = Lampa.Controller && Lampa.Controller.enabled
                         ? Lampa.Controller.enabled()
                         : null;
-                    var buttons = render && render.find
-                        ? render.find('.button--continue-watch-ddd').filter(function () {
+                    var buttons = typeof $ === 'function'
+                        ? $('.button--continue-watch-ddd').filter(function () {
                             return this.offsetParent !== null;
                         })
                         : null;
