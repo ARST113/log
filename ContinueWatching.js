@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.29-visible-continue-container-20260723';
+    var BOOT_VERSION = 'v4.0.30-resume-card-observer-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -3719,6 +3719,10 @@
 
     var UIManager = (function () {
         var installed = false;
+        var cardObserver = null;
+        var cardScanTimer = null;
+        var cardScanQueued = false;
+        var lastRemoteRefreshToken = '';
 
         function removeContinueButtons(render) {
             try {
@@ -3850,6 +3854,13 @@
             var subtitle = formatContinueSubtitle(params, road);
             var dash = (road.percent * 65.97 / 100).toFixed(2);
             var movieKey = '';
+            var stateKey = [
+                Number(params && params.timestamp || 0),
+                Number(params && params.time || 0),
+                Number(params && params.duration || 0),
+                Number(params && params.season || 0),
+                Number(params && params.episode || 0)
+            ].join(':');
 
             try {
                 movieKey = StorageManager.getMovieKey(movie) || '';
@@ -3859,6 +3870,7 @@
                 '<div class="full-start__button selector view--continue-watch button--continue-watch-ddd continue-watch-ddd-source" ' +
                     'data-buttons-plugin-id="continue_watch_universal" ' +
                     'data-cwu-movie-key="' + escapeHtml(movieKey) + '" ' +
+                    'data-cwu-state="' + escapeHtml(stateKey) + '" ' +
                     'data-cwu-subtitle="' + escapeHtml(subtitle) + '">' +
                     '<svg class="continue-watch-ddd-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">' +
                         '<circle cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="1.7" fill="none" opacity="0.22"></circle>' +
@@ -4019,6 +4031,131 @@
             return button;
         }
 
+        function getEventMovie(event) {
+            var active = null;
+            var activity = null;
+
+            try {
+                active = Lampa.Activity && Lampa.Activity.active ? Lampa.Activity.active() : null;
+            } catch (e) {}
+
+            activity = event && event.object && event.object.activity
+                ? event.object.activity
+                : active;
+
+            return (
+                (event && event.data && event.data.movie) ||
+                (activity && activity.movie) ||
+                (activity && activity.card) ||
+                (activity && activity.params && activity.params.movie) ||
+                (active && active.movie) ||
+                (active && active.card) ||
+                (active && active.params && active.params.movie) ||
+                getActiveMovieFromCard() ||
+                Utils.getActivityMovie()
+            );
+        }
+
+        function getEventRender(event) {
+            var render = event && event.body && event.body.find ? event.body : null;
+
+            if (render && render.find('.full-start-new__buttons').length) return render;
+
+            try {
+                var roots = $('.full-start-new');
+                if (roots && roots.length) return roots.last();
+            } catch (e) {}
+
+            return render;
+        }
+
+        function renderCardButtons(render, movie, refreshRemote) {
+            if (!render || !render.find || !movie) return;
+
+            Utils.rememberActivityMovie(movie);
+
+            var params = StorageManager.getLastStreamParams(movie);
+
+            function renderButtons(currentParams) {
+                var debugButton = render.find('.button--continue-watch-ddd-debug').first();
+
+                if (!currentParams) {
+                    if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty && !debugButton.length) {
+                        getWatchContainer(render).prepend(createStatusButton(movie));
+                    }
+                    return;
+                }
+
+                var existing = render.find('.button--continue-watch-ddd').first();
+                var stateKey = [
+                    Number(currentParams.timestamp || 0),
+                    Number(currentParams.time || 0),
+                    Number(currentParams.duration || 0),
+                    Number(currentParams.season || 0),
+                    Number(currentParams.episode || 0)
+                ].join(':');
+
+                if (!existing.length) {
+                    insertIntoWatchContainer(render, createButton(movie, currentParams));
+                } else if (String(existing.attr('data-cwu-state') || '') !== stateKey) {
+                    existing.replaceWith(createButton(movie, currentParams));
+                }
+
+                if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty && !debugButton.length) {
+                    debugButton = createStatusButton(movie);
+                    getWatchContainer(render).find('> .button--continue-watch-ddd').after(debugButton);
+                }
+            }
+
+            renderButtons(params);
+
+            if (refreshRemote) {
+                PlayerManager.refreshRemote(movie, params, renderButtons);
+            }
+        }
+
+        function scheduleCardRender(event, delay, refreshRemote) {
+            setTimeout(function () {
+                try {
+                    var movie = getEventMovie(event);
+                    var render = getEventRender(event);
+
+                    if (movie) Utils.rememberActivityMovie(movie);
+                    renderCardButtons(render, movie, refreshRemote);
+                } catch (e) {
+                    Utils.error('Button render failed', e);
+                }
+            }, Number(delay || 0));
+        }
+
+        function scanActiveCard() {
+            cardScanQueued = false;
+
+            try {
+                var movie = getEventMovie(null);
+                var render = getEventRender(null);
+
+                if (!movie || !render) return;
+
+                var params = StorageManager.getLastStreamParams(movie);
+                var movieKey = StorageManager.getMovieKey(movie) || Utils.getMovieTitle(movie) || 'movie';
+                var refreshToken = movieKey + ':' + Number(params && params.timestamp || 0);
+                var refreshRemote = refreshToken !== lastRemoteRefreshToken;
+
+                if (refreshRemote) lastRemoteRefreshToken = refreshToken;
+
+                renderCardButtons(render, movie, refreshRemote);
+            } catch (e) {
+                Utils.error('Card observer failed', e);
+            }
+        }
+
+        function queueCardScan() {
+            if (cardScanQueued) return;
+            cardScanQueued = true;
+            setTimeout(scanActiveCard, 120);
+        }
+
         function install() {
             if (installed) return;
 
@@ -4027,63 +4164,27 @@
             injectButtonCompatStyles();
 
             Lampa.Listener.follow('full', function (event) {
-                if (!event || event.type !== 'complite') return;
+                if (!event) return;
 
-                requestAnimationFrame(function () {
-                    try {
-                        var active = Lampa.Activity && Lampa.Activity.active ? Lampa.Activity.active() : null;
-                        var activity = (event.object && event.object.activity) || active;
-                        var render = event.body && event.body.find
-                            ? event.body
-                            : (activity && activity.render ? activity.render() : null);
-                        var movie =
-                            (event.data && event.data.movie) ||
-                            (activity && activity.movie) ||
-                            (activity && activity.card) ||
-                            (activity && activity.params && activity.params.movie) ||
-                            (active && active.movie) ||
-                            (active && active.card) ||
-                            (active && active.params && active.params.movie) ||
-                            Utils.getActivityMovie();
+                var movie = getEventMovie(event);
+                if (movie) Utils.rememberActivityMovie(movie);
 
-                        if (!render || !movie) return;
+                if (event.type !== 'start' && event.type !== 'build' && event.type !== 'complite') return;
 
-                        Utils.rememberActivityMovie(movie);
-
-                        var params = StorageManager.getLastStreamParams(movie);
-
-                        function renderButtons(currentParams) {
-                            if (!currentParams) {
-                                if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty) {
-                                    render.find('.button--continue-watch-ddd-debug').remove();
-                                    getWatchContainer(render).prepend(createStatusButton(movie));
-                                }
-                                return;
-                            }
-
-                            var existing = render.find('.button--continue-watch-ddd').first();
-
-                            if (existing.length) {
-                                existing.replaceWith(createButton(movie, currentParams));
-                            } else {
-                                insertIntoWatchContainer(render, createButton(movie, currentParams));
-                            }
-
-                            if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty) {
-                                render.find('.button--continue-watch-ddd-debug').remove();
-                                var debugButton = createStatusButton(movie);
-                                getWatchContainer(render).find('> .button--continue-watch-ddd').after(debugButton);
-                            }
-                        }
-
-                        renderButtons(params);
-
-                        PlayerManager.refreshRemote(movie, params, renderButtons);
-                    } catch (e) {
-                        Utils.error('Button render failed', e);
-                    }
-                });
+                scheduleCardRender(event, 0, event.type === 'complite');
+                scheduleCardRender(event, 250, false);
+                scheduleCardRender(event, 1000, false);
             });
+
+            try {
+                if (window.MutationObserver && document.body) {
+                    cardObserver = new MutationObserver(queueCardScan);
+                    cardObserver.observe(document.body, { childList: true, subtree: true });
+                }
+            } catch (e) {}
+
+            cardScanTimer = setInterval(scanActiveCard, 1200);
+            setTimeout(scanActiveCard, 250);
         }
 
         return {
@@ -4158,9 +4259,14 @@
     // Init
     // ============================================================
 
+    var initStarted = false;
+
     function init() {
+        if (initStarted) return;
+        initStarted = true;
+
         try {
-            Utils.noty('loaded ' + PLUGIN_VERSION, false, 1);
+            Utils.noty('CW active ' + PLUGIN_VERSION, true, 0);
             Utils.log('Init', PLUGIN_VERSION);
 
             StorageManager.ensureSync();
@@ -4178,6 +4284,7 @@
             window.__CONTINUE_WATCH_DDD_LAYER_V3_VERSION__ = PLUGIN_VERSION;
             window.__CONTINUE_WATCH_TRANSPORT_NEUTRAL_READY__ = true;
         } catch (e) {
+            initStarted = false;
             window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ = false;
             window.__CONTINUE_WATCH_DDD_LAYER_V3_LOADING__ = false;
             window.__CONTINUE_WATCH_DDD_LAYER_V3_VERSION__ = PLUGIN_VERSION + ':init-error';
@@ -4201,5 +4308,10 @@
                 init();
             }
         });
+
+        // External plugin caches can finish after the one-shot app:ready event.
+        // A delayed guarded init keeps the UI layer deterministic in that case.
+        setTimeout(init, 1200);
+        setTimeout(init, 4000);
     }
 })();
