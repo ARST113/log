@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.40-standalone-resume-fallback-20260723';
+    var BOOT_VERSION = 'v4.0.41-merge-profile-storage-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -865,7 +865,60 @@
 
             if (!memoryCache) {
                 try {
-                    memoryCache = Lampa.Storage.get(getActiveStorageKey(), {});
+                    var activeKey = getActiveStorageKey();
+                    memoryCache = Lampa.Storage.get(activeKey, {});
+
+                    if (!memoryCache || typeof memoryCache !== 'object') memoryCache = {};
+
+                    if (activeKey !== CONFIG.storageBaseKey) {
+                        var legacy = Lampa.Storage.get(CONFIG.storageBaseKey, {});
+                        var mergedLegacy = false;
+
+                        if (legacy && typeof legacy === 'object') {
+                            Object.keys(legacy).forEach(function (key) {
+                                if (key === '__last_by_movie') return;
+
+                                var legacyItem = legacy[key];
+                                var activeItem = memoryCache && memoryCache[key];
+
+                                if (
+                                    legacyItem &&
+                                    typeof legacyItem === 'object' &&
+                                    (
+                                        !activeItem ||
+                                        Number(legacyItem.timestamp || 0) > Number(activeItem.timestamp || 0)
+                                    )
+                                ) {
+                                    memoryCache[key] = legacyItem;
+                                    mergedLegacy = true;
+                                }
+                            });
+
+                            if (legacy.__last_by_movie && typeof legacy.__last_by_movie === 'object') {
+                                if (!memoryCache.__last_by_movie) memoryCache.__last_by_movie = {};
+
+                                Object.keys(legacy.__last_by_movie).forEach(function (movieKey) {
+                                    var legacyPointer = legacy.__last_by_movie[movieKey];
+                                    var activePointer = memoryCache.__last_by_movie[movieKey];
+
+                                    if (
+                                        legacyPointer &&
+                                        legacyPointer.hash &&
+                                        memoryCache[legacyPointer.hash] &&
+                                        (
+                                            !activePointer ||
+                                            Number(legacyPointer.timestamp || 0) > Number(activePointer.timestamp || 0)
+                                        )
+                                    ) {
+                                        memoryCache.__last_by_movie[movieKey] = legacyPointer;
+                                        mergedLegacy = true;
+                                    }
+                                });
+                            }
+
+                            if (mergedLegacy) Lampa.Storage.set(activeKey, memoryCache);
+                        }
+                    }
                 } catch (e) {
                     Utils.error('Storage get failed', e);
                     memoryCache = {};
