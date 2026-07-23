@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.33-register-resume-button-20260723';
+    var BOOT_VERSION = 'v4.0.34-bind-visible-resume-clones-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -3978,6 +3978,11 @@
                     '.button--continue-watch-ddd.button-mode-2:after{' +
                         'display:none!important;' +
                     '}' +
+
+                    '.button--continue-watch-ddd.button-mode-2:hover span,' +
+                    '.button--continue-watch-ddd.button-mode-2.focus span{' +
+                        'display:inline-block!important;' +
+                    '}' +
         
                     '/* buttons.js mode 3: текст и подпись всегда видны */' +
                     '.button--continue-watch-ddd.button-mode-3:after{' +
@@ -4112,6 +4117,10 @@
                     existing.replaceWith(createButton(movie, currentParams));
                 }
 
+                render.find('.button--continue-watch-ddd').each(function () {
+                    bindLaunch($(this), movie);
+                });
+
                 refreshCardController(render);
 
                 if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty && !debugButton.length) {
@@ -4175,18 +4184,20 @@
                     var current = Lampa.Controller && Lampa.Controller.enabled
                         ? Lampa.Controller.enabled()
                         : null;
-                    var button = render && render.find
-                        ? render.find('.button--continue-watch-ddd').first()
+                    var buttons = render && render.find
+                        ? render.find('.button--continue-watch-ddd').filter(function () {
+                            return this.offsetParent !== null;
+                        })
                         : null;
 
                     if (
                         current &&
                         current.name === 'full_start' &&
-                        button &&
-                        button.length &&
+                        buttons &&
+                        buttons.length &&
                         Lampa.Controller.collectionAppend
                     ) {
-                        Lampa.Controller.collectionAppend(button);
+                        Lampa.Controller.collectionAppend(buttons);
                     }
                 } catch (e) {
                     Utils.error('Card controller refresh failed', e);
