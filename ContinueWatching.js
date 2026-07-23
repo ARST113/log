@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var BOOT_VERSION = 'v4.0.51-native-player-playlists-20260723';
+    var BOOT_VERSION = 'v4.0.53-quiet-native-timeline-20260723';
 
     function rememberBootStatus(phase, details) {
         try {
@@ -83,10 +83,10 @@
     var PLUGIN_NAME = 'ContinueWatchUniversal';
     var PLUGIN_VERSION = BOOT_VERSION;
 
-    var DDD_DEBUG = true;
+    var DDD_DEBUG = false;
 
     try {
-        console.log('[ContinueWatching DDD]', BOOT_VERSION);
+        if (DDD_DEBUG) console.log('[ContinueWatching DDD]', BOOT_VERSION);
     } catch (e) {}
 
     var DEBUG = {
@@ -189,8 +189,8 @@
         }
 
         function showConsole(method, args) {
-            if (!DEBUG.enabled || !DEBUG.console) return;
             if (!window.console) return;
+            if (method !== 'error' && (!DEBUG.enabled || !DEBUG.console)) return;
 
             var fn = console[method] || console.log;
 
@@ -1848,12 +1848,23 @@
         var lastDDDTime = 0;
         var lastSaveByHash = {};
 
-        function canAcceptSource(source) {
-            source = source || 'unknown';
+        function canAcceptSource(event) {
+            event = event || {};
+
+            var source = typeof event === 'string' ? event : (event.source || 'unknown');
+            var type = typeof event === 'string' ? '' : (event.type || '');
 
             if (source === 'ddd') {
                 activeSource = 'ddd';
                 lastDDDTime = Utils.now();
+                return true;
+            }
+
+            // A new native playback session must immediately become authoritative,
+            // even when it starts just after an external DDD player was closed.
+            if (type === 'start') {
+                activeSource = source;
+                lastDDDTime = 0;
                 return true;
             }
 
@@ -1969,7 +1980,7 @@
 
         function consume(event) {
             if (!event || !event.type) return;
-            if (!canAcceptSource(event.source)) return;
+            if (!canAcceptSource(event)) return;
 
             var session = event.session || SessionManager.getCurrent();
             if (!session) {
@@ -3072,6 +3083,7 @@
     var LampaNativeTransport = (function () {
         var installed = false;
         var lastTimelineHash = '';
+        var lastSavedTimelineAtByHash = {};
         var lastBridgeLaunchSid = '';
         var lastBridgeLaunchAt = 0;
 
@@ -3254,7 +3266,30 @@
 
             if (!session) session = SessionManager.getByHash(hash);
 
-            if (!timelineBelongsToSession(hash, session)) return;
+            if (!timelineBelongsToSession(hash, session)) {
+                var stored = StorageManager.getParams();
+                var storedParams = stored && stored[hash];
+
+                if (!storedParams) return;
+
+                var current = Utils.now();
+                var lastSaved = Number(lastSavedTimelineAtByHash[hash] || 0);
+
+                if (current - lastSaved < 1000) return;
+
+                lastSavedTimelineAtByHash[hash] = current;
+                lastTimelineHash = hash;
+
+                StorageManager.saveStreamParams(hash, {
+                    time: Number(road.time || 0),
+                    duration: Number(road.duration || 0),
+                    percent: Number(road.percent || 0),
+                    last_source: 'lampa',
+                    last_event_type: 'timeline_update'
+                }, true);
+
+                return;
+            }
 
             lastTimelineHash = hash;
 
@@ -3814,12 +3849,31 @@
             var episode = Number(params.episode || 0);
             var hash = StorageManager.generateTimelineHash(movie, season, episode);
             var timeline = hash && Lampa.Timeline && Lampa.Timeline.view ? Lampa.Timeline.view(hash) : null;
+            var resumeTime = Math.max(
+                Number(params.time || params.position || 0),
+                Number(timeline && timeline.time || 0)
+            );
+            var resumeDuration = Math.max(
+                Number(params.duration || 0),
+                Number(timeline && timeline.duration || 0)
+            );
+            var resumePercent = Math.max(
+                Number(params.percent || 0),
+                Number(timeline && timeline.percent || 0)
+            );
 
-            if (timeline && params.time && (!timeline.time || Number(params.time) > Number(timeline.time || 0))) {
-                timeline.time = Number(params.time || 0);
-                timeline.duration = Number(params.duration || 0);
-                timeline.percent = Number(params.percent || 0);
+            if (!resumePercent && resumeTime > 0 && resumeDuration > 0) {
+                resumePercent = Math.round(resumeTime / resumeDuration * 100);
             }
+
+            resumePercent = Utils.clamp(resumePercent, 0, 100);
+
+            if (!timeline) timeline = {};
+
+            timeline.hash = hash;
+            timeline.time = resumeTime;
+            timeline.duration = resumeDuration;
+            timeline.percent = resumePercent;
 
             var playlist = rebuildPlaylistForLaunch(params);
 
@@ -3844,6 +3898,10 @@
                 card: movie,
                 movie: movie,
                 timeline: timeline,
+                time: resumeTime,
+                position: resumeTime > 0 ? resumeTime : -1,
+                duration: resumeDuration,
+                percent: resumePercent,
                 playlist: playlist,
                 playlist_index: playlistIndex,
                 start_index: playlistIndex,
