@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.31-focusable-resume-button-20260723';
+    var BOOT_VERSION = 'v4.0.32-refresh-card-controller-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -3723,6 +3723,7 @@
         var cardScanTimer = null;
         var cardScanQueued = false;
         var lastRemoteRefreshToken = '';
+        var controllerRefreshTimer = null;
 
         function removeContinueButtons(render) {
             try {
@@ -4107,6 +4108,7 @@
 
                 if (!existing.length) {
                     insertIntoWatchContainer(render, createButton(movie, currentParams));
+                    refreshCardController();
                 } else if (String(existing.attr('data-cwu-state') || '') !== stateKey) {
                     existing.replaceWith(createButton(movie, currentParams));
                 }
@@ -4164,6 +4166,23 @@
             if (cardScanQueued) return;
             cardScanQueued = true;
             setTimeout(scanActiveCard, 120);
+        }
+
+        function refreshCardController() {
+            clearTimeout(controllerRefreshTimer);
+            controllerRefreshTimer = setTimeout(function () {
+                try {
+                    var current = Lampa.Controller && Lampa.Controller.enabled
+                        ? Lampa.Controller.enabled()
+                        : null;
+
+                    if (current && current.name === 'full_start' && Lampa.Controller.enable) {
+                        Lampa.Controller.enable('full_start');
+                    }
+                } catch (e) {
+                    Utils.error('Card controller refresh failed', e);
+                }
+            }, 80);
         }
 
         function install() {
