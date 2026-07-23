@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.39-allbuttons-continue-alias-20260723';
+    var BOOT_VERSION = 'v4.0.40-standalone-resume-fallback-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -3962,6 +3962,29 @@
                 });
         }
 
+        function ensureStandaloneContinueButton(render, movie, params) {
+            var visible = render.find('.button--continue-watch-ddd').filter(function () {
+                return this.offsetParent !== null;
+            });
+
+            if (visible.length) return;
+
+            var existing = render.find('.continue-watch-ddd-standalone').first();
+            var button = existing.length ? existing : createButton(movie, params);
+
+            if (!existing.length) {
+                button
+                    .removeClass('full-start__button button--continue-watch view--continue-watch')
+                    .addClass('continue-watch-ddd-standalone')
+                    .removeAttr('data-buttons-plugin-id');
+
+                getWatchContainer(render).before(button);
+            }
+
+            bindLaunch(button, movie);
+            refreshCardController(render);
+        }
+
         function injectButtonCompatStyles() {
             try {
                 var css =
@@ -3971,6 +3994,23 @@
         
                     '.button--continue-watch-ddd{' +
                         'opacity:1!important;' +
+                    '}' +
+
+                    '.continue-watch-ddd-standalone{' +
+                        'display:inline-flex!important;' +
+                        'align-items:center;' +
+                        'gap:.55em;' +
+                        'padding:.58em 1em;' +
+                        'margin:0 0 .75em 0;' +
+                        'border-radius:.3em;' +
+                        'background:rgba(0,0,0,.42);' +
+                        'cursor:pointer;' +
+                    '}' +
+
+                    '.continue-watch-ddd-standalone.focus,' +
+                    '.continue-watch-ddd-standalone:hover{' +
+                        'background:#fff;' +
+                        'color:#000;' +
                     '}' +
         
                     '.button--continue-watch-ddd span{' +
@@ -4163,6 +4203,10 @@
                     pinVisibleContinueButtons();
                     refreshCardController(render);
                 }, 350);
+
+                setTimeout(function () {
+                    ensureStandaloneContinueButton(render, movie, currentParams);
+                }, 1100);
 
                 if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty && !debugButton.length) {
                     debugButton = createStatusButton(movie);
