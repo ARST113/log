@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.38-pin-resume-before-torrents-20260723';
+    var BOOT_VERSION = 'v4.0.39-allbuttons-continue-alias-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -3882,7 +3882,7 @@
             } catch (e) {}
 
             var html =
-                '<div class="full-start__button selector view--continue-watch button--continue-watch-ddd continue-watch-ddd-source" ' +
+                '<div class="full-start__button selector view--continue-watch button--continue-watch button--continue-watch-ddd continue-watch-ddd-source" ' +
                     'data-buttons-plugin-id="continue_watch_universal" ' +
                     'data-cwu-movie-key="' + escapeHtml(movieKey) + '" ' +
                     'data-cwu-state="' + escapeHtml(stateKey) + '" ' +
