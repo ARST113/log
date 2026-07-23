@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.35-bind-global-resume-clones-20260723';
+    var BOOT_VERSION = 'v4.0.36-bind-click-resume-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -3829,25 +3829,35 @@
         }
 
         function bindLaunch(button, movie) {
+            function launch() {
+                var now = Date.now();
+                var lastLaunchAt = Number(button.data('continueWatchUniversalLaunchAt') || 0);
+
+                if (now - lastLaunchAt < 900) return false;
+
+                button.data('continueWatchUniversalLaunchAt', now);
+
+                var activeMovie = movie || getActiveMovieFromCard();
+                var params = activeMovie ? StorageManager.getLastStreamParams(activeMovie) : null;
+
+                if (!activeMovie || !params) {
+                    try {
+                        Lampa.Noty.show('Нет истории просмотров');
+                    } catch (e) {}
+
+                    return false;
+                }
+
+                PlayerManager.launchFromContinue(activeMovie, params);
+
+                return false;
+            }
+
             button
                 .off('click.continueWatchUniversalLaunch')
                 .off('hover:enter.continueWatchUniversalLaunch')
-                .on('hover:enter.continueWatchUniversalLaunch', function () {
-                    var activeMovie = movie || getActiveMovieFromCard();
-                    var params = activeMovie ? StorageManager.getLastStreamParams(activeMovie) : null;
-
-                    if (!activeMovie || !params) {
-                        try {
-                            Lampa.Noty.show('Нет истории просмотров');
-                        } catch (e) {}
-
-                        return false;
-                    }
-
-                    PlayerManager.launchFromContinue(activeMovie, params);
-
-                    return false;
-                });
+                .on('click.continueWatchUniversalLaunch', launch)
+                .on('hover:enter.continueWatchUniversalLaunch', launch);
         }
 
         function createButton(movie, params) {
