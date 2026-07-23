@@ -3,7 +3,7 @@
 
     if (!window.Lampa) return;
 
-    var BOOT_VERSION = 'v4.0.15-bridge-event-diagnostics-20260723';
+    var BOOT_VERSION = 'v4.0.29-visible-continue-container-20260723';
 
     if (
         window.__CONTINUE_WATCH_DDD_LAYER_V3_READY__ &&
@@ -11,6 +11,19 @@
     ) {
         return;
     }
+
+    var stopPreviousDDDTransport = null;
+
+    try {
+        if (
+            window.ContinueWatchUniversal &&
+            window.ContinueWatchUniversal.ddd &&
+            typeof window.ContinueWatchUniversal.ddd.stop === 'function'
+        ) {
+            stopPreviousDDDTransport = window.ContinueWatchUniversal.ddd.stop;
+            stopPreviousDDDTransport();
+        }
+    } catch (e) {}
 
     window.__CONTINUE_WATCH_DDD_LAYER_V3_LOADING__ = true;
     window.__CONTINUE_WATCH_DDD_LAYER_V3_VERSION__ = BOOT_VERSION;
@@ -20,15 +33,19 @@
 
     var DDD_DEBUG = true;
 
+    try {
+        console.log('[ContinueWatching DDD]', BOOT_VERSION);
+    } catch (e) {}
+
     var DEBUG = {
         enabled: !!DDD_DEBUG,
         console: !!DDD_DEBUG,
         noty: !!DDD_DEBUG,
         notyLevel: DDD_DEBUG ? 3 : 0,
         notyMinIntervalMs: 1200,
-        pollSuccess: !!DDD_DEBUG,
-        pollFail: !!DDD_DEBUG,
-        statusButton: false,
+        pollSuccess: false,
+        pollFail: false,
+        statusButton: true,
         exposeApi: true
     };
 
@@ -51,6 +68,14 @@
         dddFetchTimeoutMs: 1800,
         dddTimelineSaveIntervalMs: 5000,
         dddEventsLimit: 50,
+        dddPcBridgeLaunchEnabled: true,
+        dddLaunchTimeoutMs: 2500,
+        dddRemoteEnabled: true,
+        dddRemoteBaseUrl: 'http://lampac.fun',
+        dddRemoteEventsPath: '/ddd-sync/v1/events',
+        dddRemoteLatestPath: '/ddd-sync/v1/latest',
+        dddRemoteDeviceStorageKey: 'ddd_sync_device_id_v1',
+        dddRemoteDeviceId: 'lampa_pico_PA921CMGK6120092G',
 
         minSaveSeconds: 8,
         minDurationSeconds: 60,
@@ -73,6 +98,7 @@
     var Utils = (function () {
         var lastNotyMessage = '';
         var lastNotyTime = 0;
+        var lastActivityMovie = null;
 
         function now() {
             return Date.now ? Date.now() : new Date().getTime();
@@ -402,6 +428,14 @@
             return getPlatformKind() === 'android';
         }
 
+        function isAndroidUserAgent() {
+            try {
+                return /android/i.test(String(navigator.userAgent || ''));
+            } catch (e) {
+                return false;
+            }
+        }
+
         function getTorrentPlayerType() {
             try {
                 return String(Lampa.Storage.field('player_torrent') || '');
@@ -688,10 +722,25 @@
         function getActivityMovie() {
             try {
                 var active = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
-                if (active && active.movie) return active.movie;
+                var movie = active && (
+                    active.movie ||
+                    active.card ||
+                    (active.params && active.params.movie)
+                );
+
+                if (movie) {
+                    lastActivityMovie = movie;
+                    return movie;
+                }
             } catch (e) {}
 
-            return null;
+            return lastActivityMovie;
+        }
+
+        function rememberActivityMovie(movie) {
+            if (movie && typeof movie === 'object') lastActivityMovie = movie;
+
+            return lastActivityMovie;
         }
 
         return {
@@ -717,6 +766,7 @@
             copyImageFields: copyImageFields,
             getPlatformKind: getPlatformKind,
             isAndroidPlatform: isAndroidPlatform,
+            isAndroidUserAgent: isAndroidUserAgent,
             getTorrentPlayerType: getTorrentPlayerType,
             isExternalTorrentPlayer: isExternalTorrentPlayer,
             shouldUseDDDLayer: shouldUseDDDLayer,
@@ -729,7 +779,8 @@
             isJapaneseSeries: isJapaneseSeries,
             getStreamFileNameFromData: getStreamFileNameFromData,
             shallowClone: shallowClone,
-            getActivityMovie: getActivityMovie
+            getActivityMovie: getActivityMovie,
+            rememberActivityMovie: rememberActivityMovie
         };
     })();
 
@@ -1398,6 +1449,13 @@
                 sid: session.sid || ''
             };
 
+            if (session.selectedAudioTrack) data.selected_audio_track = session.selectedAudioTrack;
+            if (session.selectedAudioTrackId) data.selected_audio_track_id = session.selectedAudioTrackId;
+            if (session.selectedAudioTrackIndex !== undefined && session.selectedAudioTrackIndex !== null && session.selectedAudioTrackIndex !== '') data.selected_audio_track_index = session.selectedAudioTrackIndex;
+            if (session.selectedAudioTrackLanguage) data.selected_audio_track_language = session.selectedAudioTrackLanguage;
+            if (session.selectedAudioTrackMime) data.selected_audio_track_mime = session.selectedAudioTrackMime;
+            if (session.selectedAudioTrackChannels !== undefined && session.selectedAudioTrackChannels !== null && session.selectedAudioTrackChannels !== '') data.selected_audio_track_channels = session.selectedAudioTrackChannels;
+
             if (image) {
                 Utils.copyImageFields(data, image);
             }
@@ -1481,6 +1539,15 @@
                 hash: timelineHash,
                 createdAt: Utils.now(),
                 updatedAt: Utils.now(),
+                lampaTime: Number(data.time || data.position || (data.timeline && data.timeline.time) || 0),
+                lampaDuration: Number(data.duration || (data.timeline && data.timeline.duration) || 0),
+                lampaPercent: Number(data.percent || (data.timeline && data.timeline.percent) || 0),
+                selectedAudioTrack: firstDefined(data.selected_audio_track, data.selectedAudioTrack, data.ddd_audio_track, ''),
+                selectedAudioTrackId: firstDefined(data.selected_audio_track_id, data.selectedAudioTrackId, data.ddd_audio_track_id, ''),
+                selectedAudioTrackIndex: firstDefined(data.selected_audio_track_index, data.selectedAudioTrackIndex, data.ddd_audio_track_index, ''),
+                selectedAudioTrackLanguage: firstDefined(data.selected_audio_track_language, data.selectedAudioTrackLanguage, data.ddd_audio_track_language, ''),
+                selectedAudioTrackMime: firstDefined(data.selected_audio_track_mime, data.selectedAudioTrackMimeType, data.ddd_audio_track_mime, ''),
+                selectedAudioTrackChannels: firstDefined(data.selected_audio_track_channels, data.selectedAudioTrackChannels, data.ddd_audio_track_channels, ''),
                 lastRoad: null,
                 params: null
             };
@@ -1703,17 +1770,74 @@
             return session;
         }
 
+        function applyTrackSelectionParams(params, payload) {
+            if (!params || !payload) return false;
+
+            var trackType = String(payload.trackType || '').toLowerCase();
+            if (trackType && trackType !== 'audio' && !payload.selectedAudioTrack) return false;
+
+            var changed = false;
+
+            function set(key, value) {
+                if (value === undefined || value === null || value === '') return;
+                if (params[key] !== value) {
+                    params[key] = value;
+                    changed = true;
+                }
+            }
+
+            set('selected_audio_track', payload.selectedAudioTrack || payload.audioTrack || payload.label);
+            set('selected_audio_track_id', payload.selectedAudioTrackId || payload.trackId);
+            set(
+                'selected_audio_track_index',
+                payload.selectedAudioTrackIndex !== undefined ? payload.selectedAudioTrackIndex : payload.trackIndex
+            );
+            set('selected_audio_track_language', payload.selectedAudioTrackLanguage || payload.language);
+            set('selected_audio_track_mime', payload.selectedAudioTrackMimeType || payload.sampleMimeType);
+            set(
+                'selected_audio_track_channels',
+                payload.selectedAudioTrackChannels !== undefined ? payload.selectedAudioTrackChannels : payload.channelCount
+            );
+
+            return changed;
+        }
+
+        function applyTrackSelectionToSession(session, params) {
+            if (!session || !params) return;
+
+            session.selectedAudioTrack = params.selected_audio_track || session.selectedAudioTrack || '';
+            session.selectedAudioTrackId = params.selected_audio_track_id || session.selectedAudioTrackId || '';
+            session.selectedAudioTrackIndex = params.selected_audio_track_index !== undefined ? params.selected_audio_track_index : session.selectedAudioTrackIndex;
+            session.selectedAudioTrackLanguage = params.selected_audio_track_language || session.selectedAudioTrackLanguage || '';
+            session.selectedAudioTrackMime = params.selected_audio_track_mime || session.selectedAudioTrackMime || '';
+            session.selectedAudioTrackChannels = params.selected_audio_track_channels !== undefined ? params.selected_audio_track_channels : session.selectedAudioTrackChannels;
+        }
+
         function consume(event) {
             if (!event || !event.type) return;
             if (!canAcceptSource(event.source)) return;
 
             var session = event.session || SessionManager.getCurrent();
-            if (!session) return;
+            if (!session) {
+                if (DEBUG.enabled && event.source === 'ddd' && event.force) {
+                    Utils.noty('DDD save skipped: no session ' + (event.rawType || event.type || ''), true, 0);
+                }
+                return;
+            }
 
             session = enrichSessionFromEvent(session, event);
 
             var hash = event.hash || session.hash;
-            if (!hash) return;
+            if (!hash) {
+                if (DEBUG.enabled && event.source === 'ddd' && event.force) {
+                    Utils.noty(
+                        'DDD save skipped: no hash S' + (session.season || 0) + 'E' + (session.episode || 0),
+                        true,
+                        0
+                    );
+                }
+                return;
+            }
 
             var time = Number(event.time || 0);
             var duration = Number(event.duration || 0);
@@ -1731,6 +1855,16 @@
             params.last_source = event.source || '';
             params.last_event_type = event.rawType || event.type || '';
             params.last_reason = event.reason || '';
+
+            var trackChanged = applyTrackSelectionParams(params, event.rawPayload || event);
+            if (trackChanged) {
+                applyTrackSelectionToSession(session, params);
+                session.params = params;
+                SessionManager.register(session);
+                StorageManager.saveStreamParams(hash, params, true);
+
+                if (event.rawType === 'track_selection_changed' || event.type === 'track_selection_changed') return;
+            }
 
             if (event.type === 'start') {
                 StorageManager.saveStreamParams(hash, params, true);
@@ -1757,7 +1891,17 @@
                     }
                 }
 
-                StorageManager.saveStreamParams(hash, params, true);
+                var saved = StorageManager.saveStreamParams(hash, params, true);
+
+                if (DEBUG.enabled && event.source === 'ddd' && (event.type === 'stop' || event.type === 'error')) {
+                    Utils.noty(
+                        'DDD save=' + (saved ? 'yes' : 'no') +
+                        ' S' + (session.season || 0) + 'E' + (session.episode || 0) +
+                        ' t=' + Math.floor(time || 0),
+                        true,
+                        0
+                    );
+                }
 
                 SessionManager.updateRoad({
                     hash: hash,
@@ -1794,8 +1938,6 @@
         var lastGoodAt = 0;
         var lastEventsError = '';
         var lastStateError = '';
-        var lastPlaylistUpdateKey = '';
-        var lastPlaylistUpdateAt = 0;
 
         function baseUrl() {
             return CONFIG.dddHost.replace(/\/$/, '') + ':' + CONFIG.dddPort;
@@ -1991,6 +2133,110 @@
             });
         }
 
+        function postWithBrowserFetch(url, body, timeoutMs, call) {
+            var finished = false;
+            var timer = null;
+            var controller = null;
+
+            function done(err, json) {
+                if (finished) return;
+                finished = true;
+
+                if (timer) clearTimeout(timer);
+
+                call(err, json);
+            }
+
+            timer = setTimeout(function () {
+                try {
+                    if (controller) controller.abort();
+                } catch (e) {}
+
+                done(new Error('post fetch timeout'), null);
+            }, timeoutMs);
+
+            try {
+                if (window.AbortController) controller = new AbortController();
+            } catch (e1) {}
+
+            try {
+                fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json; charset=utf-8'
+                    },
+                    body: JSON.stringify(body || {}),
+                    signal: controller ? controller.signal : undefined
+                })
+                    .then(function (res) {
+                        if (!res || !res.ok) throw new Error('post fetch HTTP ' + (res ? res.status : 0));
+                        return res.json();
+                    })
+                    .then(function (json) {
+                        done(null, json);
+                    })
+                    .catch(function (err) {
+                        done(err || new Error('post fetch failed'), null);
+                    });
+            } catch (e2) {
+                done(e2, null);
+            }
+        }
+
+        function postWithXhr(url, body, timeoutMs, call) {
+            var xhr;
+
+            try {
+                xhr = new XMLHttpRequest();
+                xhr.open('POST', url, true);
+                xhr.timeout = timeoutMs;
+                xhr.setRequestHeader('Content-Type', 'application/json; charset=utf-8');
+
+                xhr.onreadystatechange = function () {
+                    if (xhr.readyState !== 4) return;
+
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        var json = parseJsonMaybe(xhr.responseText);
+                        if (!json) return call(new Error('post xhr invalid json'), null);
+                        return call(null, json);
+                    }
+
+                    call(new Error('post xhr HTTP ' + xhr.status), null);
+                };
+
+                xhr.onerror = function () {
+                    call(new Error('post xhr network error'), null);
+                };
+
+                xhr.ontimeout = function () {
+                    call(new Error('post xhr timeout'), null);
+                };
+
+                xhr.send(JSON.stringify(body || {}));
+            } catch (e) {
+                call(e, null);
+            }
+        }
+
+        function postJson(url, body, call) {
+            var timeoutMs = CONFIG.dddLaunchTimeoutMs || CONFIG.dddFetchTimeoutMs;
+            var errors = [];
+
+            postWithBrowserFetch(url, body, timeoutMs, function (fetchErr, fetchJsonResult) {
+                if (!fetchErr && fetchJsonResult) return call(null, fetchJsonResult);
+
+                errors.push(fetchErr && fetchErr.message ? fetchErr.message : String(fetchErr || 'post fetch failed'));
+
+                postWithXhr(url, body, timeoutMs, function (xhrErr, xhrJsonResult) {
+                    if (!xhrErr && xhrJsonResult) return call(null, xhrJsonResult);
+
+                    errors.push(xhrErr && xhrErr.message ? xhrErr.message : String(xhrErr || 'post xhr failed'));
+
+                    call(new Error(errors.join(' | ')), null);
+                });
+            });
+        }
+
         function fetchFirstJson(urls, label, call) {
             var index = 0;
             var errors = [];
@@ -2018,103 +2264,26 @@
             next();
         }
 
-        function postFormJson(url, params, call) {
-            var body = Utils.encodeParams(params || {});
-            var finished = false;
-            var timer = null;
-
-            function done(err, json) {
-                if (finished) return;
-                finished = true;
-
-                if (timer) clearTimeout(timer);
-
-                call(err, json);
-            }
-
-            timer = setTimeout(function () {
-                done(new Error('post timeout'), null);
-            }, CONFIG.dddFetchTimeoutMs);
-
-            try {
-                if (typeof fetch === 'function') {
-                    fetch(url, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-                        },
-                        body: body
-                    })
-                        .then(function (res) {
-                            if (!res || !res.ok) throw new Error('post HTTP ' + (res ? res.status : 0));
-                            return res.json();
-                        })
-                        .then(function (json) {
-                            done(null, json);
-                        })
-                        .catch(function (err) {
-                            done(err || new Error('post failed'), null);
-                        });
-
-                    return;
-                }
-            } catch (e1) {
-                done(e1, null);
-                return;
-            }
-
-            try {
-                var xhr = new XMLHttpRequest();
-                xhr.open('POST', url, true);
-                xhr.timeout = CONFIG.dddFetchTimeoutMs;
-                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
-
-                xhr.onreadystatechange = function () {
-                    if (xhr.readyState !== 4) return;
-
-                    if (xhr.status >= 200 && xhr.status < 300) {
-                        var json = parseJsonMaybe(xhr.responseText);
-                        if (!json) return done(new Error('post invalid json'), null);
-                        return done(null, json);
-                    }
-
-                    done(new Error('post HTTP ' + xhr.status), null);
-                };
-
-                xhr.onerror = function () {
-                    done(new Error('post network error'), null);
-                };
-
-                xhr.ontimeout = function () {
-                    done(new Error('post timeout'), null);
-                };
-
-                xhr.send(body);
-            } catch (e2) {
-                done(e2, null);
-            }
-        }
-
-        function postFirstJson(urls, label, params, call) {
+        function postFirstJson(urls, label, body, call) {
             var index = 0;
             var errors = [];
 
             function next() {
                 if (index >= urls.length) {
-                    return call(new Error(errors.join(' || ') || 'all posts failed'), null);
+                    return call(new Error(errors.join(' || ') || 'all post requests failed'), null);
                 }
 
                 var url = urls[index++];
 
-                postFormJson(url, params, function (err, json) {
-                    if (!err && json && json.ok !== false) {
-                        if (DEBUG.pollSuccess) Utils.log('DDD ' + label + ' post ok', url);
+                postJson(url, body, function (err, json) {
+                    if (!err && json) {
+                        if (DEBUG.pollSuccess) Utils.log('DDD ' + label + ' ok', url);
                         lastGoodAt = Utils.now();
 
                         return call(null, json);
                     }
 
-                    errors.push(url + ' => ' + (err && err.message ? err.message : (json && json.error) || err));
+                    errors.push(url + ' => ' + (err && err.message ? err.message : err));
                     next();
                 });
             }
@@ -2126,46 +2295,207 @@
             return Utils.shouldUseDDDLayer();
         }
 
-        function canInlinePlaylistInUrl(playlistJson) {
-            return playlistJson && playlistJson.length <= 120000;
+        function shouldLaunchViaLocalBridge() {
+            var platform = Utils.getPlatformKind();
+            var player = Utils.getTorrentPlayerType();
+            var external = Utils.isExternalTorrentPlayer();
+            var androidPlatform = platform === 'android';
+            var mpcLike = /mpc/i.test(player || '');
+            var windowsUA = false;
+
+            try {
+                windowsUA = /windows|win32|win64/i.test(String(navigator.userAgent || ''));
+            } catch (e) {}
+
+            var result = !!CONFIG.dddPcBridgeLaunchEnabled && external && (windowsUA || !androidPlatform || mpcLike);
+
+            Utils.log(
+                'DDD local bridge decision',
+                'enabled=' + (!!CONFIG.dddPcBridgeLaunchEnabled),
+                'platform=' + platform,
+                'uaAndroid=' + Utils.isAndroidUserAgent(),
+                'uaWindows=' + windowsUA,
+                'player=' + player,
+                'external=' + external,
+                'mpcLike=' + mpcLike,
+                'result=' + result
+            );
+
+            return result;
         }
 
-        function canInlinePlaylistInIntent(playlistJson) {
-            return playlistJson && playlistJson.length <= 200000;
+        function getRemoteBaseUrl() {
+            var configured = String(CONFIG.dddRemoteBaseUrl || '').trim();
+            if (configured) return configured.replace(/\/+$/, '');
+
+            try {
+                if (window.location && /^https?:$/i.test(window.location.protocol || '')) {
+                    return window.location.protocol + '//' + window.location.host;
+                }
+            } catch (e) {}
+
+            return '';
         }
 
-        function serializePlaylistForBridge(playlist) {
-            if (!Array.isArray(playlist) || !playlist.length) return '';
+        function makeRemoteUrl(pathOrUrl) {
+            pathOrUrl = String(pathOrUrl || '').trim();
+            if (!pathOrUrl) return '';
+            if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
 
-            var normalized = [];
+            var base = getRemoteBaseUrl();
+            if (!base) return '';
 
-            playlist.forEach(function (item, i) {
-                if (!item || typeof item !== 'object') return;
+            return base + '/' + pathOrUrl.replace(/^\/+/, '');
+        }
 
-                var itemUrl = item.url || item.uri || item.src || item.link || '';
-                if (!itemUrl || typeof itemUrl !== 'string') return;
+        function storageGetValue(key) {
+            try {
+                if (Lampa.Storage && Lampa.Storage.get) {
+                    return Lampa.Storage.get(key, '') || '';
+                }
+            } catch (e) {}
 
-                normalized.push({
-                    index: i,
-                    title: item.title || item.name || item.fname || '',
-                    subtitle: item.subtitle || '',
-                    season: item.season || 0,
-                    episode: item.episode || 0,
-                    path: item.path || '',
-                    url: Utils.stripFragment(itemUrl)
-                });
+            try {
+                return localStorage.getItem(key) || '';
+            } catch (e) {}
+
+            return '';
+        }
+
+        function storageSetValue(key, value) {
+            try {
+                if (Lampa.Storage && Lampa.Storage.set) {
+                    Lampa.Storage.set(key, value);
+                    return;
+                }
+            } catch (e) {}
+
+            try {
+                localStorage.setItem(key, value);
+            } catch (e) {}
+        }
+
+        function getRemoteDeviceId() {
+            var configured = String(CONFIG.dddRemoteDeviceId || '').trim();
+            if (configured) return configured;
+
+            var key = CONFIG.dddRemoteDeviceStorageKey || 'ddd_sync_device_id_v1';
+            var id = storageGetValue(key);
+            if (id) return id;
+
+            var seed = [
+                getRemoteBaseUrl(),
+                navigator && navigator.userAgent || '',
+                Utils.now(),
+                Math.random()
+            ].join('|');
+
+            try {
+                id = 'lampa_' + Lampa.Utils.hash(seed);
+            } catch (e) {
+                id = 'lampa_' + Math.floor(Math.random() * 1000000000);
+            }
+
+            storageSetValue(key, id);
+            return id;
+        }
+
+        function itemTimelineHash(session, item, index) {
+            session = session || {};
+            item = item || {};
+
+            var season = Number(item.season || item.season_number || item.s || session.season || 0);
+            var episode = Number(item.episode || item.episode_number || item.e || 0);
+
+            if (!episode && session.playlist && session.playlist.length && index !== undefined && index !== null) {
+                episode = Number(index || 0) + 1;
+            }
+
+            try {
+                return StorageManager.generateTimelineHash(session.movie || {}, season, episode) || session.hash || '';
+            } catch (e) {
+                return session.hash || '';
+            }
+        }
+
+        function msFromSeconds(value) {
+            value = Number(value || 0);
+            if (!value || isNaN(value) || value < 0) return 0;
+            return Math.round(value * 1000);
+        }
+
+        function buildRemoteFragmentParams(url, session, item, index) {
+            if (!CONFIG.dddRemoteEnabled) return {};
+
+            session = session || {};
+            item = item || {};
+
+            var eventsUrl = makeRemoteUrl(CONFIG.dddRemoteEventsUrl || CONFIG.dddRemoteEventsPath || '/ddd-sync/v1/events');
+            var latestUrl = makeRemoteUrl(CONFIG.dddRemoteLatestUrl || CONFIG.dddRemoteLatestPath || '/ddd-sync/v1/latest');
+            var deviceId = getRemoteDeviceId();
+
+            if (!eventsUrl || !deviceId) return {};
+
+            var parsed = Utils.parseStreamUrl(url);
+            var sourceKey = Utils.streamIdentity(url || '');
+            var timelineHash = itemTimelineHash(session, item, index);
+            var contentKey = timelineHash || sourceKey || Utils.stripFragment(url || '');
+            var title = item.title || item.name || session.episode_title || session.title || '';
+            var filename = parsed ? parsed.file_name : (item.filename || item.file_name || '');
+            var positionMs = msFromSeconds(session.lampaTime);
+            var durationMs = msFromSeconds(session.lampaDuration);
+            var percent = Number(session.lampaPercent || 0);
+
+            var params = {
+                ddd_remote_events_url: eventsUrl,
+                ddd_remote_schema: 1,
+                ddd_device_id: deviceId,
+                ddd_content_key: contentKey,
+                ddd_source_key: sourceKey,
+                ddd_timeline_hash: timelineHash,
+                ddd_source_kind: parsed ? 'torrserver' : 'url',
+                ddd_title: title,
+                ddd_filename: filename
+            };
+
+            if (latestUrl) params.ddd_remote_latest_url = latestUrl;
+            if (positionMs > 0) params.ddd_lampa_position = positionMs;
+            if (durationMs > 0) params.ddd_lampa_duration = durationMs;
+            if (percent > 0) params.ddd_lampa_percent = Utils.clamp(percent, 0, 100);
+            if (session.selectedAudioTrack) params.ddd_audio_track = session.selectedAudioTrack;
+            if (session.selectedAudioTrackId) params.ddd_audio_track_id = session.selectedAudioTrackId;
+            if (session.selectedAudioTrackIndex !== undefined && session.selectedAudioTrackIndex !== null && session.selectedAudioTrackIndex !== '') params.ddd_audio_track_index = session.selectedAudioTrackIndex;
+            if (session.selectedAudioTrackLanguage) params.ddd_audio_track_language = session.selectedAudioTrackLanguage;
+            if (session.selectedAudioTrackMime) params.ddd_audio_track_mime = session.selectedAudioTrackMime;
+            if (session.selectedAudioTrackChannels !== undefined && session.selectedAudioTrackChannels !== null && session.selectedAudioTrackChannels !== '') params.ddd_audio_track_channels = session.selectedAudioTrackChannels;
+
+            return params;
+        }
+
+        function fetchRemoteLatest(call) {
+            if (!CONFIG.dddRemoteEnabled) return call(new Error('remote disabled'), null);
+
+            var latestUrl = makeRemoteUrl(CONFIG.dddRemoteLatestUrl || CONFIG.dddRemoteLatestPath || '/ddd-sync/v1/latest');
+            var deviceId = getRemoteDeviceId();
+
+            if (!latestUrl || !deviceId) return call(new Error('remote latest unavailable'), null);
+
+            var query = Utils.encodeParams({
+                since: 0,
+                limit: 1000,
+                deviceId: deviceId
             });
+            var url = latestUrl + (latestUrl.indexOf('?') === -1 ? '?' : '&') + query;
 
-            return normalized.length ? Utils.safeJson(normalized) : '';
+            fetchJson(url, call);
         }
 
-        function appendToUrl(url, sid, index, startIndex, playlist) {
+        function appendToUrl(url, sid, index, startIndex, session, item) {
             if (!url || typeof url !== 'string') return url;
 
             index = Number(index || 0);
             startIndex = Number(startIndex || 0);
 
-            var playlistJson = serializePlaylistForBridge(playlist);
             var params = {
                 ddd_mode: CONFIG.dddMode || 'local',
                 ddd_client: CONFIG.dddClient,
@@ -2176,10 +2506,10 @@
                 ddd_start: startIndex
             };
 
-            if (playlistJson) {
-                params.ddd_playlist_size = Array.isArray(playlist) ? playlist.length : 0;
-                if (canInlinePlaylistInUrl(playlistJson)) params.ddd_playlist = playlistJson;
-            }
+            var remoteParams = buildRemoteFragmentParams(url, session, item, index);
+            Object.keys(remoteParams).forEach(function (key) {
+                params[key] = remoteParams[key];
+            });
 
             return Utils.appendFragmentParams(url, params);
         }
@@ -2207,79 +2537,7 @@
             data.ddd_i = Number(data.playlist_index || data.start_index || session.playlistIndex || session.startIndex || 0);
             data.ddd_start = Number(data.playlist_index || data.start_index || session.playlistIndex || session.startIndex || 0);
 
-            var playlistJson = serializePlaylistForBridge(data.playlist || session.playlist);
-            if (playlistJson) {
-                data.ddd_playlist_size = Array.isArray(data.playlist) ? data.playlist.length : session.playlistSize || 0;
-                if (canInlinePlaylistInIntent(playlistJson)) data.ddd_playlist = playlistJson;
-                else delete data.ddd_playlist;
-            }
-
             return data;
-        }
-
-        function updatePlaylist(playlist, startIndex, session, attempt) {
-            if (!canUse()) return;
-            if (!Array.isArray(playlist) || !playlist.length) return;
-
-            var sid = activeSid || (session && session.sid) || '';
-            if (!sid) return;
-
-            attempt = Number(attempt || 0);
-            startIndex = Number(startIndex || 0);
-            if (isNaN(startIndex) || startIndex < 0) startIndex = 0;
-            if (startIndex >= playlist.length) startIndex = playlist.length - 1;
-
-            var playlistJson = serializePlaylistForBridge(playlist);
-            if (!playlistJson) return;
-
-            var firstItem = playlist[0] || {};
-            var lastItem = playlist[playlist.length - 1] || {};
-            var key = [
-                sid,
-                startIndex,
-                playlist.length,
-                playlistJson.length,
-                Utils.stripFragment(firstItem.url || firstItem.uri || firstItem.src || ''),
-                Utils.stripFragment(lastItem.url || lastItem.uri || lastItem.src || '')
-            ].join('|');
-
-            if (!attempt && key === lastPlaylistUpdateKey && Utils.now() - lastPlaylistUpdateAt < 3000) return;
-            if (!attempt) {
-                lastPlaylistUpdateKey = key;
-                lastPlaylistUpdateAt = Utils.now();
-            }
-
-            var token = CONFIG.dddToken || sid;
-            var params = {
-                sid: sid,
-                token: token,
-                ddd_playlist: playlistJson,
-                ddd_playlist_size: playlist.length,
-                ddd_i: startIndex,
-                ddd_start: startIndex
-            };
-
-            var urls = endpointList('/playlist', [
-                { sid: sid, token: token },
-                { sessionId: sid, token: token },
-                { session_id: sid, token: token }
-            ]);
-
-            postFirstJson(urls, 'playlist', params, function (err, json) {
-                if (err || !json || json.ok === false) {
-                    if (attempt < 8) {
-                        return setTimeout(function () {
-                            updatePlaylist(playlist, startIndex, session, attempt + 1);
-                        }, 500 + attempt * 250);
-                    }
-
-                    Utils.warn('DDD playlist update failed', err || json);
-                    return;
-                }
-
-                Utils.log('DDD playlist updated', 'items=' + playlist.length, 'native=' + json.nativePlaylistSize, 'start=' + startIndex);
-                Utils.noty('DDD playlist updated: ' + playlist.length + ' items', false, 2);
-            });
         }
 
         function applyBridgeToPlaylist(data, session) {
@@ -2310,7 +2568,7 @@
                 if (!url || typeof url !== 'string') return;
                 if (!Utils.isStreamUrl(url)) return;
 
-                var patched = appendToUrl(url, session.sid, i, startIndex, data.playlist || session.playlist);
+                var patched = appendToUrl(url, session.sid, i, startIndex, session, item);
 
                 if (item.url !== undefined) item.url = patched;
                 else if (item.uri !== undefined) item.uri = patched;
@@ -2327,9 +2585,57 @@
             return data;
         }
 
+        function launchViaLocalBridge(data, session, call, force) {
+            if (!force && !shouldLaunchViaLocalBridge()) {
+                return call(new Error('local bridge launch disabled'), null);
+            }
+
+            if (!data || !session || !session.sid) {
+                return call(new Error('local bridge launch missing session'), null);
+            }
+
+            var payload = {
+                version: PLUGIN_VERSION,
+                source: 'lampa',
+                session: session,
+                data: data
+            };
+
+            var params = {
+                sid: session.sid,
+                token: CONFIG.dddToken || session.sid
+            };
+
+            fetchFirstJson(endpointList('/ping', [{}]), 'launch-ping', function (pingErr, pingJson) {
+                if (
+                    pingErr ||
+                    !pingJson ||
+                    pingJson.ok === false ||
+                    pingJson.launch !== true
+                ) {
+                    return call(pingErr || new Error('local bridge does not advertise launch'), pingJson);
+                }
+
+                postFirstJson(endpointList('/launch', [params, { sid: session.sid }, {}]), 'launch', payload, function (err, json) {
+                    if (err || !json || json.ok === false) {
+                        return call(err || new Error(json && json.error || 'bad launch response'), json);
+                    }
+
+                    Utils.log('DDD local bridge launch ok', session.sid, json.service || '', json.sessionId || '');
+                    call(null, json);
+                });
+            });
+        }
+
         function activate(session) {
             if (!session || !session.sid) return;
             if (!canUse()) return;
+
+            if (stopPreviousDDDTransport) {
+                try {
+                    stopPreviousDDDTransport();
+                } catch (e) {}
+            }
 
             activeSid = session.sid;
             lastTs = 0;
@@ -2340,7 +2646,13 @@
             lastStateError = '';
 
             Utils.log('DDD activate', activeSid, session.url || '');
-            Utils.noty('DDD: activate ' + activeSid, true, 1);
+            Utils.noty(
+                'DDD activate ' + activeSid +
+                ' hash=' + (session.hash || '-') +
+                ' S' + (session.season || 0) + 'E' + (session.episode || 0),
+                true,
+                1
+            );
 
             startPolling();
         }
@@ -2355,12 +2667,12 @@
             var duration = 0;
             var playlistIndex = payload.windowIndex;
 
+            if (playlistIndex === undefined || playlistIndex === null) playlistIndex = payload.index;
+
             rawType = String(rawType)
                 .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
                 .replace(/[\s-]+/g, '_')
                 .toLowerCase();
-
-            if (playlistIndex === undefined || playlistIndex === null) playlistIndex = payload.index;
 
             if (rawType === 'session_started') type = 'start';
             else if (rawType === 'position_tick') type = 'time';
@@ -2371,6 +2683,7 @@
             else if (rawType === 'playback_ended') type = 'ended';
             else if (rawType === 'session_finished') type = 'stop';
             else if (rawType === 'error') type = 'error';
+            else if (rawType === 'track_selection_changed') type = 'track_selection_changed';
             else return null;
 
             if (rawType === 'seek_completed') time = Utils.msToSeconds(payload.toPosition || payload.position || 0);
@@ -2408,6 +2721,17 @@
         function handleBridgeEvent(event) {
             var normalized = normalizeBridgeEvent(event);
             if (!normalized) return;
+
+            if (
+                DEBUG.enabled &&
+                (normalized.rawType === 'session_finished' || normalized.rawType === 'seek_completed')
+            ) {
+                Utils.noty(
+                    'DDD event ' + normalized.rawType + ' t=' + Math.floor(normalized.time || 0),
+                    true,
+                    0
+                );
+            }
 
             Utils.log('DDD event', normalized.rawType, 'idx=' + normalized.playlist_index, 't=' + normalized.time, normalized.title || '');
 
@@ -2538,6 +2862,7 @@
 
             pollTimer = null;
             activeSid = '';
+            lastTs = 0;
             lastStateTs = 0;
 
             Utils.log('DDD polling stopped');
@@ -2564,10 +2889,12 @@
 
         return {
             canUse: canUse,
+            shouldLaunchViaLocalBridge: shouldLaunchViaLocalBridge,
             appendToUrl: appendToUrl,
             applyBridgeExtras: applyBridgeExtras,
             applyBridgeToPlaylist: applyBridgeToPlaylist,
-            updatePlaylist: updatePlaylist,
+            launchViaLocalBridge: launchViaLocalBridge,
+            fetchRemoteLatest: fetchRemoteLatest,
             activate: activate,
             stopPolling: stopPolling,
             probe: probe,
@@ -2582,6 +2909,8 @@
     var LampaNativeTransport = (function () {
         var installed = false;
         var lastTimelineHash = '';
+        var lastBridgeLaunchSid = '';
+        var lastBridgeLaunchAt = 0;
 
         function getDataFromEvent(event) {
             if (!event) return null;
@@ -2624,7 +2953,92 @@
                     title: session.title,
                     force: true
                 });
+
+                maybeRelaunchViaLocalBridge(data, session, 'player_' + (event && event.type || 'create'));
             }
+        }
+
+        function clonePlaylist(playlist) {
+            if (!Array.isArray(playlist)) return [];
+
+            return playlist.map(function (item) {
+                return Utils.shallowClone(item || {});
+            });
+        }
+
+        function maybeRelaunchViaLocalBridge(data, session, reason) {
+            if (!CONFIG.dddPcBridgeLaunchEnabled) return;
+            if (!DDDTransport.canUse()) return;
+            if (!session || !session.sid) return;
+            if (!Utils.isStreamUrl(session.url || (data && data.url))) return;
+            if (!session.playlist || session.playlist.length <= 1) return;
+
+            var now = Utils.now();
+
+            if (lastBridgeLaunchSid === session.sid && now - lastBridgeLaunchAt < 10000) {
+                return;
+            }
+
+            lastBridgeLaunchSid = session.sid;
+            lastBridgeLaunchAt = now;
+
+            var launchData = Utils.shallowClone(data || {});
+            var playlistIndex = Number(session.playlistIndex || session.startIndex || launchData.playlist_index || launchData.start_index || 0);
+
+            if (isNaN(playlistIndex) || playlistIndex < 0) playlistIndex = 0;
+            if (playlistIndex >= session.playlist.length) playlistIndex = session.playlist.length - 1;
+
+            launchData.url = session.url || launchData.url || launchData.uri || launchData.src || '';
+            launchData.uri = launchData.url;
+            launchData.src = launchData.url;
+            launchData.title = session.title || launchData.title || '';
+            launchData.playlist = clonePlaylist(session.playlist);
+            launchData.playlist_index = playlistIndex;
+            launchData.start_index = playlistIndex;
+            launchData.currentItem = session.currentItem || launchData.playlist[playlistIndex] || null;
+
+            try {
+                DDDTransport.applyBridgeExtras(launchData, session);
+                DDDTransport.applyBridgeToPlaylist(launchData, session);
+                launchData.url = DDDTransport.appendToUrl(
+                    launchData.url,
+                    session.sid,
+                    playlistIndex,
+                    playlistIndex,
+                    session,
+                    launchData.currentItem
+                );
+                launchData.uri = launchData.url;
+                launchData.src = launchData.url;
+                DDDTransport.activate(session);
+            } catch (e) {
+                try {
+                    console.warn('[ContinueWatching DDD] native bridge relaunch prepare failed', e);
+                } catch (ce) {}
+            }
+
+            try {
+                console.log(
+                    '[ContinueWatching DDD] native bridge relaunch attempt',
+                    reason || '',
+                    session.sid,
+                    'items=' + launchData.playlist.length,
+                    'index=' + playlistIndex
+                );
+            } catch (e2) {}
+
+            DDDTransport.launchViaLocalBridge(launchData, session, function (err, json) {
+                if (!err && json && json.ok !== false) {
+                    try {
+                        console.log('[ContinueWatching DDD] native bridge relaunch ok', session.sid, json.sessionId || '');
+                    } catch (e3) {}
+                    return;
+                }
+
+                try {
+                    console.warn('[ContinueWatching DDD] native bridge relaunch failed', err && err.message ? err.message : err);
+                } catch (e4) {}
+            }, true);
         }
 
         function handlePlayerDestroy() {
@@ -2747,9 +3161,128 @@
 
     var PlayerManager = (function () {
         var patched = false;
-        var pendingDDDPlay = null;
-        var recentPlaylist = null;
-        var recentPlaylistAt = 0;
+
+        function applyMergedParamsToSession(session, params) {
+            if (!session || !params) return session;
+
+            if (params.time !== undefined && params.time !== null && params.time !== '') {
+                session.lampaTime = Number(params.time || 0);
+            }
+
+            if (params.duration !== undefined && params.duration !== null && params.duration !== '') {
+                session.lampaDuration = Number(params.duration || 0);
+            }
+
+            if (params.percent !== undefined && params.percent !== null && params.percent !== '') {
+                session.lampaPercent = Number(params.percent || 0);
+            }
+
+            if (params.selected_audio_track) session.selectedAudioTrack = params.selected_audio_track;
+            if (params.selected_audio_track_id) session.selectedAudioTrackId = params.selected_audio_track_id;
+
+            if (
+                params.selected_audio_track_index !== undefined &&
+                params.selected_audio_track_index !== null &&
+                params.selected_audio_track_index !== ''
+            ) {
+                session.selectedAudioTrackIndex = params.selected_audio_track_index;
+            }
+
+            if (params.selected_audio_track_language) session.selectedAudioTrackLanguage = params.selected_audio_track_language;
+            if (params.selected_audio_track_mime) session.selectedAudioTrackMime = params.selected_audio_track_mime;
+
+            if (
+                params.selected_audio_track_channels !== undefined &&
+                params.selected_audio_track_channels !== null &&
+                params.selected_audio_track_channels !== ''
+            ) {
+                session.selectedAudioTrackChannels = params.selected_audio_track_channels;
+            }
+
+            session.params = SessionManager.buildParams(session);
+            return session;
+        }
+
+        function applyDddTransportToPlayData(data, session) {
+            if (!data || !session) return;
+
+            DDDTransport.applyBridgeExtras(data, session);
+            DDDTransport.applyBridgeToPlaylist(data, session);
+
+            data.url = DDDTransport.appendToUrl(
+                data.url,
+                session.sid,
+                data.playlist_index || session.playlistIndex || 0,
+                data.start_index || session.startIndex || 0,
+                session,
+                session.currentItem || data.currentItem || null
+            );
+
+            session.url = Utils.stripFragment(data.url);
+            session.params = SessionManager.buildParams(session);
+            SessionManager.register(session);
+
+            DDDTransport.activate(session);
+
+            Utils.log(
+                'DDD transport selected',
+                session.sid,
+                data.url,
+                'audio=' + (session.selectedAudioTrack || ''),
+                'audioId=' + (session.selectedAudioTrackId || ''),
+                'audioIndex=' + (
+                    session.selectedAudioTrackIndex !== undefined &&
+                    session.selectedAudioTrackIndex !== null
+                        ? session.selectedAudioTrackIndex
+                        : ''
+                )
+            );
+        }
+
+        function stripBridgeFragmentsForFallback(data) {
+            if (!data || typeof data !== 'object') return data;
+
+            ['url', 'uri', 'src'].forEach(function (key) {
+                if (typeof data[key] === 'string') {
+                    data[key] = Utils.stripFragment(data[key]);
+                }
+            });
+
+            if (Array.isArray(data.playlist)) {
+                data.playlist.forEach(function (item) {
+                    if (!item || typeof item !== 'object') return;
+
+                    ['url', 'uri', 'src'].forEach(function (key) {
+                        if (typeof item[key] === 'string') {
+                            item[key] = Utils.stripFragment(item[key]);
+                        }
+                    });
+                });
+            }
+
+            return data;
+        }
+
+        function mergeRemoteLatestBeforePlayerPatch(session, call) {
+            if (!session || !DDDTransport.fetchRemoteLatest) return call(session);
+
+            var params = session.params || SessionManager.buildParams(session);
+
+            mergeRemoteLatestBeforeLaunch(session.movie || {}, params, function (mergedParams) {
+                if (mergedParams && mergedParams !== params) {
+                    applyMergedParamsToSession(session, mergedParams);
+                    Utils.log(
+                        'DDD remote latest merged before player patch',
+                        session.hash || '',
+                        mergedParams.selected_audio_track || '',
+                        mergedParams.selected_audio_track_id || '',
+                        mergedParams.selected_audio_track_index !== undefined ? mergedParams.selected_audio_track_index : ''
+                    );
+                }
+
+                call(session);
+            });
+        }
 
         function patchPlayer() {
             if (patched) return;
@@ -2762,69 +3295,12 @@
 
             var originalPlay = Lampa.Player.play;
 
-            function launchPlayerRequest(request) {
-                if (!request || request.done) return;
-
-                request.done = true;
-
-                if (request.timer) clearTimeout(request.timer);
-                if (pendingDDDPlay === request) pendingDDDPlay = null;
-
-                var data = request.data;
-                var session = request.session;
-
-                try {
-                    if (session && DDDTransport.canUse() && Utils.isStreamUrl(data.url)) {
-                        if (Array.isArray(data.playlist) && data.playlist.length) {
-                            session.playlist = data.playlist;
-                            session.playlistSize = data.playlist.length;
-                        }
-
-                        DDDTransport.applyBridgeExtras(data, session);
-                        DDDTransport.applyBridgeToPlaylist(data, session);
-
-                        data.url = DDDTransport.appendToUrl(
-                            data.url,
-                            session.sid,
-                            data.playlist_index || session.playlistIndex || 0,
-                            data.start_index || session.startIndex || 0,
-                            data.playlist || session.playlist
-                        );
-
-                        session.url = Utils.stripFragment(data.url);
-                        session.params = SessionManager.buildParams(session);
-                        SessionManager.register(session);
-
-                        DDDTransport.activate(session);
-                        DDDTransport.updatePlaylist(
-                            data.playlist || session.playlist,
-                            data.playlist_index || session.playlistIndex || 0,
-                            session
-                        );
-
-                        Utils.log('DDD transport selected', session.sid, data.url);
-                    } else {
-                        Utils.log('Lampa native transport selected', Utils.getPlatformKind(), Utils.getTorrentPlayerType());
-                    }
-                } catch (e) {
-                    Utils.error('Player launch preparation failed', e);
-                }
-
-                return originalPlay.apply(request.context, request.args);
-            }
-
             Lampa.Player.play = function (data) {
-                var request;
+                var self = this;
+                var playArgs = arguments;
 
                 try {
                     data = data || {};
-
-                    if ((!Array.isArray(data.playlist) || !data.playlist.length)
-                            && Array.isArray(recentPlaylist)
-                            && recentPlaylist.length
-                            && Utils.now() - recentPlaylistAt < 1000) {
-                        data.playlist = recentPlaylist;
-                    }
 
                     var session = SessionManager.buildFromPlayData(data, { source: 'player_patch' });
 
@@ -2838,91 +3314,46 @@
                             title: session.title,
                             force: true
                         });
-                    }
 
-                    request = {
-                        context: this,
-                        args: arguments,
-                        data: data,
-                        session: session,
-                        timer: null,
-                        done: false
-                    };
+                        if (DDDTransport.canUse() && Utils.isStreamUrl(data.url)) {
+                            mergeRemoteLatestBeforePlayerPatch(session, function (mergedSession) {
+                                var activeSession = mergedSession || session;
 
-                    if (session
-                            && DDDTransport.canUse()
-                            && Utils.isStreamUrl(data.url)
-                            && (!Array.isArray(data.playlist) || !data.playlist.length)) {
-                        if (pendingDDDPlay && !pendingDDDPlay.done) launchPlayerRequest(pendingDDDPlay);
+                                try {
+                                    applyDddTransportToPlayData(data, activeSession);
+                                } catch (e) {
+                                    Utils.error('DDD player patch remote merge failed', e);
+                                }
 
-                        pendingDDDPlay = request;
-                        request.timer = setTimeout(function () {
-                            launchPlayerRequest(request);
-                        }, 180);
+                                if (DDDTransport.shouldLaunchViaLocalBridge()) {
+                                    DDDTransport.launchViaLocalBridge(data, activeSession, function (launchErr, launchJson) {
+                                        if (!launchErr && launchJson && launchJson.ok !== false) {
+                                            Utils.log('DDD local bridge handled playback', activeSession.sid);
+                                            return;
+                                        }
 
-                        return;
+                                        Utils.warn('DDD local bridge launch failed, fallback to Lampa player', launchErr && launchErr.message ? launchErr.message : launchErr);
+                                        stripBridgeFragmentsForFallback(data);
+                                        originalPlay.apply(self, playArgs);
+                                    });
+
+                                    return;
+                                }
+
+                                originalPlay.apply(self, playArgs);
+                            });
+
+                            return;
+                        } else {
+                            Utils.log('Lampa native transport selected', Utils.getPlatformKind(), Utils.getTorrentPlayerType());
+                        }
                     }
                 } catch (e) {
                     Utils.error('Player patch failed', e);
                 }
 
-                if (!request) {
-                    request = {
-                        context: this,
-                        args: arguments,
-                        data: data || {},
-                        session: null,
-                        timer: null,
-                        done: false
-                    };
-                }
-
-                return launchPlayerRequest(request);
+                return originalPlay.apply(this, arguments);
             };
-
-            if (typeof Lampa.Player.playlist === 'function' && !Lampa.Player.playlist.__continueWatchUniversalDDDPlaylistPatched) {
-                var originalPlaylist = Lampa.Player.playlist;
-
-                Lampa.Player.playlist = function (playlist) {
-                    recentPlaylist = Array.isArray(playlist) ? playlist : null;
-                    recentPlaylistAt = Utils.now();
-
-                    var result = originalPlaylist.apply(this, arguments);
-
-                    try {
-                        if (pendingDDDPlay && !pendingDDDPlay.done && Array.isArray(playlist) && playlist.length) {
-                            pendingDDDPlay.data.playlist = playlist;
-
-                            if (pendingDDDPlay.session) {
-                                pendingDDDPlay.session.playlist = playlist;
-                                pendingDDDPlay.session.playlistSize = playlist.length;
-                            }
-
-                            launchPlayerRequest(pendingDDDPlay);
-                        }
-
-                        var session = SessionManager.getCurrent();
-
-                        if (session && DDDTransport.canUse() && Array.isArray(playlist) && playlist.length) {
-                            session.playlist = playlist;
-                            session.params = SessionManager.buildParams(session);
-                            SessionManager.register(session);
-
-                            DDDTransport.updatePlaylist(
-                                playlist,
-                                session.playlistIndex || session.startIndex || 0,
-                                session
-                            );
-                        }
-                    } catch (e) {
-                        Utils.warn('DDD playlist hook failed', e);
-                    }
-
-                    return result;
-                };
-
-                Lampa.Player.playlist.__continueWatchUniversalDDDPlaylistPatched = true;
-            }
 
             Lampa.Player.__continueWatchUniversalPatched = true;
             patched = true;
@@ -2999,10 +3430,206 @@
             });
         }
 
+        function findRemoteRecordForLaunch(movie, params) {
+            return function (items) {
+                if (!Array.isArray(items) || !items.length) return null;
+
+                params = params || {};
+                var season = Number(params.season || 0);
+                var episode = Number(params.episode || 0);
+                var timelineHash = StorageManager.generateTimelineHash(movie, season, episode);
+                var launchUrl = StorageManager.buildLaunchUrl(params) || params.url || params.uri || params.src || '';
+                var sourceKey = Utils.streamIdentity(launchUrl || '');
+
+                var best = null;
+                var bestTs = 0;
+
+                items.forEach(function (item) {
+                    if (!item || typeof item !== 'object') return;
+
+                    var sameTimeline = timelineHash && (
+                        String(item.timelineHash || '') === String(timelineHash) ||
+                        String(item.contentKey || '') === String(timelineHash)
+                    );
+                    var sameSource = sourceKey && (
+                        String(item.sourceKey || '') === String(sourceKey) ||
+                        Utils.streamIdentity(item.uri || item.url || item.src || '') === sourceKey
+                    );
+
+                    if (!sameTimeline && !sameSource) return;
+
+                    var ts = Number(item.updatedAt || 0);
+                    if (!best || ts >= bestTs) {
+                        best = item;
+                        bestTs = ts;
+                    }
+                });
+
+                return best;
+            };
+        }
+
+        function applyRemoteRecordToParams(params, record) {
+            var merged = Utils.shallowClone(params || {});
+            if (!record || typeof record !== 'object') return merged;
+
+            var remoteTime = Utils.msToSeconds(record.position || 0);
+            var remoteDuration = Utils.msToSeconds(record.duration || 0);
+            var localTime = Number(merged.time || 0);
+            var localTimestamp = Number(merged.timestamp || 0);
+            var remoteTimestamp = Number(record.updatedAt || 0);
+            var remoteIsNewer = remoteTimestamp && (!localTimestamp || remoteTimestamp >= localTimestamp);
+
+            if (remoteTime > 0 && (remoteIsNewer || remoteTime > localTime)) {
+                merged.time = remoteTime;
+                if (remoteDuration > 0) merged.duration = remoteDuration;
+                if (remoteDuration > 0) merged.percent = Utils.clamp(Math.round(remoteTime / remoteDuration * 100), 0, 100);
+                merged.last_source = 'ddd_remote';
+                merged.last_reason = record.reason || merged.last_reason || '';
+                merged.timestamp = remoteTimestamp || Utils.now();
+            }
+
+            function copy(toKey, value) {
+                if (value === undefined || value === null || value === '') return;
+                merged[toKey] = value;
+            }
+
+            copy('selected_audio_track', record.selectedAudioTrack);
+            copy('selected_audio_track_id', record.selectedAudioTrackId);
+            copy('selected_audio_track_index', record.selectedAudioTrackIndex);
+            copy('selected_audio_track_language', record.selectedAudioTrackLanguage);
+            copy('selected_audio_track_mime', record.selectedAudioTrackMimeType);
+            copy('selected_audio_track_channels', record.selectedAudioTrackChannels);
+
+            return merged;
+        }
+
+        function hasAudioParams(params) {
+            return !!(
+                params &&
+                (
+                    params.selected_audio_track ||
+                    params.selected_audio_track_id ||
+                    params.selected_audio_track_index !== undefined && params.selected_audio_track_index !== null && params.selected_audio_track_index !== ''
+                )
+            );
+        }
+
+        function hasRemoteAudio(record) {
+            return !!(
+                record &&
+                (
+                    record.selectedAudioTrack ||
+                    record.selectedAudioTrackId ||
+                    record.selectedAudioTrackIndex !== undefined && record.selectedAudioTrackIndex !== null && record.selectedAudioTrackIndex !== ''
+                )
+            );
+        }
+
+        function copyRemoteAudioToParams(params, record) {
+            var merged = Utils.shallowClone(params || {});
+            if (!hasRemoteAudio(record)) return merged;
+
+            function copy(toKey, value) {
+                if (value === undefined || value === null || value === '') return;
+                merged[toKey] = value;
+            }
+
+            copy('selected_audio_track', record.selectedAudioTrack);
+            copy('selected_audio_track_id', record.selectedAudioTrackId);
+            copy('selected_audio_track_index', record.selectedAudioTrackIndex);
+            copy('selected_audio_track_language', record.selectedAudioTrackLanguage);
+            copy('selected_audio_track_mime', record.selectedAudioTrackMimeType);
+            copy('selected_audio_track_channels', record.selectedAudioTrackChannels);
+
+            return merged;
+        }
+
+        function findRemoteAudioRecordForLaunch(params) {
+            return function (items) {
+                if (!Array.isArray(items) || !items.length) return null;
+
+                params = params || {};
+                var launchUrl = StorageManager.buildLaunchUrl(params) || params.url || params.uri || params.src || '';
+                var parsed = Utils.parseStreamUrl(launchUrl);
+                var torrentLink = params.torrent_link || (parsed && parsed.torrent_link) || '';
+                var best = null;
+                var bestTs = 0;
+
+                if (!torrentLink) return null;
+
+                items.forEach(function (item) {
+                    if (!hasRemoteAudio(item)) return;
+
+                    var sourceKey = String(item.sourceKey || '');
+                    var uri = String(item.uri || item.url || item.src || '');
+                    var sameTorrent =
+                        sourceKey.indexOf(torrentLink + '|') === 0 ||
+                        uri.indexOf('link=' + torrentLink) !== -1 ||
+                        uri.indexOf('hash=' + torrentLink) !== -1;
+
+                    if (!sameTorrent) return;
+
+                    var ts = Number(item.updatedAt || 0);
+                    if (!best || ts >= bestTs) {
+                        best = item;
+                        bestTs = ts;
+                    }
+                });
+
+                return best;
+            };
+        }
+
+        function mergeRemoteLatestBeforeLaunch(movie, params, call) {
+            if (!DDDTransport.fetchRemoteLatest) return call(params);
+
+            DDDTransport.fetchRemoteLatest(function (err, json) {
+                if (err || !json || !Array.isArray(json.items)) {
+                    if (err) Utils.warn('DDD remote latest skipped', err.message || err);
+                    return call(params);
+                }
+
+                var matcher = findRemoteRecordForLaunch(movie, params);
+                var record = matcher(json.items);
+                var merged = record ? applyRemoteRecordToParams(params, record) : Utils.shallowClone(params || {});
+                var audioRecord = null;
+
+                if (!hasAudioParams(merged)) {
+                    audioRecord = findRemoteAudioRecordForLaunch(merged)(json.items);
+
+                    if (audioRecord) {
+                        merged = copyRemoteAudioToParams(merged, audioRecord);
+                    }
+                }
+
+                if (!record && !audioRecord) return call(params);
+
+                var hash = StorageManager.generateTimelineHash(movie, Number(merged.season || 0), Number(merged.episode || 0));
+
+                if (hash) StorageManager.saveStreamParams(hash, merged, true);
+
+                Utils.log(
+                    'DDD remote latest merged before launch',
+                    hash,
+                    record ? record.updatedAt : '',
+                    merged.selected_audio_track || '',
+                    audioRecord ? 'audioFallback=' + (audioRecord.contentKey || audioRecord.sourceKey || '') : ''
+                );
+                call(merged);
+            });
+        }
+
         function launchFromContinue(movie, params) {
             if (!movie || !params) return;
             if (!acquireLaunchLock(movie, params)) return;
 
+            mergeRemoteLatestBeforeLaunch(movie, params, function (mergedParams) {
+                doLaunchFromContinue(movie, mergedParams || params);
+            });
+        }
+
+        function doLaunchFromContinue(movie, params) {
             var url = StorageManager.buildLaunchUrl(params);
 
             if (!url) {
@@ -3055,6 +3682,12 @@
                 season: season,
                 episode: episode,
                 torrent_hash: params.torrent_link || '',
+                selected_audio_track: params.selected_audio_track || '',
+                selected_audio_track_id: params.selected_audio_track_id || '',
+                selected_audio_track_index: params.selected_audio_track_index,
+                selected_audio_track_language: params.selected_audio_track_language || '',
+                selected_audio_track_mime: params.selected_audio_track_mime || '',
+                selected_audio_track_channels: params.selected_audio_track_channels,
                 continue_watch_universal: true
             };
 
@@ -3075,7 +3708,8 @@
 
         return {
             patchPlayer: patchPlayer,
-            launchFromContinue: launchFromContinue
+            launchFromContinue: launchFromContinue,
+            refreshRemote: mergeRemoteLatestBeforeLaunch
         };
     })();
 
@@ -3246,11 +3880,15 @@
         }
 
         function getWatchContainer(render) {
-            var container = render.find('.buttons--container').first();
+            var container = render.find('.full-start-new__buttons').first();
 
             if (container.length) return container;
 
-            container = $('<div class="hide buttons--container"></div>');
+            container = render.find('.buttons--container').first();
+
+            if (container.length) return container;
+
+            container = $('<div class="full-start-new__buttons"></div>');
             render.append(container);
 
             return container;
@@ -3393,29 +4031,54 @@
 
                 requestAnimationFrame(function () {
                     try {
-                        var activity = event.object && event.object.activity;
-                        var render = activity && activity.render ? activity.render() : null;
-                        var movie = event.data && event.data.movie;
+                        var active = Lampa.Activity && Lampa.Activity.active ? Lampa.Activity.active() : null;
+                        var activity = (event.object && event.object.activity) || active;
+                        var render = event.body && event.body.find
+                            ? event.body
+                            : (activity && activity.render ? activity.render() : null);
+                        var movie =
+                            (event.data && event.data.movie) ||
+                            (activity && activity.movie) ||
+                            (activity && activity.card) ||
+                            (activity && activity.params && activity.params.movie) ||
+                            (active && active.movie) ||
+                            (active && active.card) ||
+                            (active && active.params && active.params.movie) ||
+                            Utils.getActivityMovie();
 
                         if (!render || !movie) return;
 
+                        Utils.rememberActivityMovie(movie);
+
                         var params = StorageManager.getLastStreamParams(movie);
 
-                        if (!params) return;
+                        function renderButtons(currentParams) {
+                            if (!currentParams) {
+                                if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty) {
+                                    render.find('.button--continue-watch-ddd-debug').remove();
+                                    getWatchContainer(render).prepend(createStatusButton(movie));
+                                }
+                                return;
+                            }
 
-                        var existing = render.find('.button--continue-watch-ddd').first();
-                        
-                        if (existing.length) {
-                            bindLaunch(existing, movie);
-                        } else {
-                            var button = createButton(movie, params);
-                            insertIntoWatchContainer(render, button);
+                            var existing = render.find('.button--continue-watch-ddd').first();
+
+                            if (existing.length) {
+                                existing.replaceWith(createButton(movie, currentParams));
+                            } else {
+                                insertIntoWatchContainer(render, createButton(movie, currentParams));
+                            }
+
+                            if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty) {
+                                render.find('.button--continue-watch-ddd-debug').remove();
+                                var debugButton = createStatusButton(movie);
+                                getWatchContainer(render).find('> .button--continue-watch-ddd').after(debugButton);
+                            }
                         }
 
-                        if (DEBUG.enabled && DEBUG.statusButton && DEBUG.noty) {
-                            var debugButton = createStatusButton(movie);
-                            getWatchContainer(render).find('> .button--continue-watch-ddd').after(debugButton);
-                        }
+                        renderButtons(params);
+
+                        PlayerManager.refreshRemote(movie, params, renderButtons);
                     } catch (e) {
                         Utils.error('Button render failed', e);
                     }
