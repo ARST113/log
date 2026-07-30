@@ -9,582 +9,89 @@
   <meta name="format-detection" content="telephone=no">
   <title>Фэнтези Фест 2026 — расписание</title>
   <style>
-    :root{
-      color-scheme:dark;
-      --bg:#0d130c;
-      --surface:#141d12;
-      --surface-2:#1a2517;
-      --surface-3:#22301e;
-      --text:#f4f7ef;
-      --muted:#aeb9a7;
-      --line:rgba(255,255,255,.09);
-      --accent:#d7ef69;
-      --danger:#ff7070;
-      --shadow:0 16px 50px rgba(0,0,0,.36);
-      --radius:20px;
-    }
-    *{box-sizing:border-box}
-    html{
-      scroll-behavior:smooth;
-      -webkit-text-size-adjust:100%;
-      text-size-adjust:100%;
-      background:#0d130c;
-    }
-    body{
-      margin:0;
-      min-height:100vh;
-      font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-      background:
-        radial-gradient(circle at 15% 0%,rgba(92,130,53,.22),transparent 34rem),
-        radial-gradient(circle at 100% 20%,rgba(231,126,48,.10),transparent 28rem),
-        linear-gradient(180deg,#10170e 0%,var(--bg) 48%,#091008 100%);
-      color:var(--text);
-      -webkit-tap-highlight-color:transparent;
-      width:100%;
-      overflow-x:hidden;
-      overscroll-behavior-x:none;
-    }
-    body::before{
-      content:"";
-      position:fixed;inset:0;pointer-events:none;opacity:.19;
-      background-image:
-        linear-gradient(135deg,rgba(255,255,255,.035) 25%,transparent 25%),
-        linear-gradient(225deg,rgba(255,255,255,.025) 25%,transparent 25%);
-      background-size:28px 28px;
-      background-position:0 0,14px 14px;
-      mask-image:linear-gradient(to bottom,black,transparent 72%);
-    }
-    button,input{
-      font:inherit;
-      -webkit-appearance:none;
-      appearance:none;
-      border-radius:0;
-    }
-    button{color:inherit}
-    .app{
-      width:min(100%,960px);
-      margin:0 auto;
-      padding-bottom:calc(112px + env(safe-area-inset-bottom));
-      overflow:visible;
-    }
-    .hero{
-      position:relative;
-      padding:calc(22px + env(safe-area-inset-top)) 18px 14px;
-      overflow:hidden;
-    }
-    .eyebrow{
-      display:flex;align-items:center;gap:8px;
-      color:#ffad54;font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
-    }
-    .eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 18px var(--accent)}
-    h1{font-size:clamp(30px,8vw,48px);line-height:.98;margin:14px 0 10px;letter-spacing:-.045em}
-    .hero p{margin:0;color:var(--muted);font-size:14px;line-height:1.5;max-width:650px}
-    .summary-row{
-      display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:18px;
-    }
-    .summary-card{
-      padding:12px 10px;border:1px solid var(--line);border-radius:16px;
-      background:rgba(255,255,255,.035);backdrop-filter:blur(14px);
-    }
-    .summary-card strong{display:block;font-size:20px;letter-spacing:-.03em}
-    .summary-card span{display:block;color:var(--muted);font-size:11px;margin-top:2px}
-    .control-shell{
-      position:sticky;
-      top:0;
-      z-index:40;
-      isolation:isolate;
-      padding:8px 12px 10px;
-      background:#0d130c;
-      border-bottom:1px solid rgba(255,255,255,.08);
-      box-shadow:0 12px 24px rgba(5,10,4,.42);
-      -webkit-backdrop-filter:none;
-      backdrop-filter:none;
-      transform:translateZ(0);
-    }
-    .day-tabs,.view-tabs{
-      display:grid;grid-template-columns:repeat(3,1fr);gap:6px;
-      padding:5px;border-radius:17px;background:rgba(255,255,255,.055);border:1px solid var(--line);
-    }
-    .day-tab,.view-tab{
-      border:0;background:transparent;padding:10px 6px;border-radius:12px;
-      color:var(--muted);font-weight:750;font-size:13px;cursor:pointer;
-    }
-    .day-tab.active,.view-tab.active{background:var(--surface-3);color:var(--text);box-shadow:0 5px 18px rgba(0,0,0,.22)}
-    .tools{display:flex;gap:8px;margin-top:8px}
-    .search{
-      min-width:0;flex:1;height:44px;padding:0 14px;border-radius:15px;
-      font-size:16px;
-      background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--text);outline:none;
-    }
-    .search:focus{border-color:rgba(215,239,105,.6);box-shadow:0 0 0 3px rgba(215,239,105,.10)}
-    .icon-btn{
-      width:44px;height:44px;display:grid;place-items:center;flex:0 0 auto;
-      border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.05);cursor:pointer;
-    }
-    .venue-scroller{
-      display:flex;gap:8px;overflow-x:auto;padding:10px 18px 3px 2px;scrollbar-width:none;
-      scroll-snap-type:x proximity;
-      scroll-padding-inline:2px;
-      -webkit-overflow-scrolling:touch;
-    }
-    .venue-scroller::-webkit-scrollbar{display:none}
-    .venue-chip{
-      white-space:nowrap;border:1px solid var(--line);border-radius:999px;padding:8px 11px;
-      background:rgba(255,255,255,.035);color:var(--muted);font-size:12px;font-weight:750;cursor:pointer;
-      display:flex;align-items:center;gap:7px;
-      flex:0 0 auto;
-      scroll-snap-align:start;
-      min-height:34px;
-    }
-    .venue-chip .dot{width:8px;height:8px;border-radius:50%;background:var(--venue)}
-    .venue-chip.active{color:var(--text);border-color:rgba(255,255,255,.24);background:rgba(255,255,255,.10)}
-    @supports (background:color-mix(in srgb,red,blue)){
-      .venue-chip.active{border-color:color-mix(in srgb,var(--venue),transparent 35%);background:color-mix(in srgb,var(--venue),transparent 84%)}
-    }
-    .view-tabs{margin:10px 12px 0;grid-template-columns:repeat(3,1fr)}
-    main{padding:14px 12px 0}
-    .section-head{
-      display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:4px 2px 14px;
-    }
-    .section-head h2{margin:0;font-size:21px;letter-spacing:-.03em}
-    .section-head p{margin:4px 0 0;color:var(--muted);font-size:12px}
-    .counter{font-size:12px;color:var(--muted);white-space:nowrap}
-    .timeline{display:flex;flex-direction:column;gap:10px}
-    .event-card{
-      --venue:#7f8;
-      position:relative;display:grid;grid-template-columns:62px minmax(0,1fr) 40px;gap:11px;
-      border:1px solid var(--line);border-radius:var(--radius);padding:13px 11px;
-      background:linear-gradient(135deg,color-mix(in srgb,var(--venue),transparent 91%),rgba(255,255,255,.032));
-      box-shadow:0 9px 32px rgba(0,0,0,.16);overflow:hidden;cursor:pointer;
-    }
-    .event-card::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--venue)}
-    .event-card.has-conflict{border-color:rgba(255,112,112,.65);box-shadow:0 0 0 2px rgba(255,112,112,.10),0 9px 32px rgba(0,0,0,.16)}
-    .event-time{padding-left:5px}
-    .event-time strong{display:block;font-size:15px}
-    .event-time span{display:block;color:var(--muted);font-size:11px;margin-top:3px}
-    .event-title{font-weight:800;font-size:15px;line-height:1.28;overflow-wrap:anywhere}
-    .event-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
-    .badge{
-      display:inline-flex;align-items:center;gap:6px;max-width:100%;
-      border-radius:999px;padding:5px 8px;background:rgba(255,255,255,.06);font-size:10px;color:var(--muted);
-    }
-    .badge.venue{color:var(--text);background:rgba(255,255,255,.10)}
-    @supports (background:color-mix(in srgb,red,blue)){
-      .badge.venue{background:color-mix(in srgb,var(--venue),transparent 82%)}
-    }
-    .badge.conflict{color:#ffd7d7;background:rgba(255,112,112,.15)}
-    .save-btn{
-      align-self:start;width:38px;height:38px;border-radius:13px;border:1px solid var(--line);
-      background:rgba(255,255,255,.04);display:grid;place-items:center;cursor:pointer;font-size:20px;
-    }
-    .save-btn.saved{background:rgba(215,239,105,.16);border-color:rgba(215,239,105,.42);color:var(--accent)}
-    .empty{
-      padding:32px 18px;border:1px dashed rgba(255,255,255,.14);border-radius:22px;text-align:center;color:var(--muted);
-      background:rgba(255,255,255,.025);
-    }
-    .overlap-block{
-      border:1px solid var(--line);border-radius:22px;padding:14px;margin-bottom:12px;background:rgba(255,255,255,.03);
-    }
-    .overlap-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
-    .overlap-time{font-size:17px;font-weight:850}
-    .overlap-count{font-size:11px;color:#ffd7d7;padding:6px 9px;border-radius:999px;background:rgba(255,112,112,.14)}
-    .overlap-events{display:flex;flex-direction:column;gap:8px}
-    .overlap-mini{
-      display:grid;grid-template-columns:8px minmax(0,1fr);gap:10px;align-items:start;
-      padding:10px;border-radius:15px;background:rgba(255,255,255,.035);
-    }
-    .overlap-mini .bar{height:100%;min-height:36px;border-radius:99px;background:var(--venue)}
-    .overlap-mini strong{display:block;font-size:13px;line-height:1.3}
-    .overlap-mini span{display:block;color:var(--muted);font-size:11px;margin-top:4px}
-    .saved-actions{display:flex;gap:8px;margin:0 0 14px}
-    .primary-btn,.secondary-btn{
-      border:0;border-radius:15px;padding:11px 14px;font-weight:800;cursor:pointer;
-    }
-    .primary-btn{background:var(--accent);color:#18200e}
-    .secondary-btn{background:rgba(255,255,255,.06);color:var(--text);border:1px solid var(--line)}
-    .bottom-nav{
-      position:fixed;z-index:30;left:50%;bottom:max(10px,env(safe-area-inset-bottom));
-      transform:translateX(-50%);width:min(calc(100% - 20px),660px);
-      border:1px solid var(--line);border-radius:22px;padding:7px;
-      background:rgba(21,30,18,.91);backdrop-filter:blur(22px);box-shadow:var(--shadow);
-      display:grid;grid-template-columns:repeat(3,1fr);gap:5px;
-    }
-    .bottom-nav button{
-      border:0;border-radius:15px;background:transparent;color:var(--muted);padding:9px 6px;font-size:11px;font-weight:800;cursor:pointer;
-    }
-    .bottom-nav button span{display:block;font-size:19px;line-height:1;margin-bottom:4px}
-    .bottom-nav button.active{background:rgba(255,255,255,.075);color:var(--text)}
-    .sheet-backdrop{
-      position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.62);opacity:0;pointer-events:none;transition:.2s;
-    }
-    .sheet{
-      position:fixed;z-index:51;left:50%;bottom:0;transform:translate(-50%,105%);
-      width:min(100%,680px);border-radius:28px 28px 0 0;padding:10px 18px calc(24px + env(safe-area-inset-bottom));
-      background:#172015;border:1px solid var(--line);box-shadow:var(--shadow);transition:.24s ease;
-    }
-    .sheet.open{transform:translate(-50%,0)}
-    .sheet-backdrop.open{opacity:1;pointer-events:auto}
-    .grabber{width:42px;height:5px;border-radius:99px;background:rgba(255,255,255,.2);margin:0 auto 18px}
-    .sheet-label{display:inline-block;font-size:11px;font-weight:800;border-radius:999px;padding:6px 9px;margin-bottom:12px}
-    .sheet h3{margin:0;font-size:23px;line-height:1.16;letter-spacing:-.035em}
-    .sheet-info{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:18px 0}
-    .sheet-info div{padding:11px;border-radius:15px;background:rgba(255,255,255,.045)}
-    .sheet-info span{display:block;color:var(--muted);font-size:10px}
-    .sheet-info strong{display:block;margin-top:4px;font-size:13px}
-    .sheet .primary-btn{width:100%}
-    .toast{
-      position:fixed;z-index:80;left:50%;bottom:100px;transform:translate(-50%,16px);
-      opacity:0;pointer-events:none;padding:10px 14px;border-radius:14px;background:#edf6dd;color:#16200f;
-      font-size:12px;font-weight:800;transition:.2s;box-shadow:var(--shadow);white-space:nowrap;
-    }
-    .toast.show{opacity:1;transform:translate(-50%,0)}
-
-
-
-    /* Fluid mobile layout: original scale, dimensions tied to viewport width. */
-    @media (max-width:759px){
-      :root{--radius:clamp(18px,5vw,22px)}
-      .app{padding-bottom:calc(clamp(116px,29vw,136px) + env(safe-area-inset-bottom))}
-      .hero{padding:calc(clamp(19px,5vw,25px) + env(safe-area-inset-top)) clamp(13px,4vw,18px) clamp(12px,3.5vw,16px)}
-      .eyebrow{font-size:clamp(11px,3vw,13px);letter-spacing:.12em}
-      h1{font-size:clamp(33px,9.3vw,44px);margin:clamp(12px,3vw,15px) 0 clamp(8px,2.5vw,11px)}
-      .hero p{font-size:clamp(13px,3.6vw,15px);line-height:1.48}
-      .summary-row{gap:clamp(7px,2vw,10px);margin-top:clamp(15px,4vw,19px)}
-      .summary-card{padding:clamp(10px,2.8vw,13px);border-radius:clamp(14px,4vw,17px)}
-      .summary-card strong{font-size:clamp(19px,5.2vw,23px)}
-      .summary-card span{font-size:clamp(10px,2.7vw,12px)}
-
-      .control-shell{padding:clamp(8px,2.3vw,11px) clamp(10px,3.2vw,15px) clamp(9px,2.6vw,12px)}
-      .day-tabs{gap:clamp(5px,1.6vw,7px);padding:clamp(4px,1.3vw,6px);border-radius:clamp(15px,4vw,18px)}
-      .day-tab{min-width:0;min-height:clamp(42px,11vw,48px);padding:clamp(9px,2.4vw,11px) clamp(4px,1.5vw,7px);border-radius:clamp(11px,3vw,13px);font-size:clamp(13px,3.6vw,15px);line-height:1.12}
-      .tools{gap:clamp(7px,2vw,10px);margin-top:clamp(8px,2.2vw,10px)}
-      .search{height:clamp(46px,12vw,52px);padding:0 clamp(13px,3.6vw,17px);border-radius:clamp(14px,4vw,17px);font-size:16px}
-      .icon-btn{width:clamp(46px,12vw,52px);height:clamp(46px,12vw,52px);border-radius:clamp(14px,4vw,17px);font-size:clamp(18px,5vw,22px)}
-      .venue-scroller{gap:clamp(7px,2vw,10px);padding:clamp(9px,2.4vw,12px) clamp(22px,6vw,30px) 3px 2px;-webkit-overflow-scrolling:touch;scroll-snap-type:x proximity}
-      .venue-chip{flex:0 0 auto;min-height:clamp(34px,9vw,39px);padding:clamp(7px,2vw,9px) clamp(10px,2.8vw,13px);font-size:clamp(12px,3.3vw,14px);scroll-snap-align:start}
-      .venue-chip .dot{width:clamp(8px,2.2vw,10px);height:clamp(8px,2.2vw,10px)}
-
-      .view-tabs{display:none}
-      main{padding:clamp(14px,3.8vw,18px) clamp(10px,3vw,15px) 0}
-      .section-head{gap:clamp(9px,2.5vw,13px);margin:4px 2px clamp(12px,3.5vw,16px)}
-      .section-head h2{font-size:clamp(20px,5.5vw,24px);line-height:1.12}
-      .section-head p{font-size:clamp(11px,3vw,13px);line-height:1.38}
-      .counter{font-size:clamp(11px,3vw,13px)}
-      .timeline{gap:clamp(9px,2.6vw,12px)}
-
-      .event-card{grid-template-columns:clamp(58px,16vw,69px) minmax(0,1fr) clamp(40px,11vw,47px);gap:clamp(9px,2.6vw,12px);padding:clamp(12px,3.4vw,15px) clamp(10px,2.8vw,13px);min-width:0;border-radius:clamp(18px,5vw,22px)}
-      .event-card::before{width:clamp(3px,1vw,4px)}
-      .event-time{padding-left:clamp(3px,1vw,6px);min-width:0}
-      .event-time strong{font-size:clamp(15px,4.1vw,17px);line-height:1.08}
-      .event-time span{font-size:clamp(10px,2.8vw,12px);margin-top:4px;white-space:nowrap}
-      .event-title{font-size:clamp(15px,4.15vw,17px);line-height:1.28;font-weight:800;letter-spacing:-.012em;overflow-wrap:anywhere}
-      .event-meta{gap:clamp(5px,1.5vw,7px);margin-top:clamp(8px,2.2vw,10px)}
-      .badge{padding:clamp(5px,1.4vw,6px) clamp(7px,2vw,9px);font-size:clamp(10px,2.8vw,12px);line-height:1.12}
-      .save-btn{width:clamp(40px,11vw,47px);height:clamp(40px,11vw,47px);border-radius:clamp(12px,3.5vw,15px);font-size:clamp(20px,5.5vw,24px);padding:0}
-
-      .overlap-block{padding:clamp(13px,3.6vw,16px);border-radius:clamp(19px,5vw,23px);margin-bottom:clamp(10px,3vw,14px)}
-      .overlap-head{margin-bottom:clamp(9px,2.6vw,12px)}
-      .overlap-time{font-size:clamp(17px,4.7vw,20px)}
-      .overlap-count{font-size:clamp(10px,2.8vw,12px);padding:6px 9px}
-      .overlap-mini{padding:clamp(10px,2.8vw,13px);border-radius:clamp(14px,4vw,17px)}
-      .overlap-mini strong{font-size:clamp(13px,3.7vw,15px)}
-      .overlap-mini span{font-size:clamp(11px,3vw,13px)}
-
-      .bottom-nav{width:min(calc(100% - clamp(14px,4vw,24px)),660px);bottom:max(clamp(7px,2vw,11px),env(safe-area-inset-bottom));padding:clamp(6px,1.8vw,8px);border-radius:clamp(19px,5vw,23px);-webkit-backdrop-filter:blur(22px)}
-      .bottom-nav button{min-width:0;padding:clamp(9px,2.5vw,11px) 4px;border-radius:clamp(13px,3.7vw,16px);font-size:clamp(10px,2.9vw,12px);line-height:1.12}
-      .bottom-nav button span{font-size:clamp(19px,5.2vw,22px);margin-bottom:4px}
-      .sheet{padding:10px clamp(15px,4vw,20px) calc(clamp(22px,6vw,28px) + env(safe-area-inset-bottom))}
-      .sheet h3{font-size:clamp(21px,5.8vw,25px)}
-      .toast{bottom:clamp(96px,25vw,116px);max-width:calc(100% - 28px);white-space:normal;text-align:center}
-    }
-
-    @media (min-width:760px){
-      .hero{padding-left:24px;padding-right:24px}
-      .control-shell{padding-left:20px;padding-right:20px}
-      main{padding-left:20px;padding-right:20px}
-      .timeline{display:grid;grid-template-columns:1fr 1fr}
-      .event-card{min-height:124px}
-      .overlap-events{display:grid;grid-template-columns:1fr 1fr}
-      .summary-row{width:560px}
-    }
-    @media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+    html,body{margin:0;min-height:100%;background:#0d130c;color:#f4f7ef;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+    #boot{min-height:100vh;display:grid;place-items:center;padding:24px;text-align:center;color:#aeb9a7}
+    #boot strong{display:block;color:#f4f7ef;font-size:20px;margin-bottom:8px}
   </style>
 </head>
 <body>
-<div class="app">
-  <header class="hero">
-    <div class="eyebrow">31 июля — 2 августа 2026</div>
-    <h1>Фэнтези Фест</h1>
-    <p>Мобильное расписание шести площадок. Сохраняйте выступления и сразу проверяйте пересечения.</p>
-    <div class="summary-row">
-      <div class="summary-card"><strong id="totalStat">113</strong><span>событий</span></div>
-      <div class="summary-card"><strong>6</strong><span>площадок</span></div>
-      <div class="summary-card"><strong id="savedStat">0</strong><span>сохранено</span></div>
-    </div>
-  </header>
+  <div id="boot"><div><strong>Фэнтези Фест</strong>Загрузка расписания…</div></div>
+  <script>
+    (async()=>{
+      const sources=[
+        'https://cdn.jsdelivr.net/gh/ARST113/log@caaa3acea05391320a0d5f512cf203eab32eebdf/FF_2026.html',
+        'https://raw.githubusercontent.com/ARST113/log/caaa3acea05391320a0d5f512cf203eab32eebdf/FF_2026.html'
+      ];
 
-  <section class="control-shell">
-    <div class="day-tabs" id="dayTabs"></div>
-    <div class="tools">
-      <input class="search" id="searchInput" type="search" placeholder="Поиск группы, автора или темы">
-      <button class="icon-btn" id="clearBtn" aria-label="Сбросить фильтры" title="Сбросить фильтры">↺</button>
-    </div>
-    <div class="venue-scroller" id="venueFilters"></div>
-  </section>
+      async function loadBase(){
+        let lastError;
+        for(const url of sources){
+          try{
+            const response=await fetch(url,{cache:'force-cache'});
+            if(!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.text();
+          }catch(error){lastError=error}
+        }
+        throw lastError || new Error('Не удалось загрузить данные расписания');
+      }
 
-  <div class="view-tabs" id="viewTabs">
-    <button class="view-tab active" data-view="schedule">Расписание</button>
-    <button class="view-tab" data-view="overlaps">Пересечения</button>
-    <button class="view-tab" data-view="saved">Мой маршрут</button>
-  </div>
+      try{
+        const source=await loadBase();
+        const styleMatch=source.match(/<style>([\s\S]*?)<\/style>/i);
+        const eventsMatch=source.match(/const EVENTS = (\[[\s\S]*?\]);\s*const VENUE_COLORS/);
+        if(!styleMatch || !eventsMatch) throw new Error('Не удалось разобрать исходное расписание');
 
-  <main id="main"></main>
-</div>
+        const style=document.createElement('style');
+        style.textContent=styleMatch[1];
+        document.head.appendChild(style);
+        window.FF_EVENTS=JSON.parse(eventsMatch[1]);
 
-<nav class="bottom-nav">
-  <button class="active" data-view="schedule"><span>▦</span>Расписание</button>
-  <button data-view="overlaps"><span>⇄</span>Пересечения</button>
-  <button data-view="saved"><span>★</span>Мой маршрут</button>
-</nav>
+        document.body.innerHTML=`
+          <div class="app">
+            <header class="hero">
+              <div class="eyebrow">31 июля — 2 августа 2026</div>
+              <h1>Фэнтези Фест</h1>
+              <p>Мобильное расписание шести площадок. Сохраняйте выступления и сразу проверяйте пересечения.</p>
+              <div class="summary-row">
+                <div class="summary-card"><strong id="totalStat">113</strong><span>событий</span></div>
+                <div class="summary-card"><strong>6</strong><span>площадок</span></div>
+                <div class="summary-card"><strong id="savedStat">0</strong><span>сохранено</span></div>
+              </div>
+            </header>
+            <section class="control-shell">
+              <div class="day-tabs" id="dayTabs"></div>
+              <div class="tools">
+                <input class="search" id="searchInput" type="search" placeholder="Поиск группы, автора или темы">
+                <button class="icon-btn" id="clearBtn" aria-label="Сбросить фильтры" title="Сбросить фильтры">↺</button>
+              </div>
+              <div class="venue-scroller" id="venueFilters"></div>
+            </section>
+            <div class="view-tabs" id="viewTabs">
+              <button class="view-tab active" data-view="schedule">Расписание</button>
+              <button class="view-tab" data-view="overlaps">Пересечения</button>
+              <button class="view-tab" data-view="saved">Мой маршрут</button>
+            </div>
+            <main id="main"></main>
+          </div>
+          <nav class="bottom-nav">
+            <button class="active" data-view="schedule"><span>▦</span>Расписание</button>
+            <button data-view="overlaps"><span>⇄</span>Пересечения</button>
+            <button data-view="saved"><span>★</span>Мой маршрут</button>
+          </nav>
+          <div class="sheet-backdrop" id="sheetBackdrop"></div>
+          <aside class="sheet" id="sheet" aria-modal="true" role="dialog"></aside>
+          <div class="toast" id="toast"></div>`;
 
-<div class="sheet-backdrop" id="sheetBackdrop"></div>
-<aside class="sheet" id="sheet" aria-modal="true" role="dialog"></aside>
-<div class="toast" id="toast"></div>
-
-<script>
-const EVENTS = [{"id":"b6db0342-043b-5fc3-8331-0cb749749018@fantasyfest2026.local","title":"Стефания Данилова-Конькова: Мастерская слов и снов: пишем своё волшебное стихотворение","venue":"Литературная программа","start":"2026-07-31T12:00:00","end":"2026-07-31T14:00:00","day":"2026-07-31"},{"id":"1e24604b-9444-5dd5-8cb9-94bca24ebd71@fantasyfest2026.local","title":"Проект-А","venue":"Сцена «Берег»","start":"2026-07-31T12:00:00","end":"2026-07-31T13:00:00","day":"2026-07-31"},{"id":"d4bb5604-2397-5e76-b3ca-fc84f3f48de8@fantasyfest2026.local","title":":LUDENVEN:","venue":"Сцена «Круг Света»","start":"2026-07-31T12:00:00","end":"2026-07-31T12:45:00","day":"2026-07-31"},{"id":"d96ee63c-1cb6-525f-b7fb-baa56e3a7240@fantasyfest2026.local","title":"Артмис (Мария Розалка)","venue":"Сцена «Круг Света»","start":"2026-07-31T12:45:00","end":"2026-07-31T13:15:00","day":"2026-07-31"},{"id":"fa4022ec-2303-58b0-becc-c59de49ad0fd@fantasyfest2026.local","title":"МК по историческим танцам «Вереск»","venue":"Ристалище","start":"2026-07-31T13:00:00","end":"2026-07-31T14:00:00","day":"2026-07-31"},{"id":"1eb7d21e-2e36-55f4-a4cc-1eb3eb5d9140@fantasyfest2026.local","title":"Победитель конкурса «Сердце сказки» (будет объявлен позже)","venue":"Сцена «Берег»","start":"2026-07-31T13:00:00","end":"2026-07-31T14:15:00","day":"2026-07-31"},{"id":"c9aa5d85-9886-5ad0-a63a-9e71f200728f@fantasyfest2026.local","title":"Мэган","venue":"Сцена «Круг Света»","start":"2026-07-31T13:15:00","end":"2026-07-31T13:45:00","day":"2026-07-31"},{"id":"8bea802b-30ee-5e94-b5ec-f56e26e3e774@fantasyfest2026.local","title":"Alvey Alvarez: Как сделать лучшее дефиле в мире и не облажаться? Инструкция для чайников","venue":"Лекторий","start":"2026-07-31T13:30:00","end":"2026-07-31T16:30:00","day":"2026-07-31"},{"id":"f0d754c6-3372-585b-a70b-becd1ae2e48a@fantasyfest2026.local","title":"Кровавый риф","venue":"Сцена «Былина»","start":"2026-07-31T13:30:00","end":"2026-07-31T15:00:00","day":"2026-07-31"},{"id":"706c193c-4c16-5a75-9d57-204d934e47aa@fantasyfest2026.local","title":"Дети дорог","venue":"Сцена «Круг Света»","start":"2026-07-31T13:45:00","end":"2026-07-31T14:30:00","day":"2026-07-31"},{"id":"1b865ddf-7aac-5f16-9ccd-26a3d9362d51@fantasyfest2026.local","title":"Егор Тулин: Почему все истории уже придуманы, а новые сказки всё равно появляются?","venue":"Литературная программа","start":"2026-07-31T14:00:00","end":"2026-07-31T15:30:00","day":"2026-07-31"},{"id":"0b5d13f6-569e-51fc-b796-976481f05f94@fantasyfest2026.local","title":"МК по артистическому фехтованию «Alter Ego»","venue":"Ристалище","start":"2026-07-31T14:00:00","end":"2026-07-31T15:00:00","day":"2026-07-31"},{"id":"5d63868f-4daf-5b20-b4ee-84ec373afa23@fantasyfest2026.local","title":"Make Me Insane","venue":"Сцена «Берег»","start":"2026-07-31T14:15:00","end":"2026-07-31T15:30:00","day":"2026-07-31"},{"id":"04371ab7-9414-5cf5-8289-ed90dd2393c2@fantasyfest2026.local","title":"Двоеволчье","venue":"Сцена «Круг Света»","start":"2026-07-31T14:30:00","end":"2026-07-31T15:15:00","day":"2026-07-31"},{"id":"66c90e6c-8d63-5d1d-b2e7-74e53101febe@fantasyfest2026.local","title":"МК по историческим танцам «Гельвеция»","venue":"Ристалище","start":"2026-07-31T15:00:00","end":"2026-07-31T16:00:00","day":"2026-07-31"},{"id":"7dc43781-75b5-5cef-80d0-869b2b70e26c@fantasyfest2026.local","title":"Алькасар","venue":"Сцена «Былина»","start":"2026-07-31T15:00:00","end":"2026-07-31T16:30:00","day":"2026-07-31"},{"id":"e85650c5-02c7-5713-92b1-53dfe5510b90@fantasyfest2026.local","title":"Группа высокой культуры","venue":"Сцена «Круг Света»","start":"2026-07-31T15:15:00","end":"2026-07-31T16:00:00","day":"2026-07-31"},{"id":"a27a6d81-b527-5c26-baa8-093ea702e331@fantasyfest2026.local","title":"Рина Солнцева: Презентация новой книги про лешего в серии «Славянская мистика», викторина, розыгрыш, лекция по теме","venue":"Литературная программа","start":"2026-07-31T15:30:00","end":"2026-07-31T17:00:00","day":"2026-07-31"},{"id":"850e5ab9-5d4a-5c21-9875-0d4ec2b24e6c@fantasyfest2026.local","title":"Вайолет","venue":"Сцена «Берег»","start":"2026-07-31T15:30:00","end":"2026-07-31T16:45:00","day":"2026-07-31"},{"id":"ad6ccaed-e258-579a-8837-bc8baaaa3432@fantasyfest2026.local","title":"Косплей. Отборочный тур I блок","venue":"Ристалище","start":"2026-07-31T16:00:00","end":"2026-07-31T17:30:00","day":"2026-07-31"},{"id":"149bfdfb-af9d-5a76-930a-629fefcff2f3@fantasyfest2026.local","title":"Ведьмин Пунш","venue":"Сцена «Круг Света»","start":"2026-07-31T16:00:00","end":"2026-07-31T17:00:00","day":"2026-07-31"},{"id":"50f41717-5a45-5699-8394-7d935130b843@fantasyfest2026.local","title":"Надежда Щербакова: Литературные истоки и параллели «Саги о Ведьмаке» Анджея Сапковского","venue":"Лекторий","start":"2026-07-31T16:30:00","end":"2026-07-31T19:30:00","day":"2026-07-31"},{"id":"aed07076-5e68-5bb3-9b6d-7dfe4f55291c@fantasyfest2026.local","title":"Above the Stars","venue":"Сцена «Былина»","start":"2026-07-31T16:30:00","end":"2026-07-31T18:00:00","day":"2026-07-31"},{"id":"d0a060ee-f4ab-5444-80e8-d3c8e7cbe426@fantasyfest2026.local","title":"Catana Cat","venue":"Сцена «Берег»","start":"2026-07-31T16:45:00","end":"2026-07-31T18:00:00","day":"2026-07-31"},{"id":"222640de-6872-57b3-a47f-9de939b781e6@fantasyfest2026.local","title":"Dark Romantic Club: Всё про тёмный романтизм, готику, мистику, фэнтези, фольклор, хоррор, магический реализм и dark fantasy","venue":"Литературная программа","start":"2026-07-31T17:00:00","end":"2026-07-31T22:00:00","day":"2026-07-31"},{"id":"df734a42-5cbb-56a2-ae78-7ecd7b5dfbb2@fantasyfest2026.local","title":"Лунарь","venue":"Сцена «Круг Света»","start":"2026-07-31T17:00:00","end":"2026-07-31T18:00:00","day":"2026-07-31"},{"id":"2cda2654-a570-52e1-ab5f-3fe09b68fed8@fantasyfest2026.local","title":"Массовые бои","venue":"Ристалище","start":"2026-07-31T18:00:00","end":"2026-07-31T20:00:00","day":"2026-07-31"},{"id":"93d202c5-7b18-5855-93d2-a6b9c590c5a2@fantasyfest2026.local","title":"Артемизия","venue":"Сцена «Берег»","start":"2026-07-31T18:00:00","end":"2026-07-31T19:15:00","day":"2026-07-31"},{"id":"5ea21603-0c06-59b1-8aac-50af6cf5e79c@fantasyfest2026.local","title":"Теппо","venue":"Сцена «Былина»","start":"2026-07-31T18:00:00","end":"2026-07-31T19:30:00","day":"2026-07-31"},{"id":"2ab5a65e-8988-5f48-bb90-77d80f6902ed@fantasyfest2026.local","title":"Эр из Альвасете","venue":"Сцена «Круг Света»","start":"2026-07-31T18:00:00","end":"2026-07-31T19:00:00","day":"2026-07-31"},{"id":"ace6d3ea-d021-5965-8a5b-60de7aa176ca@fantasyfest2026.local","title":"Дима Вагин","venue":"Сцена «Круг Света»","start":"2026-07-31T19:00:00","end":"2026-07-31T19:45:00","day":"2026-07-31"},{"id":"da453c4e-0b6c-506e-b66b-ff8146acc716@fantasyfest2026.local","title":"Infornal F.","venue":"Сцена «Берег»","start":"2026-07-31T19:15:00","end":"2026-07-31T20:45:00","day":"2026-07-31"},{"id":"786bb0b3-601d-56b6-94a2-e3085c94a6f0@fantasyfest2026.local","title":"Гордеева София: Дитя неожиданности, чудовище и чародейка: что скрыто в архетипах мира «Ведьмака»","venue":"Лекторий","start":"2026-07-31T19:30:00","end":"2026-07-31T22:00:00","day":"2026-07-31"},{"id":"ed93c35e-2978-5db0-af99-9a724bcfa893@fantasyfest2026.local","title":"Джоконда","venue":"Сцена «Былина»","start":"2026-07-31T19:30:00","end":"2026-07-31T21:00:00","day":"2026-07-31"},{"id":"2095d71f-44b3-52e5-9eb4-47f5a35255fe@fantasyfest2026.local","title":"Алексей «Крыс» Ширяев","venue":"Сцена «Круг Света»","start":"2026-07-31T19:45:00","end":"2026-07-31T21:00:00","day":"2026-07-31"},{"id":"da152a53-636c-51d5-8fa0-9866591de990@fantasyfest2026.local","title":"Сказки Чёрного города","venue":"Сцена «Берег»","start":"2026-07-31T20:45:00","end":"2026-07-31T22:00:00","day":"2026-07-31"},{"id":"6b42c625-93a1-52d1-a667-380d2521ee25@fantasyfest2026.local","title":"Polnalyubvi","venue":"Сцена «Былина»","start":"2026-07-31T21:00:00","end":"2026-07-31T22:00:00","day":"2026-07-31"},{"id":"89d84734-f1cb-52b5-8892-e039b70217c5@fantasyfest2026.local","title":"Septimiy и Симфоническое фэнтези","venue":"Сцена «Круг Света»","start":"2026-07-31T21:00:00","end":"2026-07-31T22:00:00","day":"2026-07-31"},{"id":"9f0b43ad-d87e-5240-aa6f-8f14c794b357@fantasyfest2026.local","title":"Огненное шоу (Saga)","venue":"Ристалище","start":"2026-07-31T21:30:00","end":"2026-07-31T22:00:00","day":"2026-07-31"},{"id":"957798ba-4a2d-5f57-8c34-df342869c84d@fantasyfest2026.local","title":"Екатерина Милованова: Магия стойкого грима: создаём сказочные образы, которые продержатся весь день","venue":"Лекторий","start":"2026-08-01T12:00:00","end":"2026-08-01T14:30:00","day":"2026-08-01"},{"id":"1eb89d87-7da3-5720-851d-d366444dc4b6@fantasyfest2026.local","title":"Юлия Архарова: Автор азиатского, приключенческого и романтического фэнтези: какого русскому автору писать азиатское фэнтези?","venue":"Литературная программа","start":"2026-08-01T12:00:00","end":"2026-08-01T13:00:00","day":"2026-08-01"},{"id":"6ade6480-56cc-57aa-8173-3626b7d2650a@fantasyfest2026.local","title":"МК по историческим танцам «Гельвеция»","venue":"Ристалище","start":"2026-08-01T12:00:00","end":"2026-08-01T13:00:00","day":"2026-08-01"},{"id":"efbfed26-6c2b-54dd-a9ff-217d1d35e5c0@fantasyfest2026.local","title":"Агидель","venue":"Сцена «Берег»","start":"2026-08-01T12:00:00","end":"2026-08-01T13:00:00","day":"2026-08-01"},{"id":"9da0d87d-af42-5593-b333-c1e8d4c37279@fantasyfest2026.local","title":"Rosslyn Chapel","venue":"Сцена «Круг Света»","start":"2026-08-01T12:30:00","end":"2026-08-01T13:30:00","day":"2026-08-01"},{"id":"937f0398-dfbd-5721-8ff9-236d89765355@fantasyfest2026.local","title":"Анна Попова: Интересное про самые разные истории: мистика, вампиры, антиутопия, приключенческое фэнтези и молодёжные романы","venue":"Литературная программа","start":"2026-08-01T13:00:00","end":"2026-08-01T15:00:00","day":"2026-08-01"},{"id":"0678960d-3853-551f-bfd9-b3840a1aa96f@fantasyfest2026.local","title":"Косплей. Отборочный тур II блок. Открывает программу номер команды «Alter Ego»","venue":"Ристалище","start":"2026-08-01T13:00:00","end":"2026-08-01T15:00:00","day":"2026-08-01"},{"id":"57ff26cb-573c-57c9-aad3-06a69d83194b@fantasyfest2026.local","title":"Maleficium Arungquilta","venue":"Сцена «Берег»","start":"2026-08-01T13:00:00","end":"2026-08-01T14:15:00","day":"2026-08-01"},{"id":"d14b2856-6a2b-546b-bc43-91c885d269bd@fantasyfest2026.local","title":"Марко Поло","venue":"Сцена «Былина»","start":"2026-08-01T13:00:00","end":"2026-08-01T14:30:00","day":"2026-08-01"},{"id":"b6d8a1cd-26dc-536f-ac90-d1aaabfb4aa4@fantasyfest2026.local","title":"Белогорье","venue":"Сцена «Круг Света»","start":"2026-08-01T13:30:00","end":"2026-08-01T14:45:00","day":"2026-08-01"},{"id":"1226a5fe-b5d9-5c1b-8bdd-4ed6fa4501ad@fantasyfest2026.local","title":"Павел Пиковский","venue":"Сцена «Берег»","start":"2026-08-01T14:15:00","end":"2026-08-01T15:30:00","day":"2026-08-01"},{"id":"1d1a02e8-373c-5575-8185-8ed3b2a4a6b2@fantasyfest2026.local","title":"Копцев Алексей: Что русскому хорошо, то немцу — Spielanleitungdurchlesen — Pflichtverordnung: культурные различия в восприятии видеоигр в разных странах","venue":"Лекторий","start":"2026-08-01T14:30:00","end":"2026-08-01T16:00:00","day":"2026-08-01"},{"id":"d0726737-953f-5286-9692-5a8a9fcf1ef6@fantasyfest2026.local","title":"Канцлер Ги & Bregan D'Ert","venue":"Сцена «Былина»","start":"2026-08-01T14:30:00","end":"2026-08-01T16:00:00","day":"2026-08-01"},{"id":"a6365839-f3cb-58df-be76-0a741b70081e@fantasyfest2026.local","title":"Felidae","venue":"Сцена «Круг Света»","start":"2026-08-01T14:45:00","end":"2026-08-01T16:00:00","day":"2026-08-01"},{"id":"d77833fd-2031-5a46-ba92-2a72a8887a40@fantasyfest2026.local","title":"Лилия Белая: Презентация книги «По воле чародея» и розыгрыш мерча","venue":"Литературная программа","start":"2026-08-01T15:00:00","end":"2026-08-01T16:30:00","day":"2026-08-01"},{"id":"5d475ec2-f623-5043-b6ef-6ee2328caaf5@fantasyfest2026.local","title":"МК по историческим танцам «Вереск»","venue":"Ристалище","start":"2026-08-01T15:00:00","end":"2026-08-01T16:00:00","day":"2026-08-01"},{"id":"9b8d903c-8df8-5898-b2fd-9ad55f1882c8@fantasyfest2026.local","title":"Ростислав Чебыкин и «4т-Бэнд»","venue":"Сцена «Берег»","start":"2026-08-01T15:30:00","end":"2026-08-01T16:50:00","day":"2026-08-01"},{"id":"21978c4a-e938-5242-bc2b-9a765aa32f35@fantasyfest2026.local","title":"Давид Батищев: От Тиамат до Смауга: три тысячи лет истории драконов","venue":"Лекторий","start":"2026-08-01T16:00:00","end":"2026-08-01T17:30:00","day":"2026-08-01"},{"id":"0a5f5fb4-c912-5b71-ae1b-83759a4a99b9@fantasyfest2026.local","title":"Косплей. Отборочный тур III блок. Открывает программу номер команды «Alter Ego»","venue":"Ристалище","start":"2026-08-01T16:00:00","end":"2026-08-01T17:30:00","day":"2026-08-01"},{"id":"98913a2e-8483-555f-8974-d0483fa29e10@fantasyfest2026.local","title":"Norma Tale","venue":"Сцена «Былина»","start":"2026-08-01T16:00:00","end":"2026-08-01T17:30:00","day":"2026-08-01"},{"id":"d1d1cf4a-4e86-504d-b78e-7cb81e75954a@fantasyfest2026.local","title":"Шекспир","venue":"Сцена «Круг Света»","start":"2026-08-01T16:00:00","end":"2026-08-01T17:15:00","day":"2026-08-01"},{"id":"80b3d3fe-6455-57d1-9b9a-1d93b192738a@fantasyfest2026.local","title":"Дмитрий Овсянников: Презентация новой книги юмористической поэзии «Вижу рифмы. Стихи для детей старше 18-ти»","venue":"Литературная программа","start":"2026-08-01T16:30:00","end":"2026-08-01T17:30:00","day":"2026-08-01"},{"id":"78f76972-1a38-558d-8e78-3a7b5c897810@fantasyfest2026.local","title":"Misha Mar","venue":"Сцена «Берег»","start":"2026-08-01T16:50:00","end":"2026-08-01T18:10:00","day":"2026-08-01"},{"id":"a1f1441c-a8ec-5afd-b099-326999d7faa0@fantasyfest2026.local","title":"Хельга Алирин","venue":"Сцена «Круг Света»","start":"2026-08-01T17:15:00","end":"2026-08-01T18:30:00","day":"2026-08-01"},{"id":"e9435184-0a6a-513b-a12b-c5606d69074d@fantasyfest2026.local","title":"Чистякова Татьяна: «Сказки, которые читают люди. Люди, которые читают сказки»","venue":"Лекторий","start":"2026-08-01T17:30:00","end":"2026-08-01T19:00:00","day":"2026-08-01"},{"id":"e9838d81-c0e8-5db3-a4fe-20b1ecef60f0@fantasyfest2026.local","title":"Dark Romantic Club: Надежда Петрушина, Мария Доманицкая, Рина Солнцева, Artheni Erno, Константин Скурат","venue":"Литературная программа","start":"2026-08-01T17:30:00","end":"2026-08-01T22:00:00","day":"2026-08-01"},{"id":"9c99a915-0b45-5871-bbe1-2d15185af0c8@fantasyfest2026.local","title":"МК по артистическому фехтованию «Alter Ego»","venue":"Ристалище","start":"2026-08-01T17:30:00","end":"2026-08-01T18:20:00","day":"2026-08-01"},{"id":"fdbfa8c6-be60-536b-a5df-c8f2f4b28c48@fantasyfest2026.local","title":"Grottesque","venue":"Сцена «Былина»","start":"2026-08-01T17:30:00","end":"2026-08-01T19:00:00","day":"2026-08-01"},{"id":"1dab92a0-cb22-5460-bdf0-7fb9428f5872@fantasyfest2026.local","title":"Lithium","venue":"Сцена «Берег»","start":"2026-08-01T18:10:00","end":"2026-08-01T19:30:00","day":"2026-08-01"},{"id":"fdf01ed0-967e-5fac-9be4-13735c4e61e8@fantasyfest2026.local","title":"Массовые бои","venue":"Ристалище","start":"2026-08-01T18:20:00","end":"2026-08-01T19:50:00","day":"2026-08-01"},{"id":"c0d579d3-2f75-5bbc-9c80-68739fc8c5fc@fantasyfest2026.local","title":"Дэн Назгул и Nazgul Band","venue":"Сцена «Круг Света»","start":"2026-08-01T18:30:00","end":"2026-08-01T19:45:00","day":"2026-08-01"},{"id":"e727f5b7-c005-5a38-aa07-96ab61f84561@fantasyfest2026.local","title":"Сергей Хоббит: Нынешнее состояние дел во вселенной Warhammer 40000","venue":"Лекторий","start":"2026-08-01T19:00:00","end":"2026-08-01T20:30:00","day":"2026-08-01"},{"id":"d6edfd19-ff78-58c3-a4d5-1be770caa00f@fantasyfest2026.local","title":"Nagart","venue":"Сцена «Былина»","start":"2026-08-01T19:00:00","end":"2026-08-01T21:00:00","day":"2026-08-01"},{"id":"4824e55a-072a-524e-8afe-00fbae2daa67@fantasyfest2026.local","title":"Witchcraft","venue":"Сцена «Берег»","start":"2026-08-01T19:30:00","end":"2026-08-01T20:45:00","day":"2026-08-01"},{"id":"56fb83e9-abf8-5084-8cff-1fbc1cb371f7@fantasyfest2026.local","title":"Bee Celtic","venue":"Сцена «Круг Света»","start":"2026-08-01T19:45:00","end":"2026-08-01T21:00:00","day":"2026-08-01"},{"id":"75c5bd50-9076-5687-84da-aaf6a9536b22@fantasyfest2026.local","title":"Фролкина Анастасия: Кошмары викторианской Англии, до сих пор пугающие нас","venue":"Лекторий","start":"2026-08-01T20:30:00","end":"2026-08-01T22:00:00","day":"2026-08-01"},{"id":"0f8ff3cc-6c14-5ef9-96bd-db8c2e286b7d@fantasyfest2026.local","title":"Фестиваль фаерщиков «Вечер огня»","venue":"Ристалище","start":"2026-08-01T20:30:00","end":"2026-08-01T22:00:00","day":"2026-08-01"},{"id":"a1b8724e-c47c-5be3-896e-807b8299ccff@fantasyfest2026.local","title":"El Mental","venue":"Сцена «Берег»","start":"2026-08-01T20:45:00","end":"2026-08-01T22:00:00","day":"2026-08-01"},{"id":"ae7cbfcb-a953-5d18-a15e-d8f876406cac@fantasyfest2026.local","title":"Catharsis","venue":"Сцена «Былина»","start":"2026-08-01T21:00:00","end":"2026-08-01T22:00:00","day":"2026-08-01"},{"id":"02462fe4-0c6e-5e12-83bb-9f87cfb5d4ef@fantasyfest2026.local","title":"Nick Sax","venue":"Сцена «Круг Света»","start":"2026-08-01T21:00:00","end":"2026-08-01T22:00:00","day":"2026-08-01"},{"id":"5de5af87-dcb0-5c7b-8e2e-4bd8adf3e453@fantasyfest2026.local","title":"Dark Romantic Club: Всё про тёмный романтизм, готику, мистику, фэнтези, фольклор, хоррор, магический реализм и dark fantasy","venue":"Литературная программа","start":"2026-08-02T11:00:00","end":"2026-08-02T13:00:00","day":"2026-08-02"},{"id":"1a83dbd3-9bb1-5373-ab5c-02f4d72d7047@fantasyfest2026.local","title":"МК по историческим танцам «Вереск»","venue":"Ристалище","start":"2026-08-02T12:00:00","end":"2026-08-02T13:00:00","day":"2026-08-02"},{"id":"39fc0592-8628-501a-ab8b-38a1f1b7185c@fantasyfest2026.local","title":"Сергей Хоббит и Instruktor","venue":"Сцена «Берег»","start":"2026-08-02T12:00:00","end":"2026-08-02T13:00:00","day":"2026-08-02"},{"id":"3a388ee8-a2d0-5340-ae3d-8a3e941d799e@fantasyfest2026.local","title":"Чемодан Гризли","venue":"Сцена «Круг Света»","start":"2026-08-02T12:15:00","end":"2026-08-02T13:30:00","day":"2026-08-02"},{"id":"2d8b66f5-f927-5b2f-82d3-2efbd7689f39@fantasyfest2026.local","title":"Екатерина Кожевникова: Славянское фэнтези «Сказ о Яре и Чернаве» и «Мёд Полыни»","venue":"Литературная программа","start":"2026-08-02T13:00:00","end":"2026-08-02T15:00:00","day":"2026-08-02"},{"id":"11c14f3b-7805-565d-b631-cbc012f91259@fantasyfest2026.local","title":"Косплей. Финал","venue":"Ристалище","start":"2026-08-02T13:00:00","end":"2026-08-02T14:00:00","day":"2026-08-02"},{"id":"5fa4ff61-aa7e-55d5-8925-cddf8a2ca963@fantasyfest2026.local","title":"Из метро","venue":"Сцена «Берег»","start":"2026-08-02T13:00:00","end":"2026-08-02T14:15:00","day":"2026-08-02"},{"id":"de70e439-6b7d-5bec-b682-a9992be305c9@fantasyfest2026.local","title":"Арктида","venue":"Сцена «Былина»","start":"2026-08-02T13:30:00","end":"2026-08-02T15:00:00","day":"2026-08-02"},{"id":"4d670bf0-ccef-5e13-b055-010ae4ef33fd@fantasyfest2026.local","title":"Sonikella","venue":"Сцена «Круг Света»","start":"2026-08-02T13:30:00","end":"2026-08-02T14:45:00","day":"2026-08-02"},{"id":"ae5ed2bb-5e12-5b8c-b33f-583a2b27f714@fantasyfest2026.local","title":"МК по историческим танцам «Гельвеция»","venue":"Ристалище","start":"2026-08-02T14:00:00","end":"2026-08-02T15:00:00","day":"2026-08-02"},{"id":"ffd29d24-71df-5004-a507-bb2784c408e6@fantasyfest2026.local","title":"Ветер воды","venue":"Сцена «Берег»","start":"2026-08-02T14:15:00","end":"2026-08-02T15:30:00","day":"2026-08-02"},{"id":"6c530dfd-da11-59de-a500-5accb96fc6ff@fantasyfest2026.local","title":"Ярослав Баричко: Изображая волшебные миры: визуальные коды и главные художники фэнтези-арта","venue":"Лекторий","start":"2026-08-02T14:30:00","end":"2026-08-02T16:00:00","day":"2026-08-02"},{"id":"d11f8e85-788f-58c1-986f-ac4b35c7a2b8@fantasyfest2026.local","title":"Кайлех","venue":"Сцена «Круг Света»","start":"2026-08-02T14:45:00","end":"2026-08-02T16:00:00","day":"2026-08-02"},{"id":"c8c382aa-9444-547b-8c5b-70535578e983@fantasyfest2026.local","title":"Ника Батхен: Презентация новой книги сказок про феечек","venue":"Литературная программа","start":"2026-08-02T15:00:00","end":"2026-08-02T22:00:00","day":"2026-08-02"},{"id":"6a62ac6a-5fd5-5767-a83f-9af3dae9b4bb@fantasyfest2026.local","title":"МК по артистическому фехтованию «Alter Ego»","venue":"Ристалище","start":"2026-08-02T15:00:00","end":"2026-08-02T16:00:00","day":"2026-08-02"},{"id":"c35911b2-afed-521b-954e-deb8134f41e5@fantasyfest2026.local","title":"Uncle Pecos","venue":"Сцена «Былина»","start":"2026-08-02T15:00:00","end":"2026-08-02T16:30:00","day":"2026-08-02"},{"id":"4790090f-5d2e-503a-b728-87594c681d72@fantasyfest2026.local","title":"Стрела Морфея","venue":"Сцена «Берег»","start":"2026-08-02T15:30:00","end":"2026-08-02T16:45:00","day":"2026-08-02"},{"id":"4e300c9a-3c0b-57f3-9759-f8b7311141c2@fantasyfest2026.local","title":"Куршакова Ольга: Карелия: традиции, обряды, праздники, магия","venue":"Лекторий","start":"2026-08-02T16:00:00","end":"2026-08-02T17:30:00","day":"2026-08-02"},{"id":"1d40e3f3-d254-592c-9f8e-8147cab0badb@fantasyfest2026.local","title":"Косплей. Награждение","venue":"Ристалище","start":"2026-08-02T16:00:00","end":"2026-08-02T17:00:00","day":"2026-08-02"},{"id":"c0bd9467-fac5-507c-be08-a12ce27d61f3@fantasyfest2026.local","title":"Emberwood","venue":"Сцена «Круг Света»","start":"2026-08-02T16:00:00","end":"2026-08-02T17:15:00","day":"2026-08-02"},{"id":"0f51afbb-e685-5455-9c7b-471d970c0781@fantasyfest2026.local","title":"Ai Mori","venue":"Сцена «Былина»","start":"2026-08-02T16:30:00","end":"2026-08-02T18:00:00","day":"2026-08-02"},{"id":"78b89518-8426-5f4d-ab99-20b28f55ce4a@fantasyfest2026.local","title":"Симтрин","venue":"Сцена «Берег»","start":"2026-08-02T16:45:00","end":"2026-08-02T18:00:00","day":"2026-08-02"},{"id":"feacb6fc-885a-58c8-b1c9-e51b0871fc5a@fantasyfest2026.local","title":"Массовые бои","venue":"Ристалище","start":"2026-08-02T17:00:00","end":"2026-08-02T22:00:00","day":"2026-08-02"},{"id":"1da7dff5-12d3-5b41-b1f6-d472159c6be7@fantasyfest2026.local","title":"Shedda","venue":"Сцена «Круг Света»","start":"2026-08-02T17:15:00","end":"2026-08-02T18:30:00","day":"2026-08-02"},{"id":"ddda5cc9-dea0-5299-9dcc-1026de3bf4d4@fantasyfest2026.local","title":"Гордеева София: Что скрыто в кольце? Архетип власти, искушения и жертвы в мире Толкина","venue":"Лекторий","start":"2026-08-02T17:30:00","end":"2026-08-02T22:00:00","day":"2026-08-02"},{"id":"ecb54ad2-5137-589a-871e-c9ecee2375a2@fantasyfest2026.local","title":"Москвитин","venue":"Сцена «Берег»","start":"2026-08-02T18:00:00","end":"2026-08-02T19:15:00","day":"2026-08-02"},{"id":"cbc2d254-08a5-59a8-872f-7fbf5a445969@fantasyfest2026.local","title":"Тролль гнёт ель","venue":"Сцена «Былина»","start":"2026-08-02T18:00:00","end":"2026-08-02T19:30:00","day":"2026-08-02"},{"id":"a9007be6-1b5a-5b6e-9349-610bbb6f35fa@fantasyfest2026.local","title":"V Стихий","venue":"Сцена «Круг Света»","start":"2026-08-02T18:30:00","end":"2026-08-02T19:45:00","day":"2026-08-02"},{"id":"16b54385-b052-5d12-bce7-1b1e9ebfc3f3@fantasyfest2026.local","title":"Amalgama","venue":"Сцена «Берег»","start":"2026-08-02T19:15:00","end":"2026-08-02T20:45:00","day":"2026-08-02"},{"id":"a57fcb2e-1a95-5c89-a741-5a5f3e6cbca2@fantasyfest2026.local","title":"Fun Mode","venue":"Сцена «Былина»","start":"2026-08-02T19:30:00","end":"2026-08-02T21:00:00","day":"2026-08-02"},{"id":"8e3389f7-ae95-5b3c-9849-32ea2b6853a1@fantasyfest2026.local","title":"Terratomorf","venue":"Сцена «Круг Света»","start":"2026-08-02T19:45:00","end":"2026-08-02T21:00:00","day":"2026-08-02"},{"id":"bdf32e6f-d582-5460-b7b9-755d58fdc2e2@fantasyfest2026.local","title":"Digimortal","venue":"Сцена «Берег»","start":"2026-08-02T20:45:00","end":"2026-08-02T22:00:00","day":"2026-08-02"},{"id":"f845216b-489f-54d6-b2de-e510f404473a@fantasyfest2026.local","title":"Эпидемия","venue":"Сцена «Былина»","start":"2026-08-02T21:00:00","end":"2026-08-02T22:00:00","day":"2026-08-02"},{"id":"5e99ce69-d334-51d2-b261-0c5dff5f893b@fantasyfest2026.local","title":"Мечтатель","venue":"Сцена «Круг Света»","start":"2026-08-02T21:00:00","end":"2026-08-02T22:00:00","day":"2026-08-02"}];
-const VENUE_COLORS = {"Сцена «Круг Света»": "#5B8CFF", "Сцена «Берег»": "#55C97A", "Сцена «Былина»": "#B77CFF", "Лекторий": "#F2C14E", "Литературная программа": "#FF7A8A", "Ристалище": "#35C5C2"};
-const VENUE_ORDER = ["Сцена «Круг Света»", "Сцена «Берег»", "Сцена «Былина»", "Лекторий", "Литературная программа", "Ристалище"];
-const DAYS = [
-  {id:"2026-07-31",short:"31 июля",long:"Пятница, 31 июля"},
-  {id:"2026-08-01",short:"1 августа",long:"Суббота, 1 августа"},
-  {id:"2026-08-02",short:"2 августа",long:"Воскресенье, 2 августа"}
-];
-
-const state = {
-  day:DAYS[0].id,
-  view:"schedule",
-  venues:new Set(VENUE_ORDER),
-  query:"",
-  saved:new Set(JSON.parse(localStorage.getItem("ff26-saved") || "[]"))
-};
-
-const $ = s => document.querySelector(s);
-const main = $("#main");
-const dayTabs = $("#dayTabs");
-const venueFilters = $("#venueFilters");
-const searchInput = $("#searchInput");
-const sheet = $("#sheet");
-const sheetBackdrop = $("#sheetBackdrop");
-const toast = $("#toast");
-
-function minutes(iso){
-  const d=new Date(iso);
-  return d.getHours()*60+d.getMinutes();
-}
-function fmtTime(iso){
-  return new Date(iso).toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"});
-}
-function duration(event){
-  const n=(new Date(event.end)-new Date(event.start))/60000;
-  const h=Math.floor(n/60),m=n%60;
-  return h ? `${h} ч${m?` ${m} мин`:""}` : `${m} мин`;
-}
-function esc(s){
-  return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-}
-function color(venue){ return VENUE_COLORS[venue] || "#999"; }
-function shortVenue(venue){
-  return venue.replace("Сцена ","").replaceAll("«","").replaceAll("»","");
-}
-function visibleBase(){
-  const q=state.query.trim().toLocaleLowerCase("ru");
-  return EVENTS.filter(e=>
-    e.day===state.day &&
-    state.venues.has(e.venue) &&
-    (!q || `${e.title} ${e.venue}`.toLocaleLowerCase("ru").includes(q))
-  );
-}
-function allDayEvents(){
-  return EVENTS.filter(e=>e.day===state.day);
-}
-function overlaps(a,b){
-  return new Date(a.start)<new Date(b.end) && new Date(b.start)<new Date(a.end);
-}
-function conflictCount(event, pool=allDayEvents()){
-  return pool.filter(other=>other.id!==event.id && overlaps(event,other)).length;
-}
-function selectedConflicts(){
-  const selected=EVENTS.filter(e=>state.saved.has(e.id));
-  const ids=new Set();
-  for(let i=0;i<selected.length;i++) for(let j=i+1;j<selected.length;j++){
-    if(selected[i].day===selected[j].day && overlaps(selected[i],selected[j])){
-      ids.add(selected[i].id);ids.add(selected[j].id);
-    }
-  }
-  return ids;
-}
-function eventCard(e, selectedConflictIds=new Set()){
-  const n=conflictCount(e);
-  const saved=state.saved.has(e.id);
-  return `
-    <article class="event-card ${selectedConflictIds.has(e.id)?"has-conflict":""}" style="--venue:${color(e.venue)}" data-event="${esc(e.id)}">
-      <div class="event-time"><strong>${fmtTime(e.start)}</strong><span>до ${fmtTime(e.end)}</span></div>
-      <div>
-        <div class="event-title">${esc(e.title)}</div>
-        <div class="event-meta">
-          <span class="badge venue">${esc(shortVenue(e.venue))}</span>
-          <span class="badge">${duration(e)}</span>
-          ${n?`<span class="badge conflict">${n} пересеч.</span>`:""}
-        </div>
-      </div>
-      <button class="save-btn ${saved?"saved":""}" data-save="${esc(e.id)}" aria-label="${saved?"Убрать из маршрута":"Сохранить в маршрут"}">${saved?"★":"☆"}</button>
-    </article>`;
-}
-function renderDays(){
-  dayTabs.innerHTML=DAYS.map(d=>`<button class="day-tab ${state.day===d.id?"active":""}" data-day="${d.id}">${d.short}</button>`).join("");
-}
-function renderVenues(){
-  venueFilters.innerHTML=VENUE_ORDER.map(v=>`
-    <button class="venue-chip ${state.venues.has(v)?"active":""}" data-venue="${esc(v)}" style="--venue:${color(v)}">
-      <span class="dot"></span>${esc(shortVenue(v))}
-    </button>`).join("");
-}
-function syncViewButtons(){
-  document.querySelectorAll("[data-view]").forEach(b=>b.classList.toggle("active",b.dataset.view===state.view));
-}
-function renderSchedule(){
-  const data=visibleBase();
-  const day=DAYS.find(d=>d.id===state.day);
-  main.innerHTML=`
-    <div class="section-head">
-      <div><h2>${day.long}</h2><p>Сначала название события, затем площадка</p></div>
-      <div class="counter">${data.length} из ${allDayEvents().length}</div>
-    </div>
-    <div class="timeline">${data.length?data.map(e=>eventCard(e)).join(""):`<div class="empty">По выбранным фильтрам событий нет.</div>`}</div>`;
-}
-function overlapSlices(events){
-  const points=[...new Set(events.flatMap(e=>[minutes(e.start),minutes(e.end)]))].sort((a,b)=>a-b);
-  const slices=[];
-  for(let i=0;i<points.length-1;i++){
-    const start=points[i],end=points[i+1];
-    const active=events.filter(e=>minutes(e.start)<end && minutes(e.end)>start);
-    if(active.length>1){
-      const key=active.map(e=>e.id).sort().join("|");
-      const prev=slices.at(-1);
-      if(prev && prev.key===key && prev.end===start) prev.end=end;
-      else slices.push({start,end,active,key});
-    }
-  }
-  return slices;
-}
-function hm(mins){return `${String(Math.floor(mins/60)).padStart(2,"0")}:${String(mins%60).padStart(2,"0")}`}
-function renderOverlaps(){
-  const data=visibleBase();
-  const slices=overlapSlices(data);
-  main.innerHTML=`
-    <div class="section-head">
-      <div><h2>Одновременные события</h2><p>Точные интервалы, когда идут два события и более</p></div>
-      <div class="counter">${slices.length} интервалов</div>
-    </div>
-    ${slices.length?slices.map(s=>`
-      <section class="overlap-block">
-        <div class="overlap-head">
-          <div class="overlap-time">${hm(s.start)}–${hm(s.end)}</div>
-          <div class="overlap-count">${s.active.length} одновременно</div>
-        </div>
-        <div class="overlap-events">
-          ${s.active.map(e=>`
-            <div class="overlap-mini" style="--venue:${color(e.venue)}" data-event="${esc(e.id)}">
-              <div class="bar"></div>
-              <div><strong>${esc(e.title)}</strong><span>${esc(shortVenue(e.venue))} · ${fmtTime(e.start)}–${fmtTime(e.end)}</span></div>
-            </div>`).join("")}
-        </div>
-      </section>`).join(""):`<div class="empty">Для выбранных площадок пересечений нет.</div>`}`;
-}
-function renderSaved(){
-  const selected=EVENTS.filter(e=>state.saved.has(e.id)).sort((a,b)=>a.start.localeCompare(b.start));
-  const conflicts=selectedConflicts();
-  $("#savedStat").textContent=selected.length;
-  main.innerHTML=`
-    <div class="section-head">
-      <div><h2>Мой маршрут</h2><p>${conflicts.size?`Конфликтуют ${conflicts.size} сохранённых событий`:"Пересечений среди выбранного нет"}</p></div>
-      <div class="counter">${selected.length} сохранено</div>
-    </div>
-    ${selected.length?`
-      <div class="saved-actions">
-        <button class="primary-btn" id="downloadIcs">Скачать мой маршрут</button>
-        <button class="secondary-btn" id="clearSaved">Очистить</button>
-      </div>
-      ${DAYS.map(d=>{
-        const items=selected.filter(e=>e.day===d.id);
-        return items.length?`<section style="margin-bottom:20px"><div class="section-head"><div><h2 style="font-size:17px">${d.long}</h2></div><div class="counter">${items.length}</div></div><div class="timeline">${items.map(e=>eventCard(e,conflicts)).join("")}</div></section>`:"";
-      }).join("")}
-    `:`<div class="empty">Нажмите ☆ у события, чтобы собрать личный маршрут и проверить пересечения.</div>`}`;
-}
-function render(){
-  renderDays();renderVenues();syncViewButtons();
-  if(state.view==="schedule")renderSchedule();
-  if(state.view==="overlaps")renderOverlaps();
-  if(state.view==="saved")renderSaved();
-  $("#savedStat").textContent=state.saved.size;
-}
-function saveState(){
-  localStorage.setItem("ff26-saved",JSON.stringify([...state.saved]));
-}
-function notify(text){
-  toast.textContent=text;toast.classList.add("show");
-  clearTimeout(notify.t);notify.t=setTimeout(()=>toast.classList.remove("show"),1500);
-}
-function toggleSave(id){
-  if(state.saved.has(id)){state.saved.delete(id);notify("Удалено из маршрута")}
-  else{state.saved.add(id);notify("Добавлено в маршрут")}
-  saveState();render();
-}
-function showEvent(id){
-  const e=EVENTS.find(x=>x.id===id);if(!e)return;
-  const n=conflictCount(e);
-  sheet.innerHTML=`
-    <div class="grabber"></div>
-    <span class="sheet-label" style="color:${color(e.venue)};background:color-mix(in srgb,${color(e.venue)},transparent 84%)">${esc(e.venue)}</span>
-    <h3>${esc(e.title)}</h3>
-    <div class="sheet-info">
-      <div><span>Время</span><strong>${fmtTime(e.start)}–${fmtTime(e.end)}</strong></div>
-      <div><span>Продолжительность</span><strong>${duration(e)}</strong></div>
-      <div><span>Дата</span><strong>${DAYS.find(d=>d.id===e.day).short}</strong></div>
-      <div><span>Пересечения</span><strong>${n?`${n} событий`:"Нет"}</strong></div>
-    </div>
-    <button class="primary-btn" data-save="${esc(e.id)}">${state.saved.has(e.id)?"Убрать из маршрута":"Добавить в маршрут"}</button>`;
-  sheet.classList.add("open");sheetBackdrop.classList.add("open");
-}
-function closeSheet(){sheet.classList.remove("open");sheetBackdrop.classList.remove("open")}
-function downloadSelectedIcs(){
-  const selected=EVENTS.filter(e=>state.saved.has(e.id)).sort((a,b)=>a.start.localeCompare(b.start));
-  const pad=n=>String(n).padStart(2,"0");
-  const dt=iso=>{const d=new Date(iso);return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(d.getMinutes())}00`};
-  const ie=s=>s.replaceAll("\\","\\\\").replaceAll("\n","\\n").replaceAll(",","\\,").replaceAll(";","\\;");
-  let ics=["BEGIN:VCALENDAR","VERSION:2.0","CALSCALE:GREGORIAN","PRODID:-//Fantasy Fest Route//RU","X-WR-CALNAME:Мой маршрут — Фэнтези Фест 2026","X-WR-TIMEZONE:Europe/Moscow"];
-  selected.forEach(e=>ics.push("BEGIN:VEVENT",`UID:${e.id}`,`DTSTART;TZID=Europe/Moscow:${dt(e.start)}`,`DTEND;TZID=Europe/Moscow:${dt(e.end)}`,`SUMMARY:${ie(e.title+" — "+e.venue)}`,`LOCATION:${ie(e.venue)}`,"END:VEVENT"));
-  ics.push("END:VCALENDAR");
-  const blob=new Blob([ics.join("\r\n")],{type:"text/calendar;charset=utf-8"});
-  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="Мой_маршрут_Фэнтези_Фест_2026.ics";a.click();URL.revokeObjectURL(a.href);
-}
-document.addEventListener("click",e=>{
-  const day=e.target.closest("[data-day]");if(day){state.day=day.dataset.day;render();return}
-  const view=e.target.closest("[data-view]");if(view){state.view=view.dataset.view;render();window.scrollTo({top:0,behavior:"smooth"});return}
-  const venue=e.target.closest("[data-venue]");if(venue){
-    const v=venue.dataset.venue;state.venues.has(v)?state.venues.delete(v):state.venues.add(v);render();return
-  }
-  const save=e.target.closest("[data-save]");if(save){e.stopPropagation();toggleSave(save.dataset.save);closeSheet();return}
-  const card=e.target.closest("[data-event]");if(card){showEvent(card.dataset.event);return}
-  if(e.target.id==="downloadIcs"){downloadSelectedIcs();return}
-  if(e.target.id==="clearSaved"){state.saved.clear();saveState();render();notify("Маршрут очищен")}
-});
-searchInput.addEventListener("input",e=>{state.query=e.target.value;render()});
-$("#clearBtn").addEventListener("click",()=>{state.query="";searchInput.value="";state.venues=new Set(VENUE_ORDER);render()});
-sheetBackdrop.addEventListener("click",closeSheet);
-document.addEventListener("keydown",e=>{if(e.key==="Escape")closeSheet()});
-render();
-</script>
+        const app=document.createElement('script');
+        app.src='./ff2026-app.js?v=5';
+        app.defer=true;
+        app.onerror=()=>{throw new Error('Не удалось загрузить приложение')};
+        document.body.appendChild(app);
+      }catch(error){
+        console.error(error);
+        document.getElementById('boot').innerHTML='<div><strong>Не удалось открыть расписание</strong>Обновите страницу или проверьте подключение к интернету.</div>';
+      }
+    })();
+  </script>
 </body>
 </html>
