@@ -1,4 +1,4 @@
-window.FF_VK_EXTRA_READY=fetch("vk-manual-profiles-2.json?v=1",{cache:"no-store"})
+window.FF_VK_EXTRA_READY=fetch("vk-manual-profiles-2.json?v=2",{cache:"no-store"})
   .then(function(response){
     if(!response.ok) throw new Error("VK extra profiles HTTP "+response.status);
     return response.json();
@@ -6,6 +6,11 @@ window.FF_VK_EXTRA_READY=fetch("vk-manual-profiles-2.json?v=1",{cache:"no-store"
   .then(function(profiles){
     window.FF_VK_PROFILES=window.FF_VK_PROFILES||{};
     if(profiles&&typeof profiles==="object") Object.assign(window.FF_VK_PROFILES,profiles);
+    window.FF_VK_META=Object.assign({},window.FF_VK_META||{}, {
+      matched:Object.keys(window.FF_VK_PROFILES).length,
+      total_schedule_musicians:69,
+      source:"verified VK links and curated public profiles"
+    });
     return window.FF_VK_PROFILES;
   })
   .catch(function(error){
