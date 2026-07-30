@@ -1,0 +1,43 @@
+/* Safari/iOS rendering fixes for FF 2026. */
+
+.overlap-events{overflow:visible}
+.overlap-mini{
+  position:relative;
+  display:block;
+  min-height:0;
+  overflow:hidden;
+  padding-left:clamp(24px,6vw,30px);
+  isolation:isolate;
+}
+.overlap-mini .bar{display:none!important}
+.overlap-mini::before{
+  content:"";
+  position:absolute;
+  z-index:0;
+  top:0;
+  bottom:0;
+  left:0;
+  width:clamp(7px,2vw,9px);
+  border-radius:inherit;
+  background:var(--venue);
+}
+.overlap-mini>div:not(.bar){position:relative;z-index:1;min-width:0}
+.overlap-block{position:relative;overflow:hidden;isolation:isolate}
+
+@supports (-webkit-touch-callout:none){
+  .control-shell{
+    -webkit-transform:translateZ(0);
+    transform:translateZ(0);
+    background:#0d130c!important;
+    -webkit-backdrop-filter:none!important;
+    backdrop-filter:none!important;
+  }
+  .overlap-block,.overlap-mini{
+    -webkit-transform:translateZ(0);
+    transform:translateZ(0);
+  }
+  .bottom-nav{
+    -webkit-backdrop-filter:none;
+    backdrop-filter:none;
+  }
+}
