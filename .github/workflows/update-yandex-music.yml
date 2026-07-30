@@ -31,10 +31,10 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install Yandex Music client
-        run: python -m pip install --upgrade "yandex-music==3.0.0"
+      - name: Install current Yandex Music client
+        run: python -m pip install --upgrade yandex-music
 
-      - name: Build Yandex Music links
+      - name: Build exact Yandex Music artist links
         run: python scripts/update_yandex_music.py
 
       - name: Commit generated database
@@ -47,5 +47,6 @@ jobs:
             echo "Yandex Music database has not changed."
             exit 0
           fi
-          git commit -m "Update Yandex Music links for FF 2026"
+          git commit -m "Update exact Yandex Music artist links for FF 2026"
+          git pull --rebase
           git push
