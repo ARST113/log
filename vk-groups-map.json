@@ -1,4 +1,23 @@
 {
-  "_comment": "For an ambiguous title, add its exact VK screen_name or numeric group_id. Example: \"Эпидемия\": \"epidemiaru\"",
-  "_updated": "2026-07-30"
+  "_comment": "Verified public VK community identifiers. Ambiguous or unverified performers are intentionally omitted.",
+  "_updated": "2026-07-30",
+  "Алексей «Крыс» Ширяев": "club229687881",
+  "Агидель": "agidel_33",
+  "Арктида": "arktida_club",
+  "Ведьмин Пунш": "witchpunch",
+  "Ветер воды": "waterwind",
+  "Джоконда": "giocondaofficial",
+  "Digimortal": "digimortalmusic",
+  "El Mental": "elmental",
+  "Fun Mode": "fun_m0de",
+  "Grottesque": "industrialsteamoff",
+  "Канцлер Ги & Bregan D'Ert": "kancler_gui",
+  "Лунарь": "club4520444",
+  "Марко Поло": "marcoband",
+  "Мэган": "club85627291",
+  "Polnalyubvi": "polnalyubvi",
+  "Сказки Чёрного города": "schg_official",
+  "Тролль гнёт ель": "troll_gnet_yel",
+  "Catharsis": "catharsisband",
+  "Эпидемия": "epidemiaru"
 }
