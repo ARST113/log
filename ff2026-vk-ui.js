@@ -30,13 +30,16 @@
         </div>
         ${description ? `<p class="vk-profile-description">${escapeHtml(description)}</p>` : ''}
         <div class="vk-profile-footer">
-          ${members ? `<span>${escapeHtml(members)}</span>` : '<span>Публичная страница</span>'}
+          ${members ? `<span>${escapeHtml(members)}</span>` : '<span>Официальная страница исполнителя</span>'}
           ${profile.url ? `<a class="vk-profile-link" href="${escapeHtml(profile.url)}" target="_blank" rel="noopener noreferrer">Открыть ВК</a>` : ''}
         </div>
       </section>`;
   }
 
-  function insertProfile(eventId){
+  async function insertProfile(eventId){
+    if(window.FF_VK_READY){
+      try{ await window.FF_VK_READY; }catch{}
+    }
     const event = (window.FF_EVENTS || []).find(item => item.id === eventId);
     const sheet = document.querySelector('#sheet');
     if(!event || !sheet || sheet.querySelector('.vk-profile')) return;
