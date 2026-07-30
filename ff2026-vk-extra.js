@@ -8,7 +8,8 @@ window.FF_VK_EXTRA_READY=fetch("vk-manual-profiles-2.json?v=2",{cache:"no-store"
     if(profiles&&typeof profiles==="object") Object.assign(window.FF_VK_PROFILES,profiles);
 
     const verifiedUrls={
-      "Проект-А":"https://vk.com/proekta_okulovka"
+      "Проект-А":"https://vk.com/proekta_okulovka",
+      "Двоеволчье":"https://vk.com/ulfsskald"
     };
     Object.entries(verifiedUrls).forEach(function(entry){
       const title=entry[0],url=entry[1];
