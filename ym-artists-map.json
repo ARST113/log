@@ -1,0 +1,13 @@
+{
+  "_comment": "Optional aliases and forced Yandex Music artist IDs. String values replace the search query; objects may contain query, artist_id and force.",
+  ":LUDENVEN:": {"query": "LÜDENVËN"},
+  "Артмис (Мария Розалка)": {"query": "Мария Розалка"},
+  "Дэн Назгул и Nazgul Band": {"query": "Дэн Назгул"},
+  "Канцлер Ги & Bregan D'Ert": {"query": "Канцлер Ги"},
+  "Сергей Хоббит и Instruktor": {"query": "Сергей Хоббит"},
+  "Septimiy и Симфоническое фэнтези": {"query": "Septimiy"},
+  "V Стихий": {"query": "5 Стихий"},
+  "Infornal F.": {"query": "Infornal FuckЪ"},
+  "Ростислав Чебыкин и «4т-Бэнд»": {"query": "Ростислав Чебыкин"},
+  "Эр из Альвасете": {"query": "Эр из Альвасете"}
+}
