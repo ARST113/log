@@ -1,5 +1,6 @@
 {
   "_comment": "Optional aliases and forced Yandex Music artist IDs. String values replace the search query; objects may contain query, artist_id and force.",
+  "_refresh": "2026-07-30T21:25:00+03:00",
   ":LUDENVEN:": {"query": "LÜDENVËN"},
   "Артмис (Мария Розалка)": {"query": "Мария Розалка"},
   "Дэн Назгул и Nazgul Band": {"query": "Дэн Назгул"},
