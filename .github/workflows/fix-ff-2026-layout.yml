@@ -1,0 +1,152 @@
+name: Fix FF 2026 responsive layout
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/fix-ff-2026-layout.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-layout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore scale and fix iPhone layout layers
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('FF_2026.html')
+          s = p.read_text(encoding='utf-8')
+
+          def remove_media_block(text: str, marker: str) -> str:
+              start = text.find(marker)
+              if start == -1:
+                  return text
+              brace = text.find('{', start)
+              depth = 0
+              for i in range(brace, len(text)):
+                  if text[i] == '{':
+                      depth += 1
+                  elif text[i] == '}':
+                      depth -= 1
+                      if depth == 0:
+                          return text[:start] + text[i + 1:]
+              raise RuntimeError(f'Unclosed media block: {marker}')
+
+          s = remove_media_block(s, '    @media (max-width:520px)')
+          s = remove_media_block(s, '    @media (max-width:365px)')
+
+          s = s.replace(
+              '      padding-bottom:calc(112px + env(safe-area-inset-bottom));\n      overflow:clip;',
+              '      padding-bottom:calc(112px + env(safe-area-inset-bottom));\n      overflow:visible;'
+          )
+
+          old_control = '''    .control-shell{
+                position:sticky;
+                top:0;
+                z-index:20;
+                isolation:isolate;
+                padding:8px 12px 10px;
+                background:linear-gradient(to bottom,rgba(13,19,12,.97),rgba(13,19,12,.88),transparent);
+                backdrop-filter:blur(20px);
+              }'''
+          new_control = '''    .control-shell{
+                position:sticky;
+                top:0;
+                z-index:40;
+                isolation:isolate;
+                padding:8px 12px 10px;
+                background:#0d130c;
+                border-bottom:1px solid rgba(255,255,255,.08);
+                box-shadow:0 12px 24px rgba(5,10,4,.42);
+                -webkit-backdrop-filter:none;
+                backdrop-filter:none;
+                transform:translateZ(0);
+              }'''
+          if old_control not in s:
+              raise RuntimeError('control-shell block not found')
+          s = s.replace(old_control, new_control)
+
+          fluid_css = r'''
+              /* Fluid mobile layout: original scale, dimensions tied to viewport width. */
+              @media (max-width:759px){
+                :root{--radius:clamp(18px,5vw,22px)}
+                .app{padding-bottom:calc(clamp(116px,29vw,136px) + env(safe-area-inset-bottom))}
+                .hero{padding:calc(clamp(19px,5vw,25px) + env(safe-area-inset-top)) clamp(13px,4vw,18px) clamp(12px,3.5vw,16px)}
+                .eyebrow{font-size:clamp(11px,3vw,13px);letter-spacing:.12em}
+                h1{font-size:clamp(33px,9.3vw,44px);margin:clamp(12px,3vw,15px) 0 clamp(8px,2.5vw,11px)}
+                .hero p{font-size:clamp(13px,3.6vw,15px);line-height:1.48}
+                .summary-row{gap:clamp(7px,2vw,10px);margin-top:clamp(15px,4vw,19px)}
+                .summary-card{padding:clamp(10px,2.8vw,13px);border-radius:clamp(14px,4vw,17px)}
+                .summary-card strong{font-size:clamp(19px,5.2vw,23px)}
+                .summary-card span{font-size:clamp(10px,2.7vw,12px)}
+
+                .control-shell{padding:clamp(8px,2.3vw,11px) clamp(10px,3.2vw,15px) clamp(9px,2.6vw,12px)}
+                .day-tabs{gap:clamp(5px,1.6vw,7px);padding:clamp(4px,1.3vw,6px);border-radius:clamp(15px,4vw,18px)}
+                .day-tab{min-width:0;min-height:clamp(42px,11vw,48px);padding:clamp(9px,2.4vw,11px) clamp(4px,1.5vw,7px);border-radius:clamp(11px,3vw,13px);font-size:clamp(13px,3.6vw,15px);line-height:1.12}
+                .tools{gap:clamp(7px,2vw,10px);margin-top:clamp(8px,2.2vw,10px)}
+                .search{height:clamp(46px,12vw,52px);padding:0 clamp(13px,3.6vw,17px);border-radius:clamp(14px,4vw,17px);font-size:16px}
+                .icon-btn{width:clamp(46px,12vw,52px);height:clamp(46px,12vw,52px);border-radius:clamp(14px,4vw,17px);font-size:clamp(18px,5vw,22px)}
+                .venue-scroller{gap:clamp(7px,2vw,10px);padding:clamp(9px,2.4vw,12px) clamp(22px,6vw,30px) 3px 2px;-webkit-overflow-scrolling:touch;scroll-snap-type:x proximity}
+                .venue-chip{flex:0 0 auto;min-height:clamp(34px,9vw,39px);padding:clamp(7px,2vw,9px) clamp(10px,2.8vw,13px);font-size:clamp(12px,3.3vw,14px);scroll-snap-align:start}
+                .venue-chip .dot{width:clamp(8px,2.2vw,10px);height:clamp(8px,2.2vw,10px)}
+
+                .view-tabs{display:none}
+                main{padding:clamp(14px,3.8vw,18px) clamp(10px,3vw,15px) 0}
+                .section-head{gap:clamp(9px,2.5vw,13px);margin:4px 2px clamp(12px,3.5vw,16px)}
+                .section-head h2{font-size:clamp(20px,5.5vw,24px);line-height:1.12}
+                .section-head p{font-size:clamp(11px,3vw,13px);line-height:1.38}
+                .counter{font-size:clamp(11px,3vw,13px)}
+                .timeline{gap:clamp(9px,2.6vw,12px)}
+
+                .event-card{grid-template-columns:clamp(58px,16vw,69px) minmax(0,1fr) clamp(40px,11vw,47px);gap:clamp(9px,2.6vw,12px);padding:clamp(12px,3.4vw,15px) clamp(10px,2.8vw,13px);min-width:0;border-radius:clamp(18px,5vw,22px)}
+                .event-card::before{width:clamp(3px,1vw,4px)}
+                .event-time{padding-left:clamp(3px,1vw,6px);min-width:0}
+                .event-time strong{font-size:clamp(15px,4.1vw,17px);line-height:1.08}
+                .event-time span{font-size:clamp(10px,2.8vw,12px);margin-top:4px;white-space:nowrap}
+                .event-title{font-size:clamp(15px,4.15vw,17px);line-height:1.28;font-weight:800;letter-spacing:-.012em;overflow-wrap:anywhere}
+                .event-meta{gap:clamp(5px,1.5vw,7px);margin-top:clamp(8px,2.2vw,10px)}
+                .badge{padding:clamp(5px,1.4vw,6px) clamp(7px,2vw,9px);font-size:clamp(10px,2.8vw,12px);line-height:1.12}
+                .save-btn{width:clamp(40px,11vw,47px);height:clamp(40px,11vw,47px);border-radius:clamp(12px,3.5vw,15px);font-size:clamp(20px,5.5vw,24px);padding:0}
+
+                .overlap-block{padding:clamp(13px,3.6vw,16px);border-radius:clamp(19px,5vw,23px);margin-bottom:clamp(10px,3vw,14px)}
+                .overlap-head{margin-bottom:clamp(9px,2.6vw,12px)}
+                .overlap-time{font-size:clamp(17px,4.7vw,20px)}
+                .overlap-count{font-size:clamp(10px,2.8vw,12px);padding:6px 9px}
+                .overlap-mini{padding:clamp(10px,2.8vw,13px);border-radius:clamp(14px,4vw,17px)}
+                .overlap-mini strong{font-size:clamp(13px,3.7vw,15px)}
+                .overlap-mini span{font-size:clamp(11px,3vw,13px)}
+
+                .bottom-nav{width:min(calc(100% - clamp(14px,4vw,24px)),660px);bottom:max(clamp(7px,2vw,11px),env(safe-area-inset-bottom));padding:clamp(6px,1.8vw,8px);border-radius:clamp(19px,5vw,23px);-webkit-backdrop-filter:blur(22px)}
+                .bottom-nav button{min-width:0;padding:clamp(9px,2.5vw,11px) 4px;border-radius:clamp(13px,3.7vw,16px);font-size:clamp(10px,2.9vw,12px);line-height:1.12}
+                .bottom-nav button span{font-size:clamp(19px,5.2vw,22px);margin-bottom:4px}
+                .sheet{padding:10px clamp(15px,4vw,20px) calc(clamp(22px,6vw,28px) + env(safe-area-inset-bottom))}
+                .sheet h3{font-size:clamp(21px,5.8vw,25px)}
+                .toast{bottom:clamp(96px,25vw,116px);max-width:calc(100% - 28px);white-space:normal;text-align:center}
+              }
+          '''
+
+          marker = '    @media (min-width:760px){'
+          if marker not in s:
+              raise RuntimeError('desktop media marker not found')
+          s = s.replace(marker, fluid_css + '\n' + marker, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Commit patched page
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add FF_2026.html
+          if git diff --cached --quiet; then
+            echo 'No changes required'
+          else
+            git commit -m 'Исправить iPhone-слои и сделать размеры резиновыми'
+            git push
+          fi
