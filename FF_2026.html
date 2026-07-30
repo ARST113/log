@@ -3,95 +3,60 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#10170e">
+  <meta name="theme-color" content="#0d130c">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="format-detection" content="telephone=no">
   <title>Фэнтези Фест 2026 — расписание</title>
-  <style>
-    html,body{margin:0;min-height:100%;background:#0d130c;color:#f4f7ef;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
-    #boot{min-height:100vh;display:grid;place-items:center;padding:24px;text-align:center;color:#aeb9a7}
-    #boot strong{display:block;color:#f4f7ef;font-size:20px;margin-bottom:8px}
-  </style>
+  <link rel="stylesheet" href="ff2026.css?v=6">
 </head>
 <body>
-  <div id="boot"><div><strong>Фэнтези Фест</strong>Загрузка расписания…</div></div>
-  <script>
-    (async()=>{
-      const sources=[
-        'https://cdn.jsdelivr.net/gh/ARST113/log@caaa3acea05391320a0d5f512cf203eab32eebdf/FF_2026.html',
-        'https://raw.githubusercontent.com/ARST113/log/caaa3acea05391320a0d5f512cf203eab32eebdf/FF_2026.html'
-      ];
+<div class="app">
+  <header class="hero">
+    <div class="eyebrow">31 июля — 2 августа 2026</div>
+    <h1>Фэнтези Фест</h1>
+    <p>Мобильное расписание шести площадок. Сохраняйте выступления и сразу проверяйте пересечения.</p>
+    <div class="summary-row">
+      <div class="summary-card"><strong id="totalStat">113</strong><span>событий</span></div>
+      <div class="summary-card"><strong>6</strong><span>площадок</span></div>
+      <div class="summary-card"><strong id="savedStat">0</strong><span>сохранено</span></div>
+    </div>
+  </header>
 
-      async function loadBase(){
-        let lastError;
-        for(const url of sources){
-          try{
-            const response=await fetch(url,{cache:'force-cache'});
-            if(!response.ok) throw new Error(`HTTP ${response.status}`);
-            return await response.text();
-          }catch(error){lastError=error}
-        }
-        throw lastError || new Error('Не удалось загрузить данные расписания');
-      }
+  <section class="control-shell">
+    <div class="day-tabs" id="dayTabs"></div>
+    <div class="tools">
+      <input class="search" id="searchInput" type="search" placeholder="Поиск группы, автора или темы">
+      <button class="icon-btn" id="clearBtn" aria-label="Сбросить фильтры" title="Сбросить фильтры">↺</button>
+    </div>
+    <div class="venue-scroller" id="venueFilters"></div>
+  </section>
 
-      try{
-        const source=await loadBase();
-        const styleMatch=source.match(/<style>([\s\S]*?)<\/style>/i);
-        const eventsMatch=source.match(/const EVENTS = (\[[\s\S]*?\]);\s*const VENUE_COLORS/);
-        if(!styleMatch || !eventsMatch) throw new Error('Не удалось разобрать исходное расписание');
+  <div class="view-tabs" id="viewTabs">
+    <button class="view-tab active" data-view="schedule">Расписание</button>
+    <button class="view-tab" data-view="overlaps">Пересечения</button>
+    <button class="view-tab" data-view="saved">Мой маршрут</button>
+  </div>
 
-        const style=document.createElement('style');
-        style.textContent=styleMatch[1];
-        document.head.appendChild(style);
-        window.FF_EVENTS=JSON.parse(eventsMatch[1]);
+  <main id="main"></main>
+</div>
 
-        document.body.innerHTML=`
-          <div class="app">
-            <header class="hero">
-              <div class="eyebrow">31 июля — 2 августа 2026</div>
-              <h1>Фэнтези Фест</h1>
-              <p>Мобильное расписание шести площадок. Сохраняйте выступления и сразу проверяйте пересечения.</p>
-              <div class="summary-row">
-                <div class="summary-card"><strong id="totalStat">113</strong><span>событий</span></div>
-                <div class="summary-card"><strong>6</strong><span>площадок</span></div>
-                <div class="summary-card"><strong id="savedStat">0</strong><span>сохранено</span></div>
-              </div>
-            </header>
-            <section class="control-shell">
-              <div class="day-tabs" id="dayTabs"></div>
-              <div class="tools">
-                <input class="search" id="searchInput" type="search" placeholder="Поиск группы, автора или темы">
-                <button class="icon-btn" id="clearBtn" aria-label="Сбросить фильтры" title="Сбросить фильтры">↺</button>
-              </div>
-              <div class="venue-scroller" id="venueFilters"></div>
-            </section>
-            <div class="view-tabs" id="viewTabs">
-              <button class="view-tab active" data-view="schedule">Расписание</button>
-              <button class="view-tab" data-view="overlaps">Пересечения</button>
-              <button class="view-tab" data-view="saved">Мой маршрут</button>
-            </div>
-            <main id="main"></main>
-          </div>
-          <nav class="bottom-nav">
-            <button class="active" data-view="schedule"><span>▦</span>Расписание</button>
-            <button data-view="overlaps"><span>⇄</span>Пересечения</button>
-            <button data-view="saved"><span>★</span>Мой маршрут</button>
-          </nav>
-          <div class="sheet-backdrop" id="sheetBackdrop"></div>
-          <aside class="sheet" id="sheet" aria-modal="true" role="dialog"></aside>
-          <div class="toast" id="toast"></div>`;
+<nav class="bottom-nav">
+  <button class="active" data-view="schedule"><span>▦</span>Расписание</button>
+  <button data-view="overlaps"><span>⇄</span>Пересечения</button>
+  <button data-view="saved"><span>★</span>Мой маршрут</button>
+</nav>
 
-        const app=document.createElement('script');
-        app.src='./ff2026-app.js?v=5';
-        app.defer=true;
-        app.onerror=()=>{throw new Error('Не удалось загрузить приложение')};
-        document.body.appendChild(app);
-      }catch(error){
-        console.error(error);
-        document.getElementById('boot').innerHTML='<div><strong>Не удалось открыть расписание</strong>Обновите страницу или проверьте подключение к интернету.</div>';
-      }
-    })();
-  </script>
+<div class="sheet-backdrop" id="sheetBackdrop"></div>
+<aside class="sheet" id="sheet" aria-modal="true" role="dialog"></aside>
+<div class="toast" id="toast"></div>
+
+<script src="ff2026-data-1.js?v=6"></script>
+<script src="ff2026-data-2.js?v=6"></script>
+<script src="ff2026-data-3.js?v=6"></script>
+<script src="ff2026-data-4.js?v=6"></script>
+<script src="ff2026-data-5.js?v=6"></script>
+<script src="ff2026-data-6.js?v=6"></script>
+<script src="ff2026-app.js?v=6"></script>
 </body>
 </html>
