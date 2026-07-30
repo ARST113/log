@@ -65,13 +65,22 @@ def call(method: str, params: dict[str, object]) -> dict[str, object]:
 result: dict[str, object] = {
     "api_version": version,
     "token_present": bool(token),
+    "diagnostic_note": (
+        "Only methods that officially accept service tokens are tested. "
+        "groups.search is intentionally excluded because VK API 5.199 marks it as user-token only."
+    ),
 }
 
 if token:
     result["methods"] = {
-        "users.get": call("users.get", {"user_ids": 1}),
-        "groups.getById": call("groups.getById", {"group_id": 1}),
-        "groups.search": call("groups.search", {"q": "Эпидемия", "count": 3}),
+        "users.get": call("users.get", {"user_ids": "1"}),
+        "groups.getById": call(
+            "groups.getById",
+            {
+                "group_ids": "vk",
+                "fields": "description,screen_name,members_count",
+            },
+        ),
     }
     result["token_valid"] = any(
         method_result.get("ok") is True
