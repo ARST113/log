@@ -3,7 +3,7 @@ name: Update Yandex Music links
 on:
   workflow_dispatch:
   schedule:
-    - cron: "43 3 * * 1"
+    - cron: "*/5 * * * *"
   push:
     branches: [main]
     paths:
