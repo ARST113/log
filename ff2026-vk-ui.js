@@ -24,14 +24,14 @@
         <div class="vk-profile-head">
           ${profile.photo ? `<img class="vk-profile-photo" src="${escapeHtml(profile.photo)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}
           <div class="vk-profile-title">
-            <span>${hasVk ? 'Сообщество ВКонтакте' : 'Об исполнителе'}</span>
+            <span>${hasVk ? 'ВКонтакте' : 'Об исполнителе'}</span>
             <strong>${escapeHtml(profile.name || event.title)}</strong>
             ${profile.activity ? `<small>${escapeHtml(profile.activity)}</small>` : ''}
           </div>
         </div>
         ${description ? `<p class="vk-profile-description">${escapeHtml(description)}</p>` : ''}
         <div class="vk-profile-footer">
-          ${members ? `<span>${escapeHtml(members)}</span>` : `<span>${hasVk ? 'Официальная страница исполнителя' : 'Информация о проекте'}</span>`}
+          ${members ? `<span>${escapeHtml(members)}</span>` : `<span>${hasVk ? 'Страница исполнителя' : 'Информация о проекте'}</span>`}
           ${hasVk ? `<a class="vk-profile-link" href="${escapeHtml(profile.url)}" target="_blank" rel="noopener noreferrer">Открыть ВК</a>` : ''}
         </div>
       </section>`;
