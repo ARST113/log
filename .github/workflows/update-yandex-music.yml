@@ -3,8 +3,15 @@ name: Update Yandex Music links
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "43 3 * * 1"
   push:
+    branches: [main]
+    paths:
+      - ".github/workflows/update-yandex-music.yml"
+      - "scripts/update_yandex_music.py"
+      - "ym-artists-map.json"
+      - "ff2026-data-*.js"
+  pull_request:
     branches: [main]
     paths:
       - ".github/workflows/update-yandex-music.yml"
@@ -16,8 +23,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: update-yandex-music
-  cancel-in-progress: false
+  group: update-yandex-music-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   update:
@@ -25,6 +32,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - uses: actions/setup-python@v5
         with:
