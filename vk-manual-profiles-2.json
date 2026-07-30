@@ -1,0 +1,66 @@
+{
+  "Above the Stars": {
+    "name": "Above the Stars",
+    "activity": "Modern metal / melodic death metal",
+    "description": "Московская метал-группа. В музыке соединяет современное тяжёлое звучание, мелодик-дэт-метал и фантастические сюжеты; отдельные релизы обращаются к постапокалиптической и киберпанковой эстетике.",
+    "url": "https://vk.com/above_the_stars",
+    "members_count": 0,
+    "source": "manual"
+  },
+  "Ai Mori": {
+    "name": "Ai Mori",
+    "activity": "Pop-rock / alternative music",
+    "description": "Музыкальный проект Ольги Зиминой. Ai Mori выпускает авторские композиции и русскоязычные версии зарубежных рок- и альтернативных песен, сочетая эмоциональный вокал с современной рок-подачей.",
+    "url": "https://vk.com/aimori",
+    "members_count": 0,
+    "source": "manual"
+  },
+  "Amalgama": {
+    "name": "AMALGAMA",
+    "activity": "Heavy metal",
+    "description": "Российская хеви-метал-группа с многолетней историей. В репертуаре сочетаются классический тяжёлый рок, мелодичные баллады и современное метал-звучание.",
+    "url": "https://vk.com/amalgamaband",
+    "members_count": 0,
+    "source": "manual"
+  },
+  "Bee Celtic": {
+    "name": "Bee Celtic",
+    "activity": "Кельтский и средневековый фолк",
+    "description": "Фолк-группа, исполняющая кельтские и скандинавские народные песни, средневековые баллады, авторские композиции и собственные аранжировки зарубежного этно-фолка. Выступления часто сопровождаются танцевальными программами.",
+    "url": "https://vk.com/bee_celtic",
+    "members_count": 0,
+    "source": "manual"
+  },
+  "Nagart": {
+    "name": "NAGART",
+    "activity": "Horror punk / punk metal",
+    "description": "Московская хоррор-панк-группа, работающая с 2013 года. Её песни построены как мрачные сказки и мистические истории, а концерты сочетают тяжёлое панк-звучание, театральность и энергичную подачу.",
+    "url": "https://vk.com/nagart_rock",
+    "members_count": 0,
+    "source": "manual"
+  },
+  "Nick Sax": {
+    "name": "NICK SAX",
+    "activity": "Rave / electro punk / cyberpunk",
+    "description": "Музыкальный проект на стыке рейва, электро-панка, хардбасса и киберпанковой эстетики. В песнях соединяются электронные биты, панк-энергия, ироничные тексты и узнаваемый сценический образ.",
+    "url": "https://vk.com/freaksax",
+    "members_count": 0,
+    "source": "manual"
+  },
+  "Norma Tale": {
+    "name": "Norma Tale",
+    "activity": "Alternative rock / rap rock",
+    "description": "Российский музыкальный проект, соединяющий альтернативный рок, рэп-рок и сказочно-фэнтезийные сюжеты. В песнях используются литературные, мифологические и игровые образы.",
+    "url": "https://vk.com/norma_ne_norma",
+    "members_count": 0,
+    "source": "manual"
+  },
+  "Павел Пиковский": {
+    "name": "Павел Пиковский",
+    "activity": "Авторская песня / рок",
+    "description": "Музыкант, поэт, автор-исполнитель и лидер группы «Хьюго». Его песни соединяют бытовые истории, воспоминания, философские наблюдения, выразительный вокал и мелодичную гитарную музыку.",
+    "url": "https://vk.com/hugoband",
+    "members_count": 0,
+    "source": "manual"
+  }
+}
