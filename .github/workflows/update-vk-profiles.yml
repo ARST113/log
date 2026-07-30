@@ -56,3 +56,5 @@ jobs:
           fi
           git commit -m "Update VK descriptions for FF 2026"
           git push
+
+# Manual token recheck: 2026-07-30T18:48+03:00
