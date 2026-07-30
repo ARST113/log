@@ -65,7 +65,7 @@
       width:min(100%,960px);
       margin:0 auto;
       padding-bottom:calc(112px + env(safe-area-inset-bottom));
-      overflow:clip;
+      overflow:visible;
     }
     .hero{
       position:relative;
@@ -91,11 +91,15 @@
     .control-shell{
       position:sticky;
       top:0;
-      z-index:20;
+      z-index:40;
       isolation:isolate;
       padding:8px 12px 10px;
-      background:linear-gradient(to bottom,rgba(13,19,12,.97),rgba(13,19,12,.88),transparent);
-      backdrop-filter:blur(20px);
+      background:#0d130c;
+      border-bottom:1px solid rgba(255,255,255,.08);
+      box-shadow:0 12px 24px rgba(5,10,4,.42);
+      -webkit-backdrop-filter:none;
+      backdrop-filter:none;
+      transform:translateZ(0);
     }
     .day-tabs,.view-tabs{
       display:grid;grid-template-columns:repeat(3,1fr);gap:6px;
@@ -234,95 +238,66 @@
       font-size:12px;font-weight:800;transition:.2s;box-shadow:var(--shadow);white-space:nowrap;
     }
     .toast.show{opacity:1;transform:translate(-50%,0)}
-    @media (max-width:520px){
-      :root{--radius:17px}
-      .app{padding-bottom:calc(108px + env(safe-area-inset-bottom))}
-      .hero{padding:calc(16px + env(safe-area-inset-top)) 12px 11px}
-      .eyebrow{font-size:10px;letter-spacing:.1em}
-      h1{font-size:34px;margin:11px 0 8px}
-      .hero p{font-size:12px;line-height:1.42}
-      .summary-row{gap:6px;margin-top:13px}
-      .summary-card{padding:9px 8px;border-radius:13px}
-      .summary-card strong{font-size:17px}
-      .summary-card span{font-size:9px}
 
-      .control-shell{padding:7px 9px 9px}
-      .day-tabs,.view-tabs{gap:4px;padding:4px;border-radius:15px}
-      .day-tab,.view-tab{min-width:0;min-height:38px;padding:8px 3px;border-radius:11px;font-size:12px;line-height:1.1}
-      .tools{gap:6px;margin-top:7px}
-      .search{height:42px;padding:0 11px;border-radius:13px}
-      .icon-btn{width:42px;height:42px;border-radius:13px}
-      .venue-scroller{gap:6px;padding-top:8px;padding-bottom:1px}
-      .venue-chip{padding:6px 9px;font-size:11px;min-height:31px}
-      .venue-chip .dot{width:7px;height:7px}
-      .view-tabs{margin:8px 9px 0}
 
-      main{padding:11px 8px 0}
-      .section-head{align-items:flex-start;gap:8px;margin:3px 2px 10px}
-      .section-head h2{font-size:18px;line-height:1.1}
-      .section-head p{font-size:10px;line-height:1.3;margin-top:3px}
-      .counter{font-size:10px;padding-top:2px}
-      .timeline{gap:8px}
 
-      .event-card{
-        grid-template-columns:52px minmax(0,1fr) 34px;
-        gap:8px;
-        padding:11px 8px;
-        min-width:0;
-        border-radius:17px;
-        background:rgba(255,255,255,.038);
-        background:linear-gradient(135deg,color-mix(in srgb,var(--venue),transparent 92%),rgba(255,255,255,.032));
-      }
-      .event-card::before{width:3px}
-      .event-time{padding-left:3px;min-width:0}
-      .event-time strong{font-size:14px;line-height:1.05}
-      .event-time span{font-size:9px;margin-top:4px;white-space:nowrap}
-      .event-title{
-        font-size:14px;
-        line-height:1.24;
-        font-weight:780;
-        letter-spacing:-.012em;
-        display:-webkit-box;
-        -webkit-box-orient:vertical;
-        -webkit-line-clamp:3;
-        overflow:hidden;
-      }
-      .event-meta{gap:4px;margin-top:7px}
-      .badge{padding:4px 6px;font-size:9px;line-height:1.1}
-      .save-btn{width:34px;height:34px;border-radius:11px;font-size:18px;padding:0}
+    /* Fluid mobile layout: original scale, dimensions tied to viewport width. */
+    @media (max-width:759px){
+      :root{--radius:clamp(18px,5vw,22px)}
+      .app{padding-bottom:calc(clamp(116px,29vw,136px) + env(safe-area-inset-bottom))}
+      .hero{padding:calc(clamp(19px,5vw,25px) + env(safe-area-inset-top)) clamp(13px,4vw,18px) clamp(12px,3.5vw,16px)}
+      .eyebrow{font-size:clamp(11px,3vw,13px);letter-spacing:.12em}
+      h1{font-size:clamp(33px,9.3vw,44px);margin:clamp(12px,3vw,15px) 0 clamp(8px,2.5vw,11px)}
+      .hero p{font-size:clamp(13px,3.6vw,15px);line-height:1.48}
+      .summary-row{gap:clamp(7px,2vw,10px);margin-top:clamp(15px,4vw,19px)}
+      .summary-card{padding:clamp(10px,2.8vw,13px);border-radius:clamp(14px,4vw,17px)}
+      .summary-card strong{font-size:clamp(19px,5.2vw,23px)}
+      .summary-card span{font-size:clamp(10px,2.7vw,12px)}
 
-      .overlap-block{padding:11px;border-radius:17px;margin-bottom:9px}
-      .overlap-head{margin-bottom:8px}
-      .overlap-time{font-size:15px}
-      .overlap-count{font-size:9px;padding:5px 7px}
-      .overlap-mini{padding:8px;border-radius:13px}
-      .overlap-mini strong{font-size:12px}
-      .overlap-mini span{font-size:10px}
+      .control-shell{padding:clamp(8px,2.3vw,11px) clamp(10px,3.2vw,15px) clamp(9px,2.6vw,12px)}
+      .day-tabs{gap:clamp(5px,1.6vw,7px);padding:clamp(4px,1.3vw,6px);border-radius:clamp(15px,4vw,18px)}
+      .day-tab{min-width:0;min-height:clamp(42px,11vw,48px);padding:clamp(9px,2.4vw,11px) clamp(4px,1.5vw,7px);border-radius:clamp(11px,3vw,13px);font-size:clamp(13px,3.6vw,15px);line-height:1.12}
+      .tools{gap:clamp(7px,2vw,10px);margin-top:clamp(8px,2.2vw,10px)}
+      .search{height:clamp(46px,12vw,52px);padding:0 clamp(13px,3.6vw,17px);border-radius:clamp(14px,4vw,17px);font-size:16px}
+      .icon-btn{width:clamp(46px,12vw,52px);height:clamp(46px,12vw,52px);border-radius:clamp(14px,4vw,17px);font-size:clamp(18px,5vw,22px)}
+      .venue-scroller{gap:clamp(7px,2vw,10px);padding:clamp(9px,2.4vw,12px) clamp(22px,6vw,30px) 3px 2px;-webkit-overflow-scrolling:touch;scroll-snap-type:x proximity}
+      .venue-chip{flex:0 0 auto;min-height:clamp(34px,9vw,39px);padding:clamp(7px,2vw,9px) clamp(10px,2.8vw,13px);font-size:clamp(12px,3.3vw,14px);scroll-snap-align:start}
+      .venue-chip .dot{width:clamp(8px,2.2vw,10px);height:clamp(8px,2.2vw,10px)}
 
-      .bottom-nav{
-        width:calc(100% - 14px);
-        bottom:max(6px,env(safe-area-inset-bottom));
-        padding:5px;
-        border-radius:18px;
-      }
-      .bottom-nav button{min-width:0;padding:8px 2px;font-size:9px;border-radius:13px;line-height:1.1}
-      .bottom-nav button span{font-size:17px;margin-bottom:3px}
+      .view-tabs{display:none}
+      main{padding:clamp(14px,3.8vw,18px) clamp(10px,3vw,15px) 0}
+      .section-head{gap:clamp(9px,2.5vw,13px);margin:4px 2px clamp(12px,3.5vw,16px)}
+      .section-head h2{font-size:clamp(20px,5.5vw,24px);line-height:1.12}
+      .section-head p{font-size:clamp(11px,3vw,13px);line-height:1.38}
+      .counter{font-size:clamp(11px,3vw,13px)}
+      .timeline{gap:clamp(9px,2.6vw,12px)}
 
-      .sheet{padding:9px 14px calc(18px + env(safe-area-inset-bottom));border-radius:23px 23px 0 0}
-      .sheet h3{font-size:20px;line-height:1.18}
-      .sheet-info{gap:6px;margin:14px 0}
-      .sheet-info div{padding:9px;border-radius:13px}
-      .toast{bottom:88px;max-width:calc(100% - 28px);white-space:normal;text-align:center}
+      .event-card{grid-template-columns:clamp(58px,16vw,69px) minmax(0,1fr) clamp(40px,11vw,47px);gap:clamp(9px,2.6vw,12px);padding:clamp(12px,3.4vw,15px) clamp(10px,2.8vw,13px);min-width:0;border-radius:clamp(18px,5vw,22px)}
+      .event-card::before{width:clamp(3px,1vw,4px)}
+      .event-time{padding-left:clamp(3px,1vw,6px);min-width:0}
+      .event-time strong{font-size:clamp(15px,4.1vw,17px);line-height:1.08}
+      .event-time span{font-size:clamp(10px,2.8vw,12px);margin-top:4px;white-space:nowrap}
+      .event-title{font-size:clamp(15px,4.15vw,17px);line-height:1.28;font-weight:800;letter-spacing:-.012em;overflow-wrap:anywhere}
+      .event-meta{gap:clamp(5px,1.5vw,7px);margin-top:clamp(8px,2.2vw,10px)}
+      .badge{padding:clamp(5px,1.4vw,6px) clamp(7px,2vw,9px);font-size:clamp(10px,2.8vw,12px);line-height:1.12}
+      .save-btn{width:clamp(40px,11vw,47px);height:clamp(40px,11vw,47px);border-radius:clamp(12px,3.5vw,15px);font-size:clamp(20px,5.5vw,24px);padding:0}
+
+      .overlap-block{padding:clamp(13px,3.6vw,16px);border-radius:clamp(19px,5vw,23px);margin-bottom:clamp(10px,3vw,14px)}
+      .overlap-head{margin-bottom:clamp(9px,2.6vw,12px)}
+      .overlap-time{font-size:clamp(17px,4.7vw,20px)}
+      .overlap-count{font-size:clamp(10px,2.8vw,12px);padding:6px 9px}
+      .overlap-mini{padding:clamp(10px,2.8vw,13px);border-radius:clamp(14px,4vw,17px)}
+      .overlap-mini strong{font-size:clamp(13px,3.7vw,15px)}
+      .overlap-mini span{font-size:clamp(11px,3vw,13px)}
+
+      .bottom-nav{width:min(calc(100% - clamp(14px,4vw,24px)),660px);bottom:max(clamp(7px,2vw,11px),env(safe-area-inset-bottom));padding:clamp(6px,1.8vw,8px);border-radius:clamp(19px,5vw,23px);-webkit-backdrop-filter:blur(22px)}
+      .bottom-nav button{min-width:0;padding:clamp(9px,2.5vw,11px) 4px;border-radius:clamp(13px,3.7vw,16px);font-size:clamp(10px,2.9vw,12px);line-height:1.12}
+      .bottom-nav button span{font-size:clamp(19px,5.2vw,22px);margin-bottom:4px}
+      .sheet{padding:10px clamp(15px,4vw,20px) calc(clamp(22px,6vw,28px) + env(safe-area-inset-bottom))}
+      .sheet h3{font-size:clamp(21px,5.8vw,25px)}
+      .toast{bottom:clamp(96px,25vw,116px);max-width:calc(100% - 28px);white-space:normal;text-align:center}
     }
-    @media (max-width:365px){
-      .event-card{grid-template-columns:48px minmax(0,1fr) 32px;gap:6px;padding:10px 7px}
-      .event-title{font-size:13px;-webkit-line-clamp:3}
-      .event-time strong{font-size:13px}
-      .save-btn{width:32px;height:32px;font-size:17px}
-      .badge{font-size:8.5px;padding:4px 5px}
-      .venue-chip{font-size:10.5px;padding-inline:8px}
-      .bottom-nav button{font-size:8.5px}
-    }
+
     @media (min-width:760px){
       .hero{padding-left:24px;padding-right:24px}
       .control-shell{padding-left:20px;padding-right:20px}
