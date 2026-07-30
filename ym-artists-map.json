@@ -1,5 +1,12 @@
 {
-  "_comment": "Optional aliases and forced Yandex Music artist IDs. String values replace the search query; objects may contain query, artist_id and force.",
+  "_comment": "Verified IDs are direct artist pages. Aliases without artist_id remain candidates and are not shown on the site.",
+  "Ai Mori": {"query": "Ai Mori", "artist_id": "5429719", "force": true},
+  "Fun Mode": {"query": "Fun Mode", "artist_id": "5286660", "force": true},
+  "Nick Sax": {"query": "NICK SAX", "artist_id": "10900772", "force": true},
+  "Polnalyubvi": {"query": "polnalyubvi", "artist_id": "5349983", "force": true},
+  "Павел Пиковский": {"query": "Павел Пиковский", "artist_id": "2655634", "force": true},
+  "Сказки Чёрного города": {"query": "Сказки Чёрного Города", "artist_id": "4712699", "force": true},
+  "Теппо": {"query": "ТЕППО", "artist_id": "7079273", "force": true},
   ":LUDENVEN:": {"query": "LÜDENVËN"},
   "Артмис (Мария Розалка)": {"query": "Мария Розалка"},
   "Дэн Назгул и Nazgul Band": {"query": "Дэн Назгул"},
