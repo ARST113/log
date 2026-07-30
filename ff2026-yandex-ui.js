@@ -1,6 +1,11 @@
 (() => {
   'use strict';
 
+  const MUSIC_VENUES=new Set([
+    'Сцена «Круг Света»',
+    'Сцена «Берег»',
+    'Сцена «Былина»'
+  ]);
   const SEARCH_ALIASES={
     ':LUDENVEN:':'LÜDENVËN',
     'Артмис (Мария Розалка)':'Мария Розалка',
@@ -30,7 +35,7 @@
     }
     const event=(window.FF_EVENTS||[]).find(item=>item.id===eventId);
     const sheet=document.querySelector('#sheet');
-    if(!event||!sheet||sheet.querySelector('.ym-profile-link')) return;
+    if(!event||!MUSIC_VENUES.has(event.venue)||!sheet||sheet.querySelector('.ym-profile-link')) return;
     const profile=(window.FF_YM_PROFILES||{})[event.title]||fallbackProfile(event.title);
     if(!profile.url) return;
 
