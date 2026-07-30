@@ -1,14 +1,41 @@
 {
   "api_version": "5.199",
   "token_present": true,
-  "ok": false,
-  "error_code": 5,
-  "error_msg": "User authorization failed: invalid access_token (4).",
-  "request_parameter_names": [
-    "method",
-    "oauth",
-    "q",
-    "count",
-    "v"
-  ]
+  "methods": {
+    "users.get": {
+      "ok": false,
+      "error_code": 5,
+      "error_msg": "User authorization failed: invalid access_token (4).",
+      "request_parameter_names": [
+        "method",
+        "oauth",
+        "user_ids",
+        "v"
+      ]
+    },
+    "groups.getById": {
+      "ok": false,
+      "error_code": 5,
+      "error_msg": "User authorization failed: invalid access_token (4).",
+      "request_parameter_names": [
+        "method",
+        "oauth",
+        "group_id",
+        "v"
+      ]
+    },
+    "groups.search": {
+      "ok": false,
+      "error_code": 5,
+      "error_msg": "User authorization failed: invalid access_token (4).",
+      "request_parameter_names": [
+        "method",
+        "oauth",
+        "q",
+        "count",
+        "v"
+      ]
+    }
+  },
+  "token_valid": false
 }
