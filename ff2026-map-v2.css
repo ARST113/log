@@ -165,27 +165,96 @@ body.ff-map-pseudo-fullscreen{
     width:24px;
     height:30px;
   }
-}
 
-@media (max-height:700px) and (orientation:landscape){
   .route-map-shell:fullscreen .route-map-toolbar,
   .route-map-shell:-webkit-full-screen .route-map-toolbar,
   .route-map-shell.is-pseudo-fullscreen .route-map-toolbar{
     flex-direction:row;
     align-items:center;
-    min-height:58px;
-    padding:7px 10px;
+    min-height:68px;
+    padding:8px 9px 8px 12px;
   }
 
   .route-map-shell:fullscreen .route-map-objective,
   .route-map-shell:-webkit-full-screen .route-map-objective,
   .route-map-shell.is-pseudo-fullscreen .route-map-objective{
     flex:1 1 auto;
+    min-width:0;
+  }
+
+  .route-map-shell:fullscreen .route-map-objective strong,
+  .route-map-shell:-webkit-full-screen .route-map-objective strong,
+  .route-map-shell.is-pseudo-fullscreen .route-map-objective strong{
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
   }
 
   .route-map-shell:fullscreen .route-map-controls,
   .route-map-shell:-webkit-full-screen .route-map-controls,
   .route-map-shell.is-pseudo-fullscreen .route-map-controls{
     width:auto;
+    flex:0 0 auto;
+  }
+
+  .route-map-shell:fullscreen .route-map-controls button,
+  .route-map-shell:-webkit-full-screen .route-map-controls button,
+  .route-map-shell.is-pseudo-fullscreen .route-map-controls button{
+    width:42px;
+    min-width:42px;
+    flex:0 0 42px;
+  }
+
+  .route-map-shell:fullscreen .route-map-controls button[data-map-action="reset"],
+  .route-map-shell:-webkit-full-screen .route-map-controls button[data-map-action="reset"],
+  .route-map-shell.is-pseudo-fullscreen .route-map-controls button[data-map-action="reset"]{
+    width:46px;
+    min-width:46px;
+    flex-basis:46px;
+  }
+}
+
+@media (max-width:430px){
+  .route-map-shell:fullscreen .route-map-objective span,
+  .route-map-shell:-webkit-full-screen .route-map-objective span,
+  .route-map-shell.is-pseudo-fullscreen .route-map-objective span{
+    font-size:8px;
+  }
+
+  .route-map-shell:fullscreen .route-map-objective strong,
+  .route-map-shell:-webkit-full-screen .route-map-objective strong,
+  .route-map-shell.is-pseudo-fullscreen .route-map-objective strong{
+    font-size:11px;
+  }
+
+  .route-map-shell:fullscreen .route-map-controls,
+  .route-map-shell:-webkit-full-screen .route-map-controls,
+  .route-map-shell.is-pseudo-fullscreen .route-map-controls{
+    gap:3px;
+  }
+
+  .route-map-shell:fullscreen .route-map-controls button,
+  .route-map-shell:-webkit-full-screen .route-map-controls button,
+  .route-map-shell.is-pseudo-fullscreen .route-map-controls button{
+    width:38px;
+    min-width:38px;
+    flex-basis:38px;
+  }
+
+  .route-map-shell:fullscreen .route-map-controls button[data-map-action="reset"],
+  .route-map-shell:-webkit-full-screen .route-map-controls button[data-map-action="reset"],
+  .route-map-shell.is-pseudo-fullscreen .route-map-controls button[data-map-action="reset"]{
+    width:42px;
+    min-width:42px;
+    flex-basis:42px;
+  }
+}
+
+@media (max-height:700px) and (orientation:landscape){
+  .route-map-shell:fullscreen .route-map-toolbar,
+  .route-map-shell:-webkit-full-screen .route-map-toolbar,
+  .route-map-shell.is-pseudo-fullscreen .route-map-toolbar{
+    min-height:58px;
+    padding:7px 10px;
   }
 }
