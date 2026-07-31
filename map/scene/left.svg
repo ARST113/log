@@ -1,0 +1,194 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1536 900" width="1536" height="900" preserveAspectRatio="xMidYMid meet" style="background:transparent"><defs><pattern id="paper" width="96" height="96" patternUnits="userSpaceOnUse">
+          <rect width="96" height="96" fill="#efe3ca"/>
+          <circle cx="10" cy="12" r="1.2" fill="#cab791" opacity=".28"/>
+          <circle cx="51" cy="34" r="1.4" fill="#cab791" opacity=".18"/>
+          <circle cx="72" cy="74" r="1.1" fill="#cab791" opacity=".16"/>
+          <path d="M11 55c8-4 17-4 25 0M58 13c10 5 20 4 28-2M31 80l7 3m33-23 10 5" fill="none" stroke="#b6a17b" stroke-width="1.2" opacity=".23" stroke-linecap="round"/>
+          <path d="M82 28c3 7 4 13 2 19M19 22c5 6 6 13 4 19" fill="none" stroke="#d3c2a4" stroke-width="1" opacity=".22" stroke-linecap="round"/>
+        </pattern>
+        <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="2" stdDeviation="2.2" flood-color="#9b875f" flood-opacity=".18"/>
+        </filter>
+        <style>
+          .ink{fill:none;stroke:#2b261f;stroke-width:3.1;stroke-linecap:round;stroke-linejoin:round}
+          .ink2{fill:none;stroke:#2b261f;stroke-width:2.15;stroke-linecap:round;stroke-linejoin:round}
+          .ink3{fill:none;stroke:#2b261f;stroke-width:1.45;stroke-linecap:round;stroke-linejoin:round}
+          .paperfill{fill:#efe3ca;stroke:#2b261f;stroke-width:3.1;stroke-linecap:round;stroke-linejoin:round}
+          .shade{fill:#e0cfb0;stroke:#2b261f;stroke-width:3.1;stroke-linecap:round;stroke-linejoin:round}
+          .ghost{fill:none;stroke:#86775e;stroke-width:1.5;opacity:.38;stroke-linecap:round}
+          .water{fill:#e8dbc2;stroke:#2b261f;stroke-width:3.1}
+          .hit{fill:none;stroke:none}.zone-number text{font-family:Georgia,'Times New Roman',serif;font-size:20px;font-weight:700;fill:#2b261f;text-anchor:middle;dominant-baseline:central}
+        </style>
+        <symbol id="num" viewBox="0 0 42 42"><circle cx="21" cy="21" r="16.5" fill="#efe3ca" stroke="#2b261f" stroke-width="3"/></symbol>
+        <symbol id="cart" viewBox="0 0 156 100">
+          <path class="paperfill" d="M22 18h106l-15 50H33Z"/>
+          <path class="ink2" d="m24 18-12-10m116 10 17-9M42 68v12m61-12v12M48 29h62M43 43h66M38 56h69"/>
+          <circle class="paperfill" cx="43" cy="82" r="12"/><circle class="paperfill" cx="107" cy="82" r="12"/>
+        </symbol>
+        <symbol id="medical" viewBox="0 0 112 88">
+          <path class="paperfill" d="M8 78 55 12l49 66Z"/>
+          <path class="ink2" d="M55 12v66M31 78h48"/>
+          <path fill="#2b261f" d="M49 30h12v35H49zM38 41h34v12H38z"/>
+        </symbol>
+        <symbol id="stageBylina" viewBox="0 0 246 176">
+          <path class="shade" d="M18 59h210L205 28H42Z"/>
+          <path class="paperfill" d="M29 59h188v84H29Z"/>
+          <path class="ink2" d="M29 143h188M45 59v84m40-84v84m76-84v84m40-84v84M29 88h188M44 143v17m158-17v17M25 160h196"/>
+          <use href="#speakerStack" x="39" y="72" width="42" height="86"/><use href="#speakerStack" x="166" y="72" width="42" height="86"/>
+          <use href="#bannerFlag" x="21" y="13" width="42" height="90"/><use href="#bannerFlag" x="184" y="13" width="42" height="90"/>
+          <path class="ink" d="M123 67v68m0-68-12 15m12-15 13 15M114 133h20"/>
+          <path class="ink2" d="M104 116c6-17 14-26 23-27 10 3 18 12 22 27M97 124h54"/>
+          <path class="ink3" d="M54 45h138M61 36h124M62 100h35m54 0h34M93 65h59" opacity=".6"/>
+          <circle class="paperfill" cx="123" cy="105" r="8"/>
+        </symbol>
+        <symbol id="stageBereg" viewBox="0 0 258 190">
+          <path class="shade" d="M15 62h228L216 25H42Z"/>
+          <path class="paperfill" d="M27 62h204v96H27Z"/>
+          <path class="ink2" d="M27 158h204M43 62v96m43-96v96m86-96v96m43-96v96M27 95h204M44 158v18m170-18v18M21 176h216"/>
+          <use href="#speakerStack" x="37" y="78" width="43" height="88"/><use href="#speakerStack" x="180" y="78" width="43" height="88"/>
+          <use href="#bannerFlag" x="19" y="16" width="42" height="91"/><use href="#bannerFlag" x="199" y="16" width="42" height="91"/>
+          <use href="#warrior" x="91" y="20" width="80" height="132"/>
+          <use href="#shield" x="87" y="103" width="45" height="55"/><use href="#shield" x="139" y="103" width="45" height="55"/>
+          <path class="ink3" d="M52 46h156M62 35h136M58 111h28m91 0h28M87 70h86" opacity=".65"/>
+          <path class="ink2" d="M99 151h62M108 136h44"/>
+        </symbol>
+        <symbol id="bannerFlag" viewBox="0 0 44 92">
+          <path class="ink2" d="M12 88V7"/>
+          <path class="shade" d="M13 11c12-4 20 7 29 1l-7 15 7 13c-10 5-18-5-29-1Z"/>
+          <path class="ink3" d="m19 18 14 10m-13 3 11-10" opacity=".55"/>
+        </symbol>
+        <symbol id="speakerStack" viewBox="0 0 50 102">
+          <path class="paperfill" d="M7 7h36v88H7Z"/>
+          <path class="ink2" d="M7 38h36M7 68h36"/>
+          <circle class="ink2" cx="25" cy="22" r="8"/><circle class="ink2" cx="25" cy="53" r="9"/><circle class="ink2" cx="25" cy="82" r="9"/>
+          <circle cx="25" cy="22" r="2.5" fill="#2b261f"/><circle cx="25" cy="53" r="3" fill="#2b261f"/><circle cx="25" cy="82" r="3" fill="#2b261f"/>
+        </symbol>
+        <symbol id="shield" viewBox="0 0 48 58">
+          <path class="paperfill" d="M24 4c8 8 15 9 20 9v18c0 12-8 20-20 25C12 51 4 43 4 31V13c5 0 12-1 20-9Z"/>
+          <path class="ink3" d="M24 10v37M10 24h28M14 15l20 27" opacity=".65"/>
+        </symbol>
+        <symbol id="warrior" viewBox="0 0 92 132">
+          <path class="paperfill" d="M34 17c0-11 8-16 17-16s17 6 17 16c0 9-8 17-17 17s-17-8-17-17Z"/>
+          <path class="shade" d="M36 13h30l-6-10H43Z"/>
+          <path class="ink2" d="M44 14h15m-18 8h20M37 36l-9 40m36-40 10 40M39 39c9 8 17 8 25 0l5 47H33Z"/>
+          <path class="ink2" d="M30 52 10 29m58 24 13-33M13 30l8-8m58-3 8 5M40 86l-7 39m29-39 8 39M26 126h15m20 0h16"/>
+          <path class="ink" d="M80 8v52m-9-42 18-10"/>
+          <path class="ink3" d="M44 49h15m-20 16 29 0m-24 11 19 0" opacity=".65"/>
+        </symbol>
+        <symbol id="workshop" viewBox="0 0 144 92">
+          <path class="paperfill" d="M26 76h90v-42H26Z"/>
+          <path class="ink2" d="M26 76h90M44 34v42m28-42v42m28-42v42M52 47h39"/>
+          <path class="ink" d="M24 29c10-6 20-7 31 0m22 0c8-5 18-6 27 0"/>
+          <path class="ink2" d="m18 83 16-7m63 0 21 7"/>
+        </symbol>
+        <symbol id="anvil" viewBox="0 0 84 62">
+          <path class="shade" d="M7 13h70c-4 12-14 18-29 18l-4 10h17v14H21V41h15l-5-10C17 29 9 23 7 13Z"/>
+        </symbol>
+        <symbol id="barrel" viewBox="0 0 52 70">
+          <path class="paperfill" d="M9 9c11-6 23-6 34 0l-3 52c-9 6-19 6-28 0Z"/>
+          <path class="ink2" d="M10 17h32M10 51h31M15 8c-3 18-3 36 0 54m22-54c3 18 3 36 0 54"/>
+        </symbol>
+        <symbol id="blacksmith" viewBox="0 0 70 104">
+          <circle class="paperfill" cx="35" cy="13" r="9"/>
+          <path class="paperfill" d="M27 24h16l8 39H19Z"/>
+          <path class="ink2" d="M35 22v40m-9-25L9 52m35-14 16-18M26 62l-8 37m26-37 8 37M12 99h14m20 0h14"/>
+          <path class="ink" d="m52 8 13 15m-19-7 13 13"/>
+        </symbol>
+        <symbol id="fighter" viewBox="0 0 72 104">
+          <circle class="paperfill" cx="37" cy="13" r="9"/>
+          <path class="shade" d="M29 24c9-7 18-7 27 0l4 38H24Z"/>
+          <path class="ink2" d="M37 22v40m-13-25L8 55m48-19 12 15M29 62l-7 37m30-37 8 37M16 99h14m23 0h15"/>
+          <path class="ink" d="M8 18v53m-7-41 16-12"/>
+          <use href="#shield" x="43" y="38" width="30" height="37"/>
+        </symbol>
+        <symbol id="tavern" viewBox="0 0 188 110">
+          <path class="shade" d="M16 41h156l-19-25H35Z"/>
+          <path class="paperfill" d="M24 91V41h141v50Z"/>
+          <path class="ink2" d="M24 91h141M40 41v50m38-50v50m40-50v50m32-50v50M55 60h20v31H55zm67-8h20v39h-20"/>
+        </symbol>
+        <symbol id="stall" viewBox="0 0 172 104">
+          <path class="shade" d="M11 38h150l-18-24H31Z"/>
+          <path class="paperfill" d="M18 90V38h136v52Z"/>
+          <path class="ink2" d="M18 90h136M31 38v18m22-18v18m22-18v18m22-18v18m22-18v18m22-18v18M34 62h103M46 62v28m38-28v28m38-28v28"/>
+        </symbol>
+        <symbol id="crate" viewBox="0 0 70 56">
+          <path class="paperfill" d="M5 7h60v44H5Z"/>
+          <path class="ink2" d="m8 10 54 38M62 10 8 48M5 21h60M5 38h60"/>
+        </symbol>
+        <symbol id="merchantTable" viewBox="0 0 126 74">
+          <path class="paperfill" d="M9 30h108v18H9Z"/>
+          <path class="ink2" d="M20 48 13 71m94-23 7 23M7 71h112"/>
+          <circle class="paperfill" cx="28" cy="21" r="10"/><path class="paperfill" d="M48 12h16v18H48zM76 15h20v15H76z"/>
+          <path class="ink3" d="M23 18h10M52 18h8m21 4h10"/>
+        </symbol>
+        <symbol id="tent" viewBox="0 0 112 84">
+          <path class="paperfill" d="M8 74 55 11l49 63Z"/>
+          <path class="ink2" d="M55 11v63M55 27 38 74m17-47 18 47M6 74h100"/>
+          <path class="ink3" d="m33 46 9 7m36-7-9 7"/>
+        </symbol>
+        <symbol id="campfire" viewBox="0 0 86 88">
+          <path class="paperfill" d="M43 9c0 12 12 17 8 29 8-7 17 1 16 12-2 16-13 27-24 27S20 66 21 50c1-11 7-17 15-24 5-5 7-10 7-17Z"/>
+          <path class="ink2" d="m12 77 63-18M17 58l55 19"/>
+        </symbol>
+        <symbol id="logPile" viewBox="0 0 96 60">
+          <path class="ink2" d="M7 48 84 14M12 16l72 35M17 51 80 0"/>
+          <circle class="paperfill" cx="16" cy="48" r="7"/><circle class="paperfill" cx="84" cy="14" r="7"/><circle class="paperfill" cx="12" cy="16" r="7"/><circle class="paperfill" cx="84" cy="51" r="7"/>
+        </symbol>
+        <symbol id="person" viewBox="0 0 54 84">
+          <circle class="paperfill" cx="28" cy="11" r="8"/><path class="ink2" d="M28 19 22 45l10 13m-10-13L7 52m25 6-5 23m5-23 13 18M25 28l18 8"/>
+        </symbol>
+        </defs><g id="zone1" class="zone" tabindex="0" data-zone="1" data-label="Парковка 1">
+        <rect class="hit" x="742" y="74" width="184" height="104" rx="18"/>
+        <text x="775" y="93" font-family="Georgia,serif" font-size="27" fill="#2b261f">P</text><use href="#cart" x="770" y="74" width="154" height="100"/>
+        <g class="zone-number" transform="translate(756 158)"><use href="#num" width="42" height="42"/><text x="21" y="21">1</text></g>
+      </g>
+      <g id="zone2" class="zone" tabindex="0" data-zone="2" data-label="Парковка 2">
+        <rect class="hit" x="150" y="74" width="182" height="105" rx="18"/>
+        <text x="177" y="93" font-family="Georgia,serif" font-size="27" fill="#2b261f">P</text><use href="#cart" x="180" y="74" width="154" height="100"/>
+        <g class="zone-number" transform="translate(185 158)"><use href="#num" width="42" height="42"/><text x="21" y="21">2</text></g>
+      </g>
+      <g id="zone3" class="zone" tabindex="0" data-zone="3" data-label="Медпункт 1">
+        <rect class="hit" x="18" y="208" width="122" height="110" rx="18"/><use href="#medical" x="20" y="214" width="112" height="88"/>
+        <g class="zone-number" transform="translate(12 287)"><use href="#num" width="42" height="42"/><text x="21" y="21">3</text></g>
+      </g>
+      <g id="zone4" class="zone" tabindex="0" data-zone="4" data-label="Сцена Былина">
+        <rect class="hit" x="64" y="242" width="258" height="174" rx="18"/>
+        <use href="#stageBylina" x="76" y="238" width="246" height="176"/>
+        <g class="zone-number" transform="translate(55 356)"><use href="#num" width="42" height="42"/><text x="21" y="21">4</text></g>
+      </g>
+      <g id="zone5" class="zone" tabindex="0" data-zone="5" data-label="Сцена Берег">
+        <rect class="hit" x="380" y="222" width="274" height="190" rx="18"/>
+        <use href="#stageBereg" x="390" y="218" width="258" height="190"/>
+        <g class="zone-number" transform="translate(382 340)"><use href="#num" width="42" height="42"/><text x="21" y="21">5</text></g>
+      </g>
+      <g id="zone6" class="zone" tabindex="0" data-zone="6" data-label="Мастер-классы">
+        <rect class="hit" x="126" y="386" width="150" height="96" rx="18"/><use href="#workshop" x="128" y="387" width="146" height="94"/><use href="#anvil" x="203" y="423" width="54" height="40"/><use href="#barrel" x="143" y="424" width="34" height="46"/><use href="#blacksmith" x="174" y="394" width="47" height="70"/>
+        <g class="zone-number" transform="translate(125 432)"><use href="#num" width="42" height="42"/><text x="21" y="21">6</text></g>
+      </g>
+      <g id="zone7" class="zone" tabindex="0" data-zone="7" data-label="Танцы, косплей и сражения">
+        <rect class="hit" x="286" y="382" width="214" height="118" rx="18"/>
+        <path class="paperfill" d="M304 475V386h178v89Z"/><path class="ink2" d="M304 475h178M326 386v89m134-89v89M304 410h178"/>
+        <path class="ink2" d="M350 444c18-22 46-31 76-8m-38-31v70"/>
+        <use href="#fighter" x="335" y="399" width="55" height="80"/><g transform="translate(445 399) scale(-1 1) translate(-72 0)"><use href="#fighter" width="55" height="80"/></g>
+        <g class="zone-number" transform="translate(286 455)"><use href="#num" width="42" height="42"/><text x="21" y="21">7</text></g>
+      </g>
+      <g id="zone8" class="zone" tabindex="0" data-zone="8" data-label="Таверна Секира">
+        <rect class="hit" x="360" y="399" width="194" height="114" rx="18"/><use href="#tavern" x="364" y="397" width="188" height="112"/><use href="#barrel" x="384" y="447" width="37" height="50"/><use href="#barrel" x="507" y="447" width="37" height="50"/>
+        <g class="zone-number" transform="translate(365 472)"><use href="#num" width="42" height="42"/><text x="21" y="21">8</text></g>
+      </g>
+      <g id="zone9" class="zone" tabindex="0" data-zone="9" data-label="Антуражная торговля">
+        <rect class="hit" x="91" y="499" width="228" height="120" rx="18"/><use href="#stall" x="100" y="503" width="212" height="128"/><use href="#crate" x="138" y="557" width="45" height="36"/><use href="#barrel" x="247" y="553" width="34" height="46"/><use href="#merchantTable" x="165" y="545" width="90" height="53"/>
+        <g class="zone-number" transform="translate(89 583)"><use href="#num" width="42" height="42"/><text x="21" y="21">9</text></g>
+      </g>
+      <g id="zone10" class="zone" tabindex="0" data-zone="10" data-label="Магазин Секира">
+        <rect class="hit" x="346" y="501" width="222" height="119" rx="18"/><use href="#stall" x="350" y="505" width="212" height="128"/><use href="#crate" x="384" y="557" width="45" height="36"/><use href="#shield" x="490" y="544" width="38" height="47"/><use href="#merchantTable" x="415" y="545" width="90" height="53"/>
+        <g class="zone-number" transform="translate(521 583)"><use href="#num" width="42" height="42"/><text x="21" y="21">10</text></g>
+      </g>
+      <g id="leftCampTrees">
+        <use href="#tree" x="11" y="382" width="74" height="102"/><use href="#tree" x="34" y="443" width="74" height="102"/><use href="#tree" x="13" y="511" width="78" height="108"/><use href="#tree" x="36" y="584" width="72" height="100"/>
+      </g>
+      <g id="zone18" class="zone" tabindex="0" data-zone="18" data-label="Антуражный лагерь">
+        <rect class="hit" x="97" y="618" width="368" height="164" rx="18"/><use href="#tent" x="112" y="632" width="137" height="95"/><use href="#tent" x="222" y="650" width="120" height="84"/><use href="#tent" x="332" y="632" width="131" height="92"/><use href="#campfire" x="166" y="696" width="70" height="70"/><use href="#logPile" x="250" y="700" width="70" height="43"/><use href="#barrel" x="369" y="681" width="33" height="45"/><path class="ink2" d="M122 758v-26m53 26v-26m176 18 20 9" opacity=".5"/>
+        <g class="zone-number" transform="translate(116 744)"><use href="#num" width="42" height="42"/><text x="21" y="21">18</text></g>
+      </g>
+      </svg>
