@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1536 900" width="1536" height="900" preserveAspectRatio="xMidYMid meet"><defs><pattern id="paper" width="96" height="96" patternUnits="userSpaceOnUse">
+          <rect width="96" height="96" fill="#efe3ca"/>
+          <circle cx="10" cy="12" r="1.2" fill="#cab791" opacity=".28"/>
+          <circle cx="51" cy="34" r="1.4" fill="#cab791" opacity=".18"/>
+          <circle cx="72" cy="74" r="1.1" fill="#cab791" opacity=".16"/>
+          <path d="M11 55c8-4 17-4 25 0M58 13c10 5 20 4 28-2M31 80l7 3m33-23 10 5" fill="none" stroke="#b6a17b" stroke-width="1.2" opacity=".23" stroke-linecap="round"/>
+          <path d="M82 28c3 7 4 13 2 19M19 22c5 6 6 13 4 19" fill="none" stroke="#d3c2a4" stroke-width="1" opacity=".22" stroke-linecap="round"/>
+        </pattern>
+        <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="2" stdDeviation="2.2" flood-color="#9b875f" flood-opacity=".18"/>
+        </filter>
+        <style>
+          .ink{fill:none;stroke:#2b261f;stroke-width:3.1;stroke-linecap:round;stroke-linejoin:round}
+          .ink2{fill:none;stroke:#2b261f;stroke-width:2.15;stroke-linecap:round;stroke-linejoin:round}
+          .ink3{fill:none;stroke:#2b261f;stroke-width:1.45;stroke-linecap:round;stroke-linejoin:round}
+          .paperfill{fill:#efe3ca;stroke:#2b261f;stroke-width:3.1;stroke-linecap:round;stroke-linejoin:round}
+          .shade{fill:#e0cfb0;stroke:#2b261f;stroke-width:3.1;stroke-linecap:round;stroke-linejoin:round}
+          .ghost{fill:none;stroke:#86775e;stroke-width:1.5;opacity:.38;stroke-linecap:round}
+          .water{fill:#e8dbc2;stroke:#2b261f;stroke-width:3.1}
+          .zone-number text{font-family:Georgia,'Times New Roman',serif;font-size:20px;font-weight:700;fill:#2b261f;text-anchor:middle;dominant-baseline:central}
+        </style>
+        <symbol id="tree" viewBox="0 0 74 102">
+          <path class="ink2" d="M37 95V63m0 14-14-10m14 3 15-14"/>
+          <path class="paperfill" d="M17 70c-11-5-17-15-15-27 1-7 5-12 10-15-1-16 11-29 26-29 5 0 10 2 14 5 7-6 16-7 24-3 10 5 14 17 11 27 9 3 15 11 15 21 0 13-10 24-23 24-4 0-8-1-11-3-6 8-15 12-25 10-5-1-10-4-13-10-4 1-8 1-13 0Z"/>
+          <path class="ink3" d="M26 26c8-4 18-2 25 5M23 47c10-4 20-3 31 4M29 63c11-1 21 3 28 10" opacity=".55"/>
+        </symbol>
+        <symbol id="bush" viewBox="0 0 82 44">
+          <path class="paperfill" d="M8 35c-8-11 2-26 15-24 4-8 14-12 23-9 8-7 21-5 28 3 9-1 17 7 17 16 0 10-7 18-17 18H23C16 39 11 37 8 35Z"/>
+        </symbol>
+        <symbol id="grass" viewBox="0 0 44 34">
+          <path class="ghost" d="M5 30c4-10 4-17 1-24m10 24c0-14 4-22 10-27m-2 27c4-11 10-17 17-20"/>
+        </symbol>
+        <symbol id="person" viewBox="0 0 54 84">
+          <circle class="paperfill" cx="28" cy="11" r="8"/><path class="ink2" d="M28 19 22 45l10 13m-10-13L7 52m25 6-5 23m5-23 13 18M25 28l18 8"/>
+        </symbol>
+        <symbol id="dragon" viewBox="0 0 372 174">
+          <path class="paperfill" d="M45 86c14-24 34-37 61-38 18-1 34 4 49 15 13-16 31-25 54-28 25-4 50 2 69 18 20-9 39-7 57 4-18 6-31 17-39 33 20 7 34 20 42 40-22-6-42-3-58 10-20-19-43-28-68-27-20 0-39 6-57 18-19-13-40-17-62-11-17 5-31 14-43 26 6-11 8-22 5-33-3-10-6-19-10-27Z"/>
+          <path class="paperfill" d="M57 82 31 63l5 18-20 4 21 11-16 13 31-3c10-4 15-12 16-24Z"/>
+          <path class="paperfill" d="M72 68c-2-17 10-31 28-32 18 0 32 11 34 27-17-9-37-8-62 5Z"/>
+          <path class="ink2" d="M47 88c16-9 34-10 53-3m22-26c17-11 35-13 55-6m18-8 19-34 17 31m19 6 24-29 8 40m20 5 34-17-15 31m-17 37 17 24m-100-25 9 28m-102-24-6 26M68 104l-20 25m203-8 29 14"/>
+          <path class="ink3" d="M39 70c6-3 12-2 18 2m-14 14c7 1 12 4 16 9m55-31c8-5 16-5 25 0m50 9c10-7 20-7 31 1m47-4c9-7 19-6 28 2"/>
+          <path class="ink2" d="M39 81 22 77m17 10-18 5m28-18 9-10m29 12 14-7m111 39 18-11m-68 8 14-9"/>
+          <circle cx="38" cy="77" r="2.8" fill="#2b261f"/>
+          <path class="ink3" d="M26 84h-9m2 6-7 3m50-7c8 4 15 10 20 17" opacity=".7"/>
+          <path class="ink2" d="M112 118c-5 10-6 19-3 28m166-30c4 11 4 20 0 29"/>
+          <path class="ink3" d="M142 56c7 15 8 28 2 40m75-52c9 17 10 34 4 51m56-37c6 15 7 28 2 42" opacity=".55"/>
+          <path class="ink2" d="M302 78c20-2 37 2 52 13-13 0-23 5-31 14"/>
+        </symbol>
+        </defs><rect width="1536" height="900" fill="url(#paper)"/>
+      <rect x="13" y="13" width="1510" height="874" fill="none" stroke="#2b261f" stroke-width="3"/>
+
+      <g opacity=".45">
+        <path class="ghost" d="M17 212c231-42 420-36 627 11 227 53 427 41 620-28 100-37 191-49 272-54"/>
+        <path class="ghost" d="M1018 117c93 14 192 12 292-5M1028 138c91 13 186 15 284 4"/>
+        <path class="ghost" d="M63 648c130-25 240-18 340 21m668-8c137-18 261-10 387 28"/>
+        <path class="ghost" d="M503 724c166-27 337-17 511 17"/>
+      </g>
+
+      <g>
+        <path class="ink2" d="M0 225c247-34 420-14 625 31 231 51 431 35 633-43 103-40 191-52 278-55" opacity=".52"/>
+        <path class="ink3" d="M0 237c253-23 430 0 631 40 215 42 429 27 625-49 107-41 193-48 280-47" opacity=".28"/>
+        <use href="#bush" x="565" y="226" width="80" height="43"/>
+      </g>
+
+      <g id="topForest">
+        <use href="#tree" x="35" y="20" width="78" height="108" filter="url(#softShadow)"/><use href="#tree" x="88" y="9" width="70" height="98"/><use href="#tree" x="145" y="26" width="77" height="106"/><use href="#tree" x="205" y="8" width="72" height="100"/><use href="#tree" x="270" y="22" width="79" height="109"/><use href="#tree" x="340" y="6" width="71" height="99"/><use href="#tree" x="417" y="20" width="78" height="108"/><use href="#tree" x="488" y="10" width="72" height="100"/>
+        <use href="#tree" x="756" y="18" width="78" height="108"/><use href="#tree" x="826" y="6" width="70" height="98"/><use href="#tree" x="892" y="20" width="79" height="109"/><use href="#tree" x="963" y="7" width="71" height="99"/>
+      </g>
+      <use href="#dragon" x="1018" y="18" width="364" height="166"/>
+
+      <g id="knight"><path class="ink2" d="M683 181c9 17 6 33-10 48m17-12 26 17m-28-17-13 26m-2-60 14 4m-36 59 23-13"/><circle class="paperfill" cx="684" cy="171" r="12"/><path class="paperfill" d="M670 185c14 9 21 28 16 46l-24 15c-4-26-2-45 8-61Z"/></g>
+      <g id="beast"><path class="paperfill" d="M617 201c26-20 44-18 56 8-10 15-25 21-44 18-10-7-14-16-12-26Z"/><path class="ink2" d="M643 195c4 7 5 15 2 24m13-16c5 2 9 6 12 12m-40-6 12 9"/></g>
+
+      <g id="microDetails" opacity=".72">
+        <use href="#grass" x="330" y="154" width="35" height="27"/><use href="#grass" x="550" y="192" width="35" height="27"/><use href="#grass" x="686" y="276" width="35" height="27"/><use href="#grass" x="1040" y="250" width="35" height="27"/><use href="#grass" x="1190" y="402" width="35" height="27"/><use href="#grass" x="1340" y="438" width="35" height="27"/><use href="#grass" x="544" y="512" width="35" height="27"/><use href="#grass" x="1000" y="568" width="35" height="27"/>
+        <use href="#bush" x="620" y="227" width="58" height="31"/><use href="#bush" x="1010" y="208" width="58" height="31"/><use href="#bush" x="1360" y="320" width="62" height="33"/>
+        <use href="#person" x="265" y="360" width="28" height="44"/><use href="#person" x="741" y="364" width="28" height="44"/><use href="#person" x="1025" y="436" width="28" height="44"/><use href="#grass" x="187" y="208" width="30" height="23"/><use href="#grass" x="838" y="224" width="30" height="23"/><use href="#grass" x="1210" y="185" width="30" height="23"/><use href="#grass" x="117" y="497" width="30" height="23"/><use href="#grass" x="675" y="530" width="30" height="23"/><use href="#grass" x="1080" y="470" width="30" height="23"/>
+      </g>
+      </svg>
