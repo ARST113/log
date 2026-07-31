@@ -1,6 +1,7 @@
 (() => {
   'use strict';
 
+  const VK_LOGO='https://upload.wikimedia.org/wikipedia/commons/f/f3/VK_Compact_Logo_%282021-present%29.svg';
   const profileFor = title => {
     const profiles = window.FF_VK_PROFILES || {};
     return profiles[title] || null;
@@ -12,6 +13,11 @@
     const count = Number(value || 0);
     return count > 0 ? new Intl.NumberFormat('ru-RU').format(count) + ' подписчиков' : '';
   };
+
+  function vkIconLink(url){
+    const label='Открыть ВКонтакте';
+    return `<a class="vk-profile-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" aria-label="${label}" title="${label}"><img class="vk-icon-img" src="${VK_LOGO}" alt="" loading="lazy" referrerpolicy="no-referrer"></a>`;
+  }
 
   function buildProfile(event){
     const profile = profileFor(event.title);
@@ -32,7 +38,7 @@
         ${description ? `<p class="vk-profile-description">${escapeHtml(description)}</p>` : ''}
         <div class="vk-profile-footer">
           ${members ? `<span>${escapeHtml(members)}</span>` : `<span>${hasVk ? 'Страница исполнителя' : 'Информация о проекте'}</span>`}
-          ${hasVk ? `<a class="vk-profile-link" href="${escapeHtml(profile.url)}" target="_blank" rel="noopener noreferrer">Открыть ВК</a>` : ''}
+          ${hasVk ? `<span class="profile-service-actions">${vkIconLink(profile.url)}</span>` : ''}
         </div>
       </section>`;
   }
