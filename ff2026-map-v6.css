@@ -1,0 +1,380 @@
+:root{
+  --ff-map-top:72px;
+  --ff-map-bottom:78px;
+  --ff-pin-inverse:1;
+}
+
+.view-tabs.ff-has-map,
+.bottom-nav.ff-has-map{
+  grid-template-columns:repeat(4,minmax(0,1fr));
+}
+
+.ff-map-nav-icon svg{
+  width:22px;
+  height:22px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+
+body.ff-route-map-active{
+  height:100vh;
+  height:100dvh;
+  overflow:hidden;
+  overscroll-behavior:none;
+  background:#17140f;
+}
+
+body.ff-route-map-active .app{
+  width:100%;
+  max-width:none;
+  height:100vh;
+  height:100dvh;
+  margin:0;
+  padding:0;
+}
+
+body.ff-route-map-active .hero,
+body.ff-route-map-active .view-tabs,
+body.ff-route-map-active .tools,
+body.ff-route-map-active .venue-scroller{
+  display:none!important;
+}
+
+body.ff-route-map-active .control-shell{
+  position:fixed;
+  inset:0 0 auto;
+  z-index:220;
+  padding:8px 10px 7px;
+  border:0;
+  background:#11160f!important;
+  box-shadow:0 7px 18px rgba(0,0,0,.34);
+}
+
+body.ff-route-map-active .control-shell::before{display:none}
+body.ff-route-map-active .day-tabs{max-width:760px;margin:0 auto}
+
+body.ff-route-map-active main{
+  position:fixed;
+  inset:var(--ff-map-top) 0 var(--ff-map-bottom);
+  z-index:20;
+  width:100%;
+  max-width:none;
+  padding:0;
+}
+
+body.ff-route-map-active .bottom-nav{z-index:240}
+
+.ff-map-v6,
+.ff-map-v6-viewport{
+  position:relative;
+  width:100%;
+  height:100%;
+  min-height:0;
+  overflow:hidden;
+}
+
+.ff-map-v6{
+  background:#d9c8a7;
+}
+
+.ff-map-v6-viewport{
+  cursor:grab;
+  touch-action:none;
+  user-select:none;
+  overscroll-behavior:contain;
+  -webkit-tap-highlight-color:transparent;
+}
+
+.ff-map-v6-viewport:active{cursor:grabbing}
+
+.ff-map-v6-stage{
+  position:absolute;
+  left:0;
+  top:0;
+  width:1080px;
+  height:1920px;
+  transform-origin:0 0;
+  will-change:transform;
+  contain:layout paint style;
+}
+
+.ff-map-v6-world,
+.ff-map-v6-route,
+.ff-map-v6-markers{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+}
+
+.ff-map-v6-world{
+  display:block;
+  background:#e5d5b4;
+}
+
+.ff-map-v6-route{
+  overflow:visible;
+  pointer-events:none;
+}
+
+.ff-map-v6-markers{pointer-events:none}
+
+.ff-route-shadow,
+.ff-route-main{
+  fill:none;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  vector-effect:non-scaling-stroke;
+}
+
+.ff-route-shadow{
+  stroke:rgba(35,31,22,.68);
+  stroke-width:7;
+}
+
+.ff-route-main{
+  stroke:#b9d748;
+  stroke-width:3;
+  stroke-dasharray:9 8;
+  filter:drop-shadow(0 0 2px rgba(185,215,72,.8));
+}
+
+.ff-map-v6-marker{
+  --pin:#9fcf55;
+  position:absolute;
+  left:var(--x);
+  top:var(--y);
+  z-index:5;
+  width:48px;
+  height:64px;
+  padding:0;
+  border:0;
+  background:transparent;
+  transform:translate(-50%,-84%) scale(var(--ff-pin-inverse));
+  transform-origin:50% 84%;
+  pointer-events:auto;
+  cursor:pointer;
+  touch-action:manipulation;
+}
+
+.ff-map-v6-marker-pin{
+  position:absolute;
+  left:50%;
+  top:3px;
+  width:45px;
+  height:45px;
+  display:grid;
+  place-items:center;
+  border:3px solid #f5ecd5;
+  border-radius:50% 50% 50% 8px;
+  background:var(--pin);
+  color:#171a12;
+  transform:translateX(-50%) rotate(-45deg);
+  box-shadow:0 5px 0 color-mix(in srgb,var(--pin),black 38%),0 10px 15px rgba(35,28,17,.3);
+}
+
+.ff-map-v6-marker-pin span{
+  transform:rotate(45deg);
+  color:#fffdf1;
+  font-size:13px;
+  font-weight:950;
+  text-shadow:0 1px 2px rgba(0,0,0,.8);
+}
+
+.ff-map-v6-marker-label{
+  position:absolute;
+  left:50%;
+  top:54px;
+  max-width:165px;
+  padding:5px 9px;
+  overflow:hidden;
+  border:1px solid rgba(48,40,28,.24);
+  border-radius:999px;
+  background:rgba(244,234,208,.96);
+  color:#201b14;
+  font-family:Georgia,'Times New Roman',serif;
+  font-size:11px;
+  font-weight:800;
+  line-height:1.05;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+  transform:translateX(-50%);
+  box-shadow:0 4px 10px rgba(38,31,21,.24);
+}
+
+.ff-map-v6-marker-count{
+  position:absolute;
+  right:-3px;
+  top:0;
+  z-index:3;
+  min-width:22px;
+  height:22px;
+  display:grid;
+  place-items:center;
+  padding:0 5px;
+  border:2px solid #282117;
+  border-radius:999px;
+  background:#fff8e7;
+  color:#282117;
+  font-size:10px;
+  font-weight:950;
+}
+
+.ff-map-v6-marker.is-idle{
+  opacity:.52;
+}
+
+.ff-map-v6-marker.is-idle .ff-map-v6-marker-label{
+  opacity:0;
+}
+
+.ff-map-v6-marker.is-idle:focus-visible .ff-map-v6-marker-label,
+.ff-map-v6-marker.is-idle:active .ff-map-v6-marker-label{
+  opacity:1;
+}
+
+.ff-map-v6-marker.is-next{
+  z-index:9;
+}
+
+.ff-map-v6-marker.is-next::before{
+  content:"";
+  position:absolute;
+  left:50%;
+  top:26px;
+  width:70px;
+  height:70px;
+  border:3px solid var(--pin);
+  border-radius:50%;
+  transform:translate(-50%,-50%);
+  animation:ff-v6-pulse 1.55s ease-out infinite;
+}
+
+@keyframes ff-v6-pulse{
+  from{opacity:.82;transform:translate(-50%,-50%) scale(.45)}
+  to{opacity:0;transform:translate(-50%,-50%) scale(1.25)}
+}
+
+.ff-map-v6-objective{
+  position:absolute;
+  z-index:30;
+  top:11px;
+  left:11px;
+  max-width:calc(100% - 84px);
+  padding:9px 12px;
+  border:1px solid rgba(201,224,88,.24);
+  border-radius:14px;
+  background:rgba(20,24,17,.88);
+  color:#f7f3e7;
+  box-shadow:0 8px 18px rgba(0,0,0,.25);
+  pointer-events:none;
+}
+
+.ff-map-v6-objective span{
+  display:block;
+  color:#c9e058;
+  font-size:9px;
+  font-weight:950;
+  letter-spacing:.09em;
+  text-transform:uppercase;
+}
+
+.ff-map-v6-objective strong{
+  display:block;
+  margin-top:4px;
+  font-size:13px;
+  line-height:1.22;
+}
+
+.ff-map-v6-reset{
+  position:absolute;
+  right:11px;
+  bottom:11px;
+  z-index:32;
+  width:48px;
+  height:48px;
+  display:grid;
+  place-items:center;
+  padding:0;
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:15px;
+  background:rgba(20,24,17,.9);
+  color:#c9e058;
+  font-size:23px;
+  font-weight:900;
+  box-shadow:0 7px 16px rgba(0,0,0,.24);
+  touch-action:manipulation;
+}
+
+.ff-map-v6-reset:active{transform:scale(.95)}
+
+.ff-map-v6-hint{
+  position:absolute;
+  z-index:28;
+  left:50%;
+  bottom:13px;
+  max-width:calc(100% - 140px);
+  padding:7px 11px;
+  border-radius:999px;
+  background:rgba(20,24,17,.78);
+  color:#f6f1e4;
+  font-size:10px;
+  font-weight:700;
+  text-align:center;
+  white-space:nowrap;
+  transform:translateX(-50%);
+  pointer-events:none;
+  transition:opacity .2s ease;
+}
+
+.ff-map-v6-viewport.is-interacted .ff-map-v6-hint{opacity:0}
+
+.sheet.route-venue-sheet{
+  max-height:min(86dvh,760px);
+  overflow-y:auto;
+  overscroll-behavior:contain;
+}
+
+.route-venue-summary{margin:8px 0 14px;color:var(--muted);font-size:12px}
+.route-venue-list{display:flex;flex-direction:column;gap:8px;padding-bottom:4px}
+.route-venue-event{
+  display:grid;
+  grid-template-columns:56px minmax(0,1fr) 28px;
+  gap:10px;
+  align-items:center;
+  width:100%;
+  min-width:0;
+  padding:11px;
+  border:1px solid var(--line);
+  border-radius:16px;
+  background:rgba(255,255,255,.045);
+  color:var(--text);
+  text-align:left;
+  cursor:pointer;
+  touch-action:manipulation;
+}
+.route-venue-event.is-saved{border-color:rgba(201,224,88,.34);background:rgba(201,224,88,.075)}
+.route-venue-time{font-size:15px;font-weight:900}
+.route-venue-time small,.route-venue-copy small{display:block;margin-top:3px;color:var(--muted);font-size:10px;font-weight:650}
+.route-venue-copy{min-width:0}
+.route-venue-copy strong{display:block;overflow-wrap:anywhere;font-size:13px;line-height:1.28}
+.route-venue-star{color:#c9e058;font-size:19px;font-weight:900;text-align:center}
+
+@media (max-width:520px){
+  body.ff-route-map-active .control-shell{padding:8px 8px 7px}
+  .ff-map-v6-objective{top:9px;left:9px;max-width:calc(100% - 74px);padding:8px 10px}
+  .ff-map-v6-objective span{font-size:8px}
+  .ff-map-v6-objective strong{font-size:12px}
+  .ff-map-v6-reset{right:9px;bottom:9px;width:45px;height:45px}
+  .ff-map-v6-marker{width:44px;height:60px}
+  .ff-map-v6-marker-pin{width:42px;height:42px}
+  .ff-map-v6-marker-label{top:50px;max-width:145px;font-size:10px}
+  .ff-map-v6-hint{bottom:11px;max-width:calc(100% - 125px);font-size:9px}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .ff-map-v6-marker.is-next::before{animation:none}
+}
