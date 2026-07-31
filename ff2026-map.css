@@ -130,7 +130,13 @@ body.ff-route-map-active .control-shell{
   height:100%;
   display:block;
   object-fit:contain;
+  opacity:0;
+  filter:sepia(.34) saturate(.72) brightness(.98) contrast(1.06);
+  transition:opacity .18s ease;
   pointer-events:none;
+}
+.route-map-image.is-loaded{
+  opacity:1;
 }
 .route-map-lines,
 .route-map-markers{
