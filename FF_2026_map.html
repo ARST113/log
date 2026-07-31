@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#171811">
+<title>Карта Фэнтези Феста 2026</title>
+<style>
+*{box-sizing:border-box}
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#171811;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.viewport{position:fixed;inset:0;overflow:hidden;touch-action:none;user-select:none;background:#e9ddc1;cursor:grab}
+.viewport:active{cursor:grabbing}
+.stage{position:absolute;left:0;top:0;width:1536px;height:846px;transform-origin:0 0;will-change:transform;contain:layout paint style}
+.tile{position:absolute;overflow:hidden;pointer-events:none;backface-visibility:hidden}
+.tile::before{content:"";position:absolute;left:var(--bx);top:var(--by);width:1536px;height:1085px;background-image:var(--map);background-size:1536px 1085px;background-repeat:no-repeat}
+.reset{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));z-index:4;width:50px;height:50px;border:1px solid rgba(255,255,255,.18);border-radius:15px;background:rgba(20,24,17,.88);color:#d7ef69;font-size:23px;font-weight:800;box-shadow:0 8px 20px rgba(0,0,0,.28);touch-action:manipulation}
+.hint{position:fixed;left:50%;bottom:max(18px,env(safe-area-inset-bottom));z-index:3;max-width:calc(100% - 90px);padding:8px 12px;border-radius:999px;background:rgba(20,24,17,.8);color:#f3f1e5;font-size:11px;font-weight:650;white-space:nowrap;transform:translateX(-50%);pointer-events:none;transition:opacity .2s ease}
+.viewport.used .hint{opacity:0}
+.loading{position:fixed;inset:0;display:grid;place-items:center;color:#f3f1e5;background:#171811;z-index:5;font-size:14px}
+</style>
+</head>
+<body>
+<div class="viewport" id="viewport">
+  <div class="stage" id="stage">
+    <div class="tile" style="left:0;top:0;width:384px;height:423px;--bx:0px;--by:0px"></div>
+    <div class="tile" style="left:384px;top:0;width:384px;height:423px;--bx:-384px;--by:0px"></div>
+    <div class="tile" style="left:768px;top:0;width:384px;height:423px;--bx:-768px;--by:0px"></div>
+    <div class="tile" style="left:1152px;top:0;width:384px;height:423px;--bx:-1152px;--by:0px"></div>
+    <div class="tile" style="left:0;top:423px;width:384px;height:423px;--bx:0px;--by:-423px"></div>
+    <div class="tile" style="left:384px;top:423px;width:384px;height:423px;--bx:-384px;--by:-423px"></div>
+    <div class="tile" style="left:768px;top:423px;width:384px;height:423px;--bx:-768px;--by:-423px"></div>
+    <div class="tile" style="left:1152px;top:423px;width:384px;height:423px;--bx:-1152px;--by:-423px"></div>
+  </div>
+  <div class="hint">Двигайте одним пальцем · масштабируйте двумя</div>
+</div>
+<div class="loading" id="loading">Загрузка карты…</div>
+<button class="reset" id="reset" type="button" aria-label="Вернуть исходный вид">⌖</button>
+<script>
+(async()=>{
+  const parts=['ff2026-map-data-0.txt?v=8','ff2026-map-data-1.txt?v=8','ff2026-map-data-2.txt?v=8','ff2026-map-data-3.txt?v=8'];
+  try{
+    const chunks=await Promise.all(parts.map(path=>fetch(path,{cache:'force-cache'}).then(r=>{if(!r.ok)throw new Error(r.status);return r.text()})));
+    const map=`url("data:image/png;base64,${chunks.join('').replace(/\s+/g,'')}")`;
+    document.querySelectorAll('.tile').forEach(tile=>tile.style.setProperty('--map',map));
+    document.getElementById('loading').remove();
+  }catch(error){document.getElementById('loading').textContent='Не удалось загрузить карту';console.error(error);return}
+
+  const MAP_W=1536,MAP_H=846,START=1.12,MAX=4;
+  const viewport=document.getElementById('viewport'),stage=document.getElementById('stage'),reset=document.getElementById('reset');
+  const state={fit:1,scale:1,x:0,y:0};
+  const pointers=new Map();let drag=null,pinch=null,frame=0;
+  const cover=()=>Math.max(viewport.clientWidth/MAP_W,viewport.clientHeight/MAP_H);
+  const maxScale=()=>state.fit*MAX;
+  function clamp(){
+    const vw=viewport.clientWidth,vh=viewport.clientHeight,sw=MAP_W*state.scale,sh=MAP_H*state.scale;
+    const minX=Math.min(0,vw-sw),minY=Math.min(0,vh-sh);
+    state.x=sw<=vw?(vw-sw)/2:Math.max(minX,Math.min(0,state.x));
+    state.y=sh<=vh?(vh-sh)/2:Math.max(minY,Math.min(0,state.y));
+  }
+  function applyNow(){frame=0;clamp();stage.style.transform=`translate3d(${state.x}px,${state.y}px,0) scale(${state.scale})`}
+  function apply(){if(!frame)frame=requestAnimationFrame(applyNow)}
+  function center(scale=state.fit*START,nx=.5,ny=.48){state.scale=Math.max(state.fit,Math.min(maxScale(),scale));state.x=viewport.clientWidth/2-MAP_W*nx*state.scale;state.y=viewport.clientHeight/2-MAP_H*ny*state.scale;apply()}
+  function fit(preserve=false){
+    const oldFit=state.fit||1,nx=(viewport.clientWidth/2-state.x)/(MAP_W*state.scale)||.5,ny=(viewport.clientHeight/2-state.y)/(MAP_H*state.scale)||.48,ratio=state.scale/oldFit;
+    state.fit=cover();center(preserve?state.fit*ratio:state.fit*START,preserve?nx:.5,preserve?ny:.48);
+  }
+  function zoomAt(target,clientX,clientY){
+    const rect=viewport.getBoundingClientRect(),px=clientX-rect.left,py=clientY-rect.top,next=Math.max(state.fit,Math.min(maxScale(),target));
+    const cx=(px-state.x)/state.scale,cy=(py-state.y)/state.scale;state.x=px-cx*next;state.y=py-cy*next;state.scale=next;viewport.classList.add('used');apply();
+  }
+  viewport.addEventListener('pointerdown',e=>{
+    viewport.classList.add('used');viewport.setPointerCapture?.(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pointers.size===1)drag={x:e.clientX,y:e.clientY,mapX:state.x,mapY:state.y};
+    else if(pointers.size===2){const[a,b]=[...pointers.values()];pinch={distance:Math.hypot(a.x-b.x,a.y-b.y),scale:state.scale,x:state.x,y:state.y,mx:(a.x+b.x)/2,my:(a.y+b.y)/2}}
+  });
+  viewport.addEventListener('pointermove',e=>{
+    if(!pointers.has(e.pointerId))return;pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pointers.size===2&&pinch){
+      const[a,b]=[...pointers.values()],distance=Math.hypot(a.x-b.x,a.y-b.y),mx=(a.x+b.x)/2,my=(a.y+b.y)/2,rect=viewport.getBoundingClientRect();
+      const sx=pinch.mx-rect.left,sy=pinch.my-rect.top,cx=(sx-pinch.x)/pinch.scale,cy=(sy-pinch.y)/pinch.scale;
+      state.scale=Math.max(state.fit,Math.min(maxScale(),pinch.scale*distance/Math.max(1,pinch.distance)));state.x=mx-rect.left-cx*state.scale;state.y=my-rect.top-cy*state.scale;apply();
+    }else if(pointers.size===1&&drag){state.x=drag.mapX+(e.clientX-drag.x);state.y=drag.mapY+(e.clientY-drag.y);apply()}
+  });
+  function end(e){pointers.delete(e.pointerId);if(pointers.size===1){const p=[...pointers.values()][0];drag={x:p.x,y:p.y,mapX:state.x,mapY:state.y}}else drag=null;pinch=null}
+  viewport.addEventListener('pointerup',end);viewport.addEventListener('pointercancel',end);
+  viewport.addEventListener('wheel',e=>{e.preventDefault();zoomAt(state.scale*(e.deltaY<0?1.12:.9),e.clientX,e.clientY)},{passive:false});
+  viewport.addEventListener('dblclick',e=>{e.preventDefault();zoomAt(state.scale<state.fit*1.8?state.scale*1.45:state.fit*START,e.clientX,e.clientY)});
+  reset.addEventListener('click',()=>center(state.fit*START,.5,.48));
+  new ResizeObserver(()=>fit(true)).observe(viewport);fit(false);
+})();
+</script>
+</body>
+</html>
