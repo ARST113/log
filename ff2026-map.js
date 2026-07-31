@@ -3,7 +3,12 @@
 
   const EVENTS = Array.isArray(window.FF_EVENTS) ? window.FF_EVENTS : [];
   const STORAGE_KEY = 'ff26-saved';
-  const MAP_IMAGE = 'ff2026-map.svg?v=1';
+  const MAP_PARTS = [
+    'ff2026-map-data-0.txt?v=1',
+    'ff2026-map-data-1.txt?v=1',
+    'ff2026-map-data-2.txt?v=1',
+    'ff2026-map-data-3.txt?v=1'
+  ];
   const MAP_ASPECT = 1536 / 1085;
 
   const VENUES = {
@@ -53,6 +58,8 @@
 
   let mapActive = false;
   let transform = { scale: 1, x: 0, y: 0 };
+  let mapImageUrl = '';
+  let mapImagePromise = null;
 
   const main = document.querySelector('#main');
   const viewTabs = document.querySelector('#viewTabs');
@@ -64,6 +71,25 @@
     return String(value).replace(/[&<>"']/g, char => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     })[char]);
+  }
+
+  function loadMapImage() {
+    if (mapImageUrl) return Promise.resolve(mapImageUrl);
+    if (!mapImagePromise) {
+      mapImagePromise = Promise.all(MAP_PARTS.map(path =>
+        fetch(path, { cache: 'force-cache' }).then(response => {
+          if (!response.ok) throw new Error(`Не удалось загрузить часть карты: ${response.status}`);
+          return response.text();
+        })
+      )).then(parts => {
+        mapImageUrl = `data:image/png;base64,${parts.join('').replace(/\s+/g, '')}`;
+        return mapImageUrl;
+      }).catch(error => {
+        console.error(error);
+        return '';
+      });
+    }
+    return mapImagePromise;
   }
 
   function readSaved() {
@@ -219,8 +245,14 @@
       </section>`;
   }
 
+  function syncMapButtons() {
+    document.querySelectorAll('[data-view]').forEach(button => button.classList.remove('active'));
+    document.querySelectorAll('[data-map-view]').forEach(button => button.classList.add('active'));
+  }
+
   function renderRouteMap() {
     if (!mapActive) return;
+    syncMapButtons();
 
     const day = currentDay();
     const events = getSelected(day);
@@ -256,7 +288,7 @@
 
         <div class="route-map-viewport" id="routeMapViewport" style="--map-aspect:${MAP_ASPECT}">
           <div class="route-map-stage" id="routeMapStage">
-            <img class="route-map-image" src="${MAP_IMAGE}" alt="Карта Фэнтези Феста 2026" draggable="false">
+            <img class="route-map-image" alt="Карта Фэнтези Феста 2026" draggable="false">
             ${routeLine(points)}
             <div class="route-map-markers">
               ${groups.map(group => markerHtml(group, nextEvent)).join('')}
@@ -268,6 +300,17 @@
 
       ${journalHtml(events, nextEvent, day)}
     `;
+
+    loadMapImage().then(url => {
+      const image = document.querySelector('.route-map-image');
+      if (!image) return;
+      if (url) {
+        image.src = url;
+        image.classList.add('is-loaded');
+      } else {
+        image.alt = 'Карта временно не загрузилась';
+      }
+    });
 
     requestAnimationFrame(setupMapInteractions);
   }
@@ -435,8 +478,12 @@
       }
     });
 
-    const resizeObserver = new ResizeObserver(apply);
-    resizeObserver.observe(viewport);
+    if ('ResizeObserver' in window) {
+      const resizeObserver = new ResizeObserver(apply);
+      resizeObserver.observe(viewport);
+    } else {
+      window.addEventListener('resize', apply, { passive: true });
+    }
     apply();
   }
 
