@@ -1,7 +1,7 @@
 {
   "api_enriched": 0,
   "api_error": "VK API [5] User authorization failed: invalid access_token (4).",
-  "generated_at": "2026-08-17T04:05:45+00:00",
+  "generated_at": "2026-08-24T04:08:56+00:00",
   "manual_profiles": 19,
   "matched": 19,
   "note": "Only verified VK identifiers are used; name search is disabled.",
