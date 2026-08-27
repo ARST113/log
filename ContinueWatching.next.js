@@ -520,4 +520,243 @@
         };
     })();
 
-    /
+    // ============================================================
+    // StorageManager
+    // ============================================================
+
+    var StorageManager = (function () {
+        var memoryCache = null;
+        var activeStorageKey = null;
+        var syncedStorageKey = null;
+        var saveTimer = null;
+
+        function getProfileId() {
+            var account = null;
+
+            try {
+                if (Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.account) {
+                    account = Lampa.Account.Permit.account;
+                }
+            } catch (e) {}
+
+            try {
+                if (!account && Lampa.Storage && Lampa.Storage.get) {
+                    account = Lampa.Storage.get('account', {});
+                }
+            } catch (e2) {}
+
+            if (
+                account && account.profile &&
+                account.profile.id !== undefined &&
+                account.profile.id !== null &&
+                account.profile.id !== ''
+            ) {
+                return account.profile.id;
+            }
+
+            return null;
+        }
+
+        function getStorageKey() {
+            var profileId = getProfileId();
+            return profileId !== null && profileId !== undefined
+                ? CONFIG.storageBaseKey + '_' + profileId
+                : CONFIG.storageBaseKey;
+        }
+
+        function getActiveStorageKey() {
+            var key = getStorageKey();
+            if (activeStorageKey !== key) {
+                activeStorageKey = key;
+                memoryCache = null;
+            }
+            return key;
+        }
+
+        function ensureSync() {
+            var key = getActiveStorageKey();
+            if (syncedStorageKey === key) return;
+
+            try {
+                Lampa.Storage.sync(key, 'object_object');
+                syncedStorageKey = key;
+            } catch (e) {
+                Utils.error('Storage sync failed', e);
+            }
+        }
+
+        function getParams() {
+            ensureSync();
+
+            if (!memoryCache) {
+                try {
+                    memoryCache = Lampa.Storage.get(getActiveStorageKey(), {});
+                    if (!memoryCache || typeof memoryCache !== 'object') memoryCache = {};
+                } catch (e) {
+                    Utils.error('Storage get failed', e);
+                    memoryCache = {};
+                }
+            }
+
+            return memoryCache;
+        }
+
+        function setParams(data, force) {
+            ensureSync();
+            memoryCache = data;
+
+            var key = getActiveStorageKey();
+
+            function save() {
+                try {
+                    Lampa.Storage.set(key, data);
+                } catch (e) {
+                    Utils.error('Storage set failed', e);
+                }
+            }
+
+            if (saveTimer) {
+                clearTimeout(saveTimer);
+                saveTimer = null;
+            }
+
+            if (force) save();
+            else {
+                saveTimer = setTimeout(function () {
+                    saveTimer = null;
+                    save();
+                }, CONFIG.debounceDelayMs);
+            }
+        }
+
+        function getMovieKey(movie) {
+            if (!movie) return '';
+
+            var id = movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId || '';
+            var title = Utils.getMovieTitle(movie);
+
+            if (id) return 'id:' + id;
+            if (title) return 'title:' + Lampa.Utils.hash(title);
+            return '';
+        }
+
+        function getMovieKeyFromData(data) {
+            if (!data) return '';
+            if (data.movie_key) return data.movie_key;
+            if (data.movie_id) return 'id:' + data.movie_id;
+            if (data.tmdb_id) return 'id:' + data.tmdb_id;
+
+            var title = data.original_title || data.original_name || data.title || data.name || '';
+            if (title) return 'title:' + Lampa.Utils.hash(title);
+            return '';
+        }
+
+        function updateLastPointer(params, data, hash) {
+            if (!data || !hash) return;
+
+            var mediaType = String(data.media_type || data.mediaType || '').toLowerCase();
+            var isMovie = mediaType === 'movie';
+
+            if (!isMovie && (!data.season || !data.episode)) return;
+
+            var movieKey = getMovieKeyFromData(data);
+            if (!movieKey) return;
+
+            if (!params.__last_by_movie) params.__last_by_movie = {};
+
+            params.__last_by_movie[movieKey] = {
+                hash: hash,
+                season: Number(data.season || 0),
+                episode: Number(data.episode || 0),
+                media_type: mediaType || '',
+                timestamp: Utils.now()
+            };
+        }
+
+        function saveStreamParams(hash, data, forceTimestamp) {
+            if (!hash || !data) return false;
+
+            var params = getParams();
+            if (!params[hash]) params[hash] = {};
+
+            var old = params[hash];
+            var changed = false;
+
+            Object.keys(data).forEach(function (key) {
+                var value = data[key];
+                if (value === undefined) return;
+
+                if (key === 'playlist' && Array.isArray(value)) {
+                    var oldJson = Utils.safeJson(old.playlist || []);
+                    var newJson = Utils.safeJson(value);
+                    if (oldJson !== newJson) {
+                        old.playlist = value;
+                        changed = true;
+                    }
+                    return;
+                }
+
+                if (old[key] !== value) {
+                    old[key] = value;
+                    changed = true;
+                }
+            });
+
+            if (forceTimestamp || changed || !old.timestamp) {
+                old.timestamp = Utils.now();
+                if (!old.original_timestamp) old.original_timestamp = old.timestamp;
+                updateLastPointer(params, old, hash);
+                setParams(params, true);
+                return true;
+            }
+
+            return false;
+        }
+
+        function getTorrServerUrl() {
+            try {
+                var url1 = Lampa.Storage.get('torrserver_url');
+                var url2 = Lampa.Storage.get('torrserver_url_two');
+                var useTwo = Lampa.Storage.field('torrserver_use_link') === 'two';
+                var url = useTwo ? (url2 || url1) : (url1 || url2);
+
+                if (!url) return null;
+                url = String(url).trim();
+                if (!url.match(/^https?:\/\//)) url = 'http://' + url;
+                return url.replace(/\/$/, '');
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function buildStreamUrl(params) {
+            if (!params || !params.file_name || !params.torrent_link) return null;
+
+            var server = getTorrServerUrl();
+            if (!server) return null;
+
+            var file = encodeURIComponent(params.file_name);
+            var link = encodeURIComponent(params.torrent_link);
+            var index = params.file_index !== undefined ? Number(params.file_index || 0) : 0;
+
+            return server + '/stream/' + file + '?link=' + link + '&index=' + index + '&play';
+        }
+
+        function buildLaunchUrl(params) {
+            if (!params) return '';
+            if (params.file_name && params.torrent_link) return buildStreamUrl(params) || '';
+            return Utils.stripFragment(params.url || params.uri || params.src || '');
+        }
+
+        function rebuildStreamUrl(url) {
+            var parsed = Utils.parseStreamUrl(url);
+            if (!parsed) return Utils.stripFragment(url || '');
+            return buildStreamUrl(parsed) || Utils.stripFragment(url || '');
+        }
+
+        function generateTimelineHash(movie, season, episode) {
+            if (!movie) return '';
+
+            var originalTitle = Utils.getMovieTitle(movie);
+            season = Number(season || 0);
+            episode = Number(episode ||
