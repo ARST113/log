@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var BOOT_VERSION = 'v5.1.0-justplus-native-return-20260827';
+    var BOOT_VERSION = 'v5.2.0-justplus-return-burst-20260827';
     var PLUGIN_NAME = 'ContinueWatchUniversal';
     var PLUGIN_VERSION = BOOT_VERSION;
 
@@ -93,8 +93,10 @@
         justTransportEnabled: true,
         justAndroidPlayerValue: 'android',
         justPendingKey: 'continue_watch_just_pending_v1',
-        justResultSettleMs: 650,
+        justResultSettleMs: 1400,
         justReconcileIntervalMs: 1000,
+        justReturnBurstMs: 4000,
+        justCompletionFallbackMs: 3500,
 
         hookRetryMs: 500,
         hookRetryMaxMs: 60000,
@@ -1393,12 +1395,6 @@
                 return String(item.timeline.hash);
             }
 
-            var meta = null;
-            try {
-                var keys = Object.keys((session && session.playlist) || {});
-                void keys;
-            } catch (e) {}
-
             var season = Number(item && item.season || 0);
             var episode = Number(item && item.episode || 0);
 
@@ -1469,7 +1465,7 @@
                 });
             }
 
-            var pending = {
+            writePending({
                 version: BOOT_VERSION,
                 launch_at: Utils.now(),
                 source_hash: String(session.hash || ''),
@@ -1477,14 +1473,16 @@
                 movie: minimalMovie(session.movie),
                 start_index: Number(session.playlistIndex || 0),
                 items: items,
+                events: [],
+                return_started_at: 0,
+                return_window_until: 0,
                 last_event_hash: '',
-                last_event_updated: 0,
+                last_event_seen_at: 0,
                 resolved_hash: '',
-                resolved_updated: 0,
+                resolved_event_seen_at: 0,
                 resolved_at: 0
-            };
+            });
 
-            writePending(pending);
             return true;
         }
 
@@ -1494,6 +1492,217 @@
                 if (String(pending.items[i].hash) === String(hash)) return pending.items[i];
             }
             return null;
+        }
+
+        function pendingItemByIndex(pending, index) {
+            if (!pending || !pending.items) return null;
+            index = Number(index);
+            for (var i = 0; i < pending.items.length; i++) {
+                if (Number(pending.items[i].index) === index) return pending.items[i];
+            }
+            return null;
+        }
+
+        function pageLooksActive() {
+            try {
+                if (document.visibilityState === 'hidden') return false;
+            } catch (e) {}
+            try {
+                if (document.hasFocus && !document.hasFocus()) return false;
+            } catch (e2) {}
+            return true;
+        }
+
+        function appendReturnEvent(pending, data, knownItem) {
+            if (!pending || !data || !data.hash || !data.road) return pending;
+
+            var now = Utils.now();
+            var road = data.road || {};
+            var hash = String(data.hash);
+            var event = {
+                hash: hash,
+                seen_at: now,
+                updated: Number(road.updated || now),
+                time: Number(road.time || 0),
+                duration: Number(road.duration || 0),
+                percent: Number(road.percent || 0),
+                known_index: knownItem ? Number(knownItem.index) : -1
+            };
+
+            if (!Array.isArray(pending.events)) pending.events = [];
+
+            var replaced = false;
+            for (var i = pending.events.length - 1; i >= 0; i--) {
+                var old = pending.events[i];
+                if (
+                    String(old.hash) === hash &&
+                    Number(old.updated || 0) === Number(event.updated || 0) &&
+                    Number(old.time || 0) === Number(event.time || 0) &&
+                    Number(old.duration || 0) === Number(event.duration || 0)
+                ) {
+                    pending.events[i] = event;
+                    replaced = true;
+                    break;
+                }
+            }
+
+            if (!replaced) pending.events.push(event);
+            if (pending.events.length > 40) pending.events = pending.events.slice(-40);
+
+            if (!pending.return_started_at) pending.return_started_at = now;
+            pending.return_window_until = now + CONFIG.justReturnBurstMs;
+            pending.last_event_hash = hash;
+            pending.last_event_seen_at = now;
+            return pending;
+        }
+
+        function buildSyntheticEvents(pending) {
+            var events = [];
+            if (!pending || !pending.items) return events;
+
+            for (var i = 0; i < pending.items.length; i++) {
+                var item = pending.items[i];
+                var road = timelineRoad(item.hash);
+                if (!road) continue;
+
+                var updated = Number(road.updated || 0);
+                if (!updated || updated <= Number(item.before_updated || 0)) continue;
+                if (pending.launch_at && updated + 2000 < Number(pending.launch_at)) continue;
+
+                events.push({
+                    hash: String(item.hash),
+                    seen_at: updated,
+                    updated: updated,
+                    time: Number(road.time || 0),
+                    duration: Number(road.duration || 0),
+                    percent: Number(road.percent || 0),
+                    known_index: Number(item.index)
+                });
+            }
+
+            return events;
+        }
+
+        function getFreshEvents(pending) {
+            var all = [];
+            var resolvedSeen = Number(pending && pending.resolved_event_seen_at || 0);
+
+            if (pending && Array.isArray(pending.events)) {
+                pending.events.forEach(function (event) {
+                    if (Number(event.seen_at || 0) > resolvedSeen) all.push(event);
+                });
+            }
+
+            buildSyntheticEvents(pending).forEach(function (event) {
+                var duplicate = false;
+                for (var i = 0; i < all.length; i++) {
+                    if (
+                        String(all[i].hash) === String(event.hash) &&
+                        Number(all[i].updated || 0) === Number(event.updated || 0)
+                    ) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (!duplicate && Number(event.seen_at || 0) > resolvedSeen) all.push(event);
+            });
+
+            all.sort(function (a, b) {
+                return Number(a.seen_at || 0) - Number(b.seen_at || 0);
+            });
+
+            return all;
+        }
+
+        function inferItemForEvent(pending, event, events) {
+            var direct = pendingItemByHash(pending, event.hash);
+            if (direct) return direct;
+
+            if (Number(event.known_index) >= 0) {
+                direct = pendingItemByIndex(pending, event.known_index);
+                if (direct) return direct;
+            }
+
+            var startIndex = Number(pending.start_index || 0);
+            var firstCompletionIndex = null;
+            var lastCompletionIndex = null;
+
+            for (var i = 0; i < events.length; i++) {
+                var e = events[i];
+                if (Number(e.seen_at || 0) > Number(event.seen_at || 0)) break;
+                if (Number(e.percent || 0) < 100 || Number(e.known_index) < 0) continue;
+
+                if (firstCompletionIndex === null) firstCompletionIndex = Number(e.known_index);
+                lastCompletionIndex = Number(e.known_index);
+            }
+
+            var inferredIndex = startIndex;
+
+            if (firstCompletionIndex !== null) {
+                if (firstCompletionIndex < startIndex) {
+                    inferredIndex = firstCompletionIndex - 1;
+                } else if (lastCompletionIndex !== null) {
+                    inferredIndex = lastCompletionIndex + 1;
+                }
+            }
+
+            if (inferredIndex < 0) inferredIndex = 0;
+            if (pending.items && inferredIndex >= pending.items.length) inferredIndex = pending.items.length - 1;
+
+            return pendingItemByIndex(pending, inferredIndex);
+        }
+
+        function chooseCandidate(pending) {
+            var events = getFreshEvents(pending);
+            if (!events.length) return null;
+
+            var playable = events.filter(function (event) {
+                return Number(event.time || 0) > 0 &&
+                    Number(event.duration || 0) > 0 &&
+                    Number(event.percent || 0) < 100;
+            });
+
+            var pool = playable.length ? playable : events.filter(function (event) {
+                return Number(event.time || 0) > 0 && Number(event.duration || 0) > 0;
+            });
+
+            if (!pool.length) {
+                // A 100% update for the launched episode is usually Lampa marking the
+                // previous item complete while Just+ has already moved to another item.
+                // Never let that alone overwrite Continue Watching immediately.
+                return {
+                    completionOnly: true,
+                    events: events,
+                    lastEvent: events[events.length - 1]
+                };
+            }
+
+            pool.sort(function (a, b) {
+                if (Number(b.seen_at || 0) !== Number(a.seen_at || 0)) {
+                    return Number(b.seen_at || 0) - Number(a.seen_at || 0);
+                }
+                if (Number(b.updated || 0) !== Number(a.updated || 0)) {
+                    return Number(b.updated || 0) - Number(a.updated || 0);
+                }
+                return 0;
+            });
+
+            var event = pool[0];
+            var item = inferItemForEvent(pending, event, events);
+            if (!item) return null;
+
+            return {
+                completionOnly: false,
+                item: item,
+                event: event,
+                road: {
+                    time: Number(event.time || 0),
+                    duration: Number(event.duration || 0),
+                    percent: Number(event.percent || 0),
+                    updated: Number(event.updated || event.seen_at || 0)
+                },
+                events: events
+            };
         }
 
         function findBaseStored(pending) {
@@ -1519,6 +1728,7 @@
             var item = candidate.item;
             var road = candidate.road || {};
             var movie = pending.movie || {};
+            var hash = String(candidate.event && candidate.event.hash || item.hash || '');
 
             params.url = item.url || params.url || '';
             params.uri = params.url;
@@ -1535,57 +1745,29 @@
             params.episode = Number(item.episode || 0);
             params.playlist_index = Number(item.index || 0);
             params.file_index = Number(item.file_index || 0);
-            params.timeline_hash = String(item.hash);
+            params.timeline_hash = hash;
             params.time = Number(road.time || 0);
             params.duration = Number(road.duration || 0);
             params.percent = Number(road.percent || 0);
             params.last_source = 'just';
-            params.last_event_type = params.percent >= 100 ? 'ended' : 'time';
-            params.last_reason = 'native_return_reconcile';
+            params.last_event_type = 'time';
+            params.last_reason = 'native_return_burst';
             params.transport = 'just';
 
             if (item.image) Utils.copyImageFields(params, item.image);
 
-            return StorageManager.saveStreamParams(String(item.hash), params, true);
+            return StorageManager.saveStreamParams(hash, params, true);
         }
 
-        function chooseCandidate(pending) {
-            if (!pending || !pending.items || !pending.items.length) return null;
+        function markResolved(pending, candidate) {
+            var event = candidate && candidate.event;
+            pending.resolved_hash = String(event && event.hash || '');
+            pending.resolved_event_seen_at = Number(event && event.seen_at || pending.last_event_seen_at || Utils.now());
+            pending.resolved_at = Utils.now();
+            writePending(pending);
 
-            var candidates = [];
-            var resolvedUpdated = Number(pending.resolved_updated || 0);
-            var launchAt = Number(pending.launch_at || 0);
-
-            pending.items.forEach(function (item) {
-                var road = timelineRoad(item.hash);
-                if (!road) return;
-
-                var updated = Number(road.updated || 0);
-                var baseline = Math.max(Number(item.before_updated || 0), resolvedUpdated);
-
-                if (!updated || updated <= baseline) return;
-                if (launchAt && updated + 2000 < launchAt) return;
-
-                candidates.push({ item: item, road: road, updated: updated });
-            });
-
-            if (!candidates.length) return null;
-
-            candidates.sort(function (a, b) {
-                if (Number(b.updated) !== Number(a.updated)) return Number(b.updated) - Number(a.updated);
-
-                var aLast = String(a.item.hash) === String(pending.last_event_hash || '') ? 1 : 0;
-                var bLast = String(b.item.hash) === String(pending.last_event_hash || '') ? 1 : 0;
-                if (bLast !== aLast) return bLast - aLast;
-
-                var aPlayable = Number(a.road.duration || 0) > 0 || Number(a.road.time || 0) > 0 ? 1 : 0;
-                var bPlayable = Number(b.road.duration || 0) > 0 || Number(b.road.time || 0) > 0 ? 1 : 0;
-                if (bPlayable !== aPlayable) return bPlayable - aPlayable;
-
-                return 0;
-            });
-
-            return candidates[0];
+            lastResolvedHash = pending.resolved_hash;
+            lastResolvedAt = pending.resolved_at;
         }
 
         function reconcile(reason) {
@@ -1594,7 +1776,6 @@
             var pending = readPending();
             if (!pending) return false;
 
-            // Ignore abandoned sessions after six hours.
             if (pending.launch_at && Utils.now() - Number(pending.launch_at) > 6 * 60 * 60 * 1000) {
                 writePending(null);
                 return false;
@@ -1603,51 +1784,72 @@
             var candidate = chooseCandidate(pending);
             if (!candidate) return false;
 
-            var hash = String(candidate.item.hash);
+            if (candidate.completionOnly) {
+                var burstAge = Utils.now() - Number(pending.last_event_seen_at || pending.return_started_at || 0);
+                if (burstAge < CONFIG.justCompletionFallbackMs) return false;
+
+                // Do not overwrite Continue Watching with "100%, 0:00". This was the bug
+                // that reset the launched episode after an internal Just+ switch.
+                pending.resolved_event_seen_at = Number(
+                    candidate.lastEvent && candidate.lastEvent.seen_at ||
+                    pending.last_event_seen_at ||
+                    Utils.now()
+                );
+                pending.resolved_at = Utils.now();
+                writePending(pending);
+                return false;
+            }
+
+            var hash = String(candidate.event.hash || candidate.item.hash || '');
             var road = candidate.road || {};
             var session = SessionManager.getCurrent();
-            var handled = false;
 
-            if (session && SessionManager.hasHash(hash)) {
-                session = SessionManager.updateByTimelineHash(hash, {
+            if (session) {
+                var payload = {
+                    season: Number(candidate.item.season || 0),
+                    episode: Number(candidate.item.episode || 0),
+                    playlist_index: Number(candidate.item.index || 0),
+                    currentItem: candidate.item,
+                    uri: candidate.item.url || '',
+                    title: candidate.item.title || '',
                     time: Number(road.time || 0),
                     duration: Number(road.duration || 0),
                     percent: Number(road.percent || 0),
-                    reason: 'native_return_reconcile'
-                }) || session;
+                    reason: reason || 'native_return_burst'
+                };
+
+                session = SessionManager.updateByPlaylistIndex(Number(candidate.item.index || 0), payload) || session;
 
                 Core.consume({
                     source: 'just',
-                    type: Number(road.percent || 0) >= 100 ? 'ended' : 'time',
+                    type: 'time',
                     session: session,
                     hash: hash,
+                    playlist_index: Number(candidate.item.index || 0),
+                    season: Number(candidate.item.season || 0),
+                    episode: Number(candidate.item.episode || 0),
+                    currentItem: candidate.item,
+                    url: candidate.item.url || '',
                     time: Number(road.time || 0),
                     duration: Number(road.duration || 0),
                     percent: Number(road.percent || 0),
                     force: true,
-                    reason: reason || 'native_return_reconcile'
+                    reason: reason || 'native_return_burst'
                 });
-                handled = true;
             } else {
-                handled = saveResolvedWithoutSession(pending, candidate) || true;
+                saveResolvedWithoutSession(pending, candidate);
             }
 
-            pending.resolved_hash = hash;
-            pending.resolved_updated = Number(candidate.updated || road.updated || Utils.now());
-            pending.resolved_at = Utils.now();
-            writePending(pending);
-
             lastTimelineHash = hash;
-            lastResolvedHash = hash;
-            lastResolvedAt = pending.resolved_at;
-            return handled;
+            markResolved(pending, candidate);
+            return true;
         }
 
         function scheduleReconcile(reason) {
             if (reconcileTimer) clearTimeout(reconcileTimer);
             reconcileTimer = setTimeout(function () {
                 reconcileTimer = null;
-                reconcile(reason || 'timeline_settled');
+                reconcile(reason || 'timeline_burst_settled');
             }, CONFIG.justResultSettleMs);
         }
 
@@ -1656,52 +1858,91 @@
 
             var hash = String(data.hash);
             var pending = readPending();
-            var belongsToPending = !!pendingItemByHash(pending, hash);
             var session = SessionManager.getCurrent();
-            var belongsToSession = !!(session && SessionManager.hasHash(hash));
+            var knownItem = pendingItemByHash(pending, hash);
+            var now = Utils.now();
 
-            if (!belongsToPending && !belongsToSession) return false;
+            if (pending) {
+                var inReturnWindow = Number(pending.return_window_until || 0) >= now;
+                var playableUnknown = !knownItem &&
+                    pageLooksActive() &&
+                    Number(data.road.time || 0) > 0 &&
+                    Number(data.road.duration || 0) > 0 &&
+                    Number(data.road.percent || 0) < 100;
 
-            lastTimelineHash = hash;
+                if (knownItem || inReturnWindow || playableUnknown) {
+                    pending = appendReturnEvent(pending, data, knownItem);
 
-            if (belongsToPending) {
-                pending.last_event_hash = hash;
-                pending.last_event_updated = Number(data.road.updated || Utils.now());
-                writePending(pending);
-                scheduleReconcile('lampa_result_timeline');
+                    // Once one playlist hash confirms that Lampa is processing the external
+                    // result, accept the following hashes for a few seconds too. This covers
+                    // a mismatched/missing hash map for the final current item.
+                    if (knownItem && !pending.return_started_at) {
+                        pending.return_started_at = now;
+                    }
+
+                    writePending(pending);
+                    lastTimelineHash = hash;
+                    scheduleReconcile('lampa_result_burst');
+                    return true;
+                }
+            }
+
+            if (session && SessionManager.hasHash(hash)) {
+                session = SessionManager.updateByTimelineHash(hash, {
+                    time: Number(data.road.time || 0),
+                    duration: Number(data.road.duration || 0),
+                    percent: Number(data.road.percent || 0),
+                    reason: 'just_timeline_fallback'
+                }) || session;
+
+                Core.consume({
+                    source: 'just',
+                    type: Number(data.road.percent || 0) >= 100 ? 'ended' : 'time',
+                    session: session,
+                    hash: hash,
+                    time: Number(data.road.time || 0),
+                    duration: Number(data.road.duration || 0),
+                    percent: Number(data.road.percent || 0),
+                    force: true,
+                    reason: 'just_timeline_fallback'
+                });
+
                 return true;
             }
 
-            // Fallback for a live in-memory session with no persisted pending state.
-            session = SessionManager.updateByTimelineHash(hash, {
-                time: Number(data.road.time || 0),
-                duration: Number(data.road.duration || 0),
-                percent: Number(data.road.percent || 0),
-                reason: 'just_timeline_fallback'
-            }) || session;
-
-            Core.consume({
-                source: 'just',
-                type: Number(data.road.percent || 0) >= 100 ? 'ended' : 'time',
-                session: session,
-                hash: hash,
-                time: Number(data.road.time || 0),
-                duration: Number(data.road.duration || 0),
-                percent: Number(data.road.percent || 0),
-                force: true,
-                reason: 'just_timeline_fallback'
-            });
-            return true;
+            return false;
         }
 
         function init() {
             if (installed) return;
             installed = true;
 
-            setTimeout(function () { reconcile('init_reconcile'); }, 900);
+            setTimeout(function () { reconcile('init_reconcile'); }, 1200);
+
             periodicTimer = setInterval(function () {
                 reconcile('periodic_reconcile');
             }, CONFIG.justReconcileIntervalMs);
+
+            try {
+                window.addEventListener('focus', function () {
+                    var pending = readPending();
+                    if (!pending) return;
+                    pending.return_window_until = Utils.now() + CONFIG.justReturnBurstMs;
+                    writePending(pending);
+                    scheduleReconcile('window_focus');
+                });
+            } catch (e) {}
+
+            try {
+                document.addEventListener('visibilitychange', function () {
+                    if (document.visibilityState === 'hidden') return;
+                    var pending = readPending();
+                    if (!pending) return;
+                    pending.return_window_until = Utils.now() + CONFIG.justReturnBurstMs;
+                    writePending(pending);
+                    scheduleReconcile('visibility_return');
+                });
+            } catch (e2) {}
         }
 
         function getStatus() {
