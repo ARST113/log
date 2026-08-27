@@ -2558,4 +2558,74 @@
             },
             storage: {
                 get: StorageManager.getParams,
-                last: S
+                last: StorageManager.getLastStreamParams,
+                cleanup: StorageManager.cleanupOld
+            },
+            session: {
+                current: SessionManager.getCurrent,
+                metaByHash: SessionManager.getMetaByHash
+            },
+            transport: {
+                just: JustPlusTransport.getStatus,
+                lampa: LampaNativeTransport.getStatus
+            },
+            hooks: {
+                playerPatched: PlayerManager.isPatched
+            },
+            ui: {
+                remove: UIManager.removeContinueButtons
+            }
+        };
+    }
+
+    // ============================================================
+    // Init
+    // ============================================================
+
+    var initStarted = false;
+
+    function init() {
+        if (initStarted) return;
+        initStarted = true;
+
+        try {
+            StorageManager.ensureSync();
+            TransportManager.init();
+            PlayerManager.patchPlayer();
+            UIManager.install();
+            exposeApi();
+
+            setTimeout(function () {
+                StorageManager.cleanupOld();
+            }, 10000);
+
+            window.__CONTINUE_WATCH_NATIVE_JUST_READY__ = true;
+            window.__CONTINUE_WATCH_NATIVE_JUST_LOADING__ = false;
+            window.__CONTINUE_WATCH_NATIVE_JUST_VERSION__ = PLUGIN_VERSION;
+            rememberBootStatus('ready', 'native + just return reconciliation initialized');
+        } catch (e) {
+            initStarted = false;
+            window.__CONTINUE_WATCH_NATIVE_JUST_READY__ = false;
+            window.__CONTINUE_WATCH_NATIVE_JUST_LOADING__ = false;
+            rememberBootStatus('init-error', String(e && e.message ? e.message : e));
+            Utils.error('Init failed', e);
+
+            try {
+                if (Lampa.Noty && Lampa.Noty.show) {
+                    Lampa.Noty.show('ContinueWatch init error: ' + String(e && e.message ? e.message : e).slice(0, 120));
+                }
+            } catch (ee) {}
+        }
+    }
+
+    if (window.appready) {
+        init();
+    } else {
+        Lampa.Listener.follow('app', function (event) {
+            if (event && event.type === 'ready') init();
+        });
+
+        setTimeout(init, 1200);
+        setTimeout(init, 4000);
+    }
+})();
