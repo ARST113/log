@@ -1739,4 +1739,218 @@
         }
 
         function handlePlayerCreate(event) {
-            if 
+            if (!CONFIG.nativePlayerEventsEnabled) return;
+
+            var data = getDataFromEvent(event);
+            if (!data || !(data.url || data.uri || data.src)) return;
+
+            var session = SessionManager.getCurrent();
+            var url = data.url || data.uri || data.src || '';
+
+            if (!session || Utils.streamIdentity(session.url || '') !== Utils.streamIdentity(url)) {
+                var options = {
+                    source: 'player_event',
+                    transport: JustPlusTransport.matches() ? 'just' : 'lampa'
+                };
+
+                if (session) {
+                    if ((!data.playlist || !data.playlist.length) && session.playlist && session.playlist.length) {
+                        options.playlist = session.playlist;
+                    }
+                    if (!data.card && !data.movie && session.movie) options.movie = session.movie;
+                }
+
+                session = SessionManager.buildFromPlayData(data, options);
+            }
+
+            if (!session) return;
+
+            Core.consume({
+                source: session.transport,
+                type: 'start',
+                session: session,
+                hash: session.hash,
+                url: session.url,
+                force: true
+            });
+        }
+
+        function handlePlayerDestroy() {
+            if (!CONFIG.nativePlayerEventsEnabled) return;
+
+            var session = SessionManager.getCurrent();
+            if (!session || !session.lastRoad) return;
+
+            Core.consume({
+                source: session.transport,
+                type: 'stop',
+                session: session,
+                hash: session.lastRoad.hash || session.hash,
+                time: Number(session.lastRoad.time || 0),
+                duration: Number(session.lastRoad.duration || 0),
+                percent: Number(session.lastRoad.percent || 0),
+                force: true,
+                reason: 'destroy'
+            });
+        }
+
+        function handleTimelineUpdate(event) {
+            if (!CONFIG.nativeTimelineEnabled) return;
+
+            var data = event && event.data ? event.data : event;
+            if (!data || !data.hash || !data.road) return;
+
+            // Just+ gets first refusal on Android. If it handled the result timeline,
+            // ordinary native handling must not save the same update again.
+            if (JustPlusTransport.handleTimeline(data)) return;
+
+            var hash = String(data.hash);
+            var road = data.road || {};
+            var session = SessionManager.getCurrent();
+
+            if (session && SessionManager.hasHash(hash)) {
+                session = SessionManager.updateByTimelineHash(hash, {
+                    time: Number(road.time || 0),
+                    duration: Number(road.duration || 0),
+                    percent: Number(road.percent || 0),
+                    reason: 'native_timeline_hash'
+                }) || session;
+            }
+
+            if (!session) {
+                var stored = StorageManager.getParams();
+                if (!stored || !stored[hash]) return;
+
+                var patch = Utils.shallowClone(stored[hash]);
+                patch.time = Number(road.time || 0);
+                patch.duration = Number(road.duration || 0);
+                patch.percent = Number(road.percent || 0);
+                patch.last_source = 'lampa';
+                patch.last_event_type = 'timeline_update';
+                StorageManager.saveStreamParams(hash, patch, true);
+                lastTimelineHash = hash;
+                return;
+            }
+
+            if (String(hash) !== String(session.hash || '') && !SessionManager.hasHash(hash)) return;
+
+            lastTimelineHash = hash;
+
+            if (CONFIG.saveNativeTimelineToCustomStorage) {
+                Core.consume({
+                    source: 'lampa',
+                    type: Number(road.percent || 0) >= 100 ? 'ended' : 'time',
+                    session: session,
+                    hash: hash,
+                    time: Number(road.time || 0),
+                    duration: Number(road.duration || 0),
+                    percent: Number(road.percent || 0),
+                    force: false,
+                    reason: 'timeline_update'
+                });
+            }
+        }
+
+        var playerListenersInstalled = false;
+        var timelineListenerInstalled = false;
+        var hookRetryTimer = null;
+        var hookRetryStartedAt = 0;
+
+        function installPlayerListeners() {
+            if (playerListenersInstalled) return true;
+            if (!Lampa.Player || !Lampa.Player.listener || !Lampa.Player.listener.follow) return false;
+
+            try {
+                Lampa.Player.listener.follow('create', handlePlayerCreate);
+                Lampa.Player.listener.follow('start', handlePlayerCreate);
+                Lampa.Player.listener.follow('ready', handlePlayerCreate);
+                Lampa.Player.listener.follow('destroy', handlePlayerDestroy);
+                playerListenersInstalled = true;
+                return true;
+            } catch (e) {
+                Utils.error('Player listener failed', e);
+                return false;
+            }
+        }
+
+        function installTimelineListener() {
+            if (timelineListenerInstalled) return true;
+            if (!Lampa.Timeline || !Lampa.Timeline.listener || !Lampa.Timeline.listener.follow) return false;
+
+            try {
+                Lampa.Timeline.listener.follow('update', handleTimelineUpdate);
+                timelineListenerInstalled = true;
+                return true;
+            } catch (e) {
+                Utils.error('Timeline listener failed', e);
+                return false;
+            }
+        }
+
+        function ensureHooks() {
+            installPlayerListeners();
+            installTimelineListener();
+
+            if (playerListenersInstalled && timelineListenerInstalled && hookRetryTimer) {
+                clearInterval(hookRetryTimer);
+                hookRetryTimer = null;
+            }
+
+            return playerListenersInstalled && timelineListenerInstalled;
+        }
+
+        function init() {
+            if (installed) return;
+            installed = true;
+            hookRetryStartedAt = Utils.now();
+            ensureHooks();
+
+            if (!playerListenersInstalled || !timelineListenerInstalled) {
+                hookRetryTimer = setInterval(function () {
+                    ensureHooks();
+                    if (Utils.now() - hookRetryStartedAt > CONFIG.hookRetryMaxMs && hookRetryTimer) {
+                        clearInterval(hookRetryTimer);
+                        hookRetryTimer = null;
+                    }
+                }, CONFIG.hookRetryMs);
+            }
+        }
+
+        function getStatus() {
+            return {
+                installed: installed,
+                playerListenersInstalled: playerListenersInstalled,
+                timelineListenerInstalled: timelineListenerInstalled,
+                lastTimelineHash: lastTimelineHash
+            };
+        }
+
+        return {
+            init: init,
+            getStatus: getStatus
+        };
+    })();
+
+    // ============================================================
+    // PlayerManager
+    // ============================================================
+
+    var PlayerManager = (function () {
+        var patched = false;
+        var patchRetryTimer = null;
+        var patchRetryStartedAt = 0;
+
+        function schedulePatchRetry() {
+            if (patchRetryTimer || patched) return;
+            patchRetryStartedAt = patchRetryStartedAt || Utils.now();
+
+            patchRetryTimer = setInterval(function () {
+                if (patched) {
+                    clearInterval(patchRetryTimer);
+                    patchRetryTimer = null;
+                    return;
+                }
+
+                if (Utils.now() - patchRetryStartedAt > CONFIG.hookRetryMaxMs) {
+                    clearInterval(patchRetryTimer);
+                    patchRet
