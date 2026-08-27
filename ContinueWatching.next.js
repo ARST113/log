@@ -1953,4 +1953,205 @@
 
                 if (Utils.now() - patchRetryStartedAt > CONFIG.hookRetryMaxMs) {
                     clearInterval(patchRetryTimer);
-                    patchRet
+                    patchRetryTimer = null;
+                    return;
+                }
+
+                patchPlayer();
+            }, CONFIG.hookRetryMs);
+        }
+
+        function patchPlayer() {
+            if (patched) return true;
+            if (!Lampa.Player || !Lampa.Player.play) {
+                schedulePatchRetry();
+                return false;
+            }
+
+            if (Lampa.Player.__continueWatchNativeJustPatchVersion === BOOT_VERSION) {
+                patched = true;
+                if (patchRetryTimer) {
+                    clearInterval(patchRetryTimer);
+                    patchRetryTimer = null;
+                }
+                return true;
+            }
+
+            var originalPlay = Lampa.Player.play;
+
+            Lampa.Player.play = function (data) {
+                try {
+                    data = data || {};
+
+                    var transport = JustPlusTransport.matches() ? 'just' : 'lampa';
+                    var session = SessionManager.buildFromPlayData(data, {
+                        source: 'player_patch',
+                        transport: transport
+                    });
+
+                    if (session) {
+                        Core.consume({
+                            source: transport,
+                            type: 'start',
+                            session: session,
+                            hash: session.hash,
+                            url: session.url,
+                            force: true
+                        });
+
+                        // Persist a minimal native-hash map before Android leaves Lampa.
+                        // It survives WebView/app recreation while Just+ is in front.
+                        if (transport === 'just') JustPlusTransport.arm(session);
+                    }
+                } catch (e) {
+                    Utils.error('Player patch failed', e);
+                }
+
+                // No transport mutates the URL or suppresses Lampa.Player.play.
+                // Lampa remains fully responsible for launching Just+ and receiving its result.
+                return originalPlay.apply(this, arguments);
+            };
+
+            Lampa.Player.__continueWatchNativeJustPatched = true;
+            Lampa.Player.__continueWatchNativeJustPatchVersion = BOOT_VERSION;
+            patched = true;
+
+            if (patchRetryTimer) {
+                clearInterval(patchRetryTimer);
+                patchRetryTimer = null;
+            }
+            return true;
+        }
+
+        function makeLaunchLockKey(movie, params) {
+            var movieKey = '';
+            try { movieKey = StorageManager.getMovieKey(movie) || ''; } catch (e) {}
+
+            return [
+                movieKey,
+                params && params.torrent_link || '',
+                params && params.url || '',
+                params && params.file_index !== undefined ? params.file_index : '',
+                params && params.playlist_index !== undefined ? params.playlist_index : '',
+                params && params.season || 0,
+                params && params.episode || 0
+            ].join('|');
+        }
+
+        function acquireLaunchLock(movie, params) {
+            var current = Utils.now();
+            var key = makeLaunchLockKey(movie, params);
+            var lock = window.__CONTINUE_WATCH_UNIVERSAL_LAUNCH_LOCK__;
+
+            if (!lock || typeof lock !== 'object') {
+                lock = { key: '', ts: 0 };
+                window.__CONTINUE_WATCH_UNIVERSAL_LAUNCH_LOCK__ = lock;
+            }
+
+            if (lock.key === key && current - Number(lock.ts || 0) < CONFIG.launchLockMs) return false;
+
+            lock.key = key;
+            lock.ts = current;
+            return true;
+        }
+
+        function rebuildPlaylistForLaunch(params) {
+            if (!Array.isArray(params.playlist)) return null;
+
+            return params.playlist.map(function (item, index) {
+                var clone = Utils.shallowClone(item || {});
+                var url = clone.url || clone.uri || clone.src || '';
+
+                if (url) {
+                    clone.url = Utils.parseStreamUrl(url)
+                        ? StorageManager.rebuildStreamUrl(url)
+                        : Utils.stripFragment(url);
+                    clone.uri = clone.url;
+                    clone.src = clone.url;
+                }
+
+                clone.playlist_index = index;
+
+                var parsed = Utils.parseStreamUrl(clone.url || '');
+                if (parsed && parsed.file_index !== undefined) clone.file_index = Number(parsed.file_index);
+
+                var image = Utils.extractImage(item) || Utils.extractImage(clone);
+                if (image) Utils.copyImageFields(clone, image);
+
+                return clone;
+            });
+        }
+
+        function launchFromContinue(movie, params) {
+            if (!movie || !params) return;
+            if (!acquireLaunchLock(movie, params)) return;
+
+            var url = StorageManager.buildLaunchUrl(params);
+            if (!url) {
+                try { Lampa.Noty.show('Не удалось восстановить ссылку просмотра'); } catch (e) {}
+                return;
+            }
+
+            var season = Number(params.season || 0);
+            var episode = Number(params.episode || 0);
+            var hash = String(params.timeline_hash || '') || StorageManager.generateTimelineHash(movie, season, episode);
+            var timeline = null;
+
+            try {
+                timeline = hash && Lampa.Timeline && Lampa.Timeline.view ? Lampa.Timeline.view(hash) : null;
+            } catch (e2) {}
+
+            var resumeTime = Math.max(Number(params.time || params.position || 0), Number(timeline && timeline.time || 0));
+            var resumeDuration = Math.max(Number(params.duration || 0), Number(timeline && timeline.duration || 0));
+            var resumePercent = Math.max(Number(params.percent || 0), Number(timeline && timeline.percent || 0));
+
+            if (!resumePercent && resumeTime > 0 && resumeDuration > 0) {
+                resumePercent = Math.round(resumeTime / resumeDuration * 100);
+            }
+
+            resumePercent = Utils.clamp(resumePercent, 0, 100);
+
+            var playlist = rebuildPlaylistForLaunch(params);
+            var playlistIndex = Number(params.playlist_index || 0);
+
+            if (playlist && playlist.length) {
+                if (isNaN(playlistIndex) || playlistIndex < 0) playlistIndex = 0;
+                if (playlistIndex >= playlist.length) playlistIndex = playlist.length - 1;
+
+                // Prefer the playlist's canonical URL. It is the URL Lampa stores and later
+                // uses to match the URI returned by Just+.
+                if (playlist[playlistIndex] && playlist[playlistIndex].url) {
+                    url = playlist[playlistIndex].url;
+                }
+            }
+
+            var activeItem = playlist && playlist.length ? playlist[playlistIndex] : null;
+            var activeImage = Utils.extractImage(activeItem) || Utils.extractImage(params) || Utils.extractImage(movie);
+
+            var data = {
+                url: url,
+                uri: url,
+                src: url,
+                title: params.episode_title || params.title || Utils.getMovieTitle(movie),
+                card: movie,
+                movie: movie,
+                timeline: {
+                    hash: hash,
+                    time: resumeTime,
+                    duration: resumeDuration,
+                    percent: resumePercent
+                },
+                time: resumeTime,
+                position: resumeTime > 0 ? resumeTime : -1,
+                duration: resumeDuration,
+                percent: resumePercent,
+                playlist: playlist,
+                playlist_index: playlistIndex,
+                start_index: playlistIndex,
+                season: season,
+                episode: episode,
+                torrent_hash: params.torrent_link || '',
+                continue_watch_universal: true
+            };
+
+            if (activeItem) data.currentItem = ac
