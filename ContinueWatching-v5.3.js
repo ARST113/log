@@ -815,7 +815,7 @@
             return out;
         }
 
-        function migrateCompactStorage() {
+        function migrateCompactStorage(forceWrite) {
             var params = getParams();
             var changed = false;
 
@@ -849,7 +849,7 @@
                 }
             });
 
-            if (changed) setParams(params, true);
+            if (changed || forceWrite) setParams(params, true);
             return changed;
         }
 
@@ -3062,7 +3062,7 @@
             }, 7000);
 
             setTimeout(function () {
-                StorageManager.migrateCompactStorage();
+                StorageManager.migrateCompactStorage(true);
             }, 16000);
 
             window.__CONTINUE_WATCH_NATIVE_JUST_READY__ = true;
