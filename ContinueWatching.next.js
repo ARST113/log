@@ -1136,4 +1136,202 @@
             return register(session);
         }
 
-  
+        function updateByPlaylistIndex(index, payload) {
+            if (!currentSession) return null;
+
+            index = Number(index);
+            if (isNaN(index) || index < 0 || index >= currentSession.playlist.length) return currentSession;
+
+            payload = payload || {};
+            var item = getItemAt(currentSession.playlist, index);
+            var explicit = Utils.extractExplicitSE(payload) || Utils.extractExplicitSE(payload.currentItem);
+            var itemExplicit = Utils.extractExplicitSE(item);
+            var se = explicit || itemExplicit || resolveSE(payload, currentSession.movie, item, index, currentSession.playlist);
+
+            var url = Utils.stripFragment(
+                payload.uri || payload.url ||
+                (payload.currentItem && (payload.currentItem.uri || payload.currentItem.url)) ||
+                (item && item.url) ||
+                currentSession.url || ''
+            );
+
+            var hash = item && item.timeline && item.timeline.hash && String(item.timeline.hash) !== '0'
+                ? String(item.timeline.hash)
+                : StorageManager.generateTimelineHash(currentSession.movie, se.season, se.episode);
+            var image = Utils.extractImage(item) || Utils.extractImage(payload) || Utils.extractImage(currentSession);
+
+            currentSession.url = url;
+            currentSession.playlistIndex = index;
+            currentSession.currentItem = item;
+            currentSession.title = payload.title || (item && item.title) || currentSession.title;
+            currentSession.episode_title = (item && item.title) || currentSession.episode_title || '';
+            currentSession.season = Number(se.season || currentSession.season || 0);
+            currentSession.episode = Number(se.episode || currentSession.episode || 0);
+            currentSession.seSource = se.source || currentSession.seSource || '';
+            currentSession.hash = hash || currentSession.hash;
+            currentSession.updatedAt = Utils.now();
+
+            if (image) Utils.copyImageFields(currentSession, image);
+            currentSession.params = buildParams(currentSession);
+
+            return register(currentSession);
+        }
+
+        function updateByTimelineHash(hash, payload) {
+            if (!hash) return currentSession;
+
+            var meta = hashMetaByHash[String(hash)];
+            if (!meta || !currentSession) return currentSession;
+
+            var updatePayload = payload ? Utils.shallowClone(payload) : {};
+            var item = meta.item || getItemAt(currentSession.playlist, meta.index);
+
+            updatePayload.season = Number(meta.season || 0);
+            updatePayload.episode = Number(meta.episode || 0);
+            updatePayload.playlist_index = Number(meta.index || 0);
+
+            if (item) {
+                updatePayload.uri = updatePayload.uri || item.url || item.uri || item.src || '';
+                updatePayload.title = updatePayload.title || item.title || item.name || '';
+                updatePayload.currentItem = updatePayload.currentItem || item;
+            }
+
+            currentSession = updateByPlaylistIndex(Number(meta.index || 0), updatePayload) || currentSession;
+            currentSession.hash = String(hash);
+            currentSession.season = Number(meta.season || currentSession.season || 0);
+            currentSession.episode = Number(meta.episode || currentSession.episode || 0);
+            currentSession.params = buildParams(currentSession);
+            register(currentSession);
+
+            return currentSession;
+        }
+
+        function hasHash(hash) {
+            return !!(hash && hashMetaByHash[String(hash)]);
+        }
+
+        function getMetaByHash(hash) {
+            return hash ? hashMetaByHash[String(hash)] || null : null;
+        }
+
+        function getCurrent() {
+            return currentSession;
+        }
+
+        function updateRoad(road) {
+            if (!currentSession) return;
+            currentSession.lastRoad = road;
+            currentSession.updatedAt = Utils.now();
+        }
+
+        return {
+            normalizePlaylist: normalizePlaylist,
+            buildFromPlayData: buildFromPlayData,
+            buildParams: buildParams,
+            updateByPlaylistIndex: updateByPlaylistIndex,
+            updateByTimelineHash: updateByTimelineHash,
+            hasHash: hasHash,
+            getMetaByHash: getMetaByHash,
+            getCurrent: getCurrent,
+            updateRoad: updateRoad,
+            register: register
+        };
+    })();
+
+    // ============================================================
+    // Core
+    // ============================================================
+
+    var Core = (function () {
+        var lastSaveByHash = {};
+
+        function calculatePercent(time, duration, percent) {
+            time = Number(time || 0);
+            duration = Number(duration || 0);
+            percent = Number(percent || 0);
+
+            if (!percent && duration > 0) percent = Math.round(time / duration * 100);
+            return Utils.clamp(percent, 0, 100);
+        }
+
+        function shouldSave(hash, force) {
+            if (!hash) return false;
+            var current = Utils.now();
+            var last = Number(lastSaveByHash[hash] || 0);
+
+            if (force || current - last >= 1000) {
+                lastSaveByHash[hash] = current;
+                return true;
+            }
+
+            return false;
+        }
+
+        function consume(event) {
+            if (!event || !event.type) return;
+
+            var session = event.session || SessionManager.getCurrent();
+            if (!session) return;
+
+            if (event.hash && String(event.hash) !== String(session.hash || '') && SessionManager.hasHash(event.hash)) {
+                session = SessionManager.updateByTimelineHash(event.hash, event) || session;
+            }
+
+            if (event.playlist_index !== undefined && event.playlist_index !== null) {
+                session = SessionManager.updateByPlaylistIndex(event.playlist_index, event) || session;
+            }
+
+            var hash = event.hash || session.hash;
+            if (!hash) return;
+
+            var time = Number(event.time || 0);
+            var duration = Number(event.duration || 0);
+            var percent = calculatePercent(time, duration, event.percent);
+
+            if (event.type === 'ended') {
+                percent = 100;
+                if (!time && duration) time = duration;
+            }
+
+            var params = SessionManager.buildParams(session);
+            params.time = time;
+            params.duration = duration;
+            params.percent = percent;
+            params.timeline_hash = String(hash || params.timeline_hash || '');
+            params.last_source = event.source || session.transport || 'lampa';
+            params.last_event_type = event.type;
+            params.last_reason = event.reason || '';
+
+            session.lampaTime = time;
+            session.lampaDuration = duration;
+            session.lampaPercent = percent;
+            session.params = params;
+
+            if (event.type === 'start') {
+                StorageManager.saveStreamParams(hash, params, true);
+                return;
+            }
+
+            if (!shouldSave(hash, !!event.force)) return;
+
+            if (
+                duration >= CONFIG.minDurationSeconds ||
+                event.force ||
+                event.type === 'ended' ||
+                event.type === 'stop'
+            ) {
+                if (
+                    time >= CONFIG.minSaveSeconds ||
+                    percent >= CONFIG.finishPercent ||
+                    event.force ||
+                    event.type === 'ended'
+                ) {
+                    StorageManager.saveStreamParams(hash, params, true);
+                }
+
+                SessionManager.updateRoad({
+                    hash: hash,
+                    time: time,
+                    duration: duration,
+                    percent: percent,
+                    source
