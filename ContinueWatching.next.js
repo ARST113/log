@@ -759,4 +759,197 @@
 
             var originalTitle = Utils.getMovieTitle(movie);
             season = Number(season || 0);
-            episode = Number(episode ||
+            episode = Number(episode || 0);
+
+            if (!originalTitle) return '';
+
+            if (season > 0 && episode > 0) {
+                var separator = season > 10 ? ':' : '';
+                return Lampa.Utils.hash([season, separator, episode, originalTitle].join(''));
+            }
+
+            return Lampa.Utils.hash(originalTitle);
+        }
+
+        function getLastStreamParams(movie) {
+            if (!movie) return null;
+
+            var params = getParams();
+            var movieKey = getMovieKey(movie);
+
+            if (
+                movieKey &&
+                params.__last_by_movie &&
+                params.__last_by_movie[movieKey] &&
+                params.__last_by_movie[movieKey].hash &&
+                params[params.__last_by_movie[movieKey].hash]
+            ) {
+                return params[params.__last_by_movie[movieKey].hash];
+            }
+
+            var originalTitle = Utils.getMovieTitle(movie);
+            var movieId = movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId || '';
+            var list = [];
+
+            Object.keys(params).forEach(function (key) {
+                if (key === '__last_by_movie') return;
+
+                var item = params[key];
+                if (!item || typeof item !== 'object') return;
+
+                var sameId = movieId && item.movie_id && String(movieId) === String(item.movie_id);
+                var sameTitle = originalTitle && (
+                    String(item.original_title || '') === String(originalTitle) ||
+                    String(item.original_name || '') === String(originalTitle) ||
+                    String(item.name || '') === String(originalTitle)
+                );
+
+                if (sameId || sameTitle) list.push(item);
+            });
+
+            list.sort(function (a, b) {
+                return Number(b.timestamp || 0) - Number(a.timestamp || 0);
+            });
+
+            return list[0] || null;
+        }
+
+        function cleanupOld() {
+            var params = getParams();
+            var current = Utils.now();
+            var changed = false;
+
+            Object.keys(params).forEach(function (key) {
+                if (key === '__last_by_movie') return;
+                var item = params[key];
+                if (!item || typeof item !== 'object') return;
+
+                if (item.timestamp && current - Number(item.timestamp) > CONFIG.cleanupAgeMs) {
+                    delete params[key];
+                    changed = true;
+                }
+            });
+
+            if (params.__last_by_movie) {
+                Object.keys(params.__last_by_movie).forEach(function (key) {
+                    var pointer = params.__last_by_movie[key];
+                    if (!pointer || !pointer.hash || !params[pointer.hash]) {
+                        delete params.__last_by_movie[key];
+                        changed = true;
+                    }
+                });
+            }
+
+            if (changed) setParams(params, true);
+        }
+
+        return {
+            ensureSync: ensureSync,
+            getParams: getParams,
+            setParams: setParams,
+            getProfileId: getProfileId,
+            getStorageKey: getStorageKey,
+            getMovieKey: getMovieKey,
+            getMovieKeyFromData: getMovieKeyFromData,
+            saveStreamParams: saveStreamParams,
+            buildLaunchUrl: buildLaunchUrl,
+            rebuildStreamUrl: rebuildStreamUrl,
+            generateTimelineHash: generateTimelineHash,
+            getLastStreamParams: getLastStreamParams,
+            cleanupOld: cleanupOld
+        };
+    })();
+
+    // ============================================================
+    // SessionManager
+    // ============================================================
+
+    var SessionManager = (function () {
+        var currentSession = null;
+        var hashMetaByHash = {};
+
+        function normalizePlaylist(playlist) {
+            if (!Array.isArray(playlist)) return [];
+
+            return playlist.filter(function (item) {
+                return item && typeof item === 'object';
+            }).map(function (item, index) {
+                var normalized = Utils.shallowClone(item);
+                var url = item.url || item.uri || item.src || '';
+                var parsed = Utils.parseStreamUrl(url);
+                var image = Utils.extractImage(item);
+
+                normalized.url = Utils.stripFragment(url || '');
+                normalized.uri = normalized.uri || normalized.url;
+                normalized.src = normalized.src || normalized.url;
+                normalized.title = Utils.firstNonEmpty(item.title, item.name, item.label);
+                normalized.name = Utils.firstNonEmpty(item.name, item.title, item.label);
+                normalized.filename = Utils.firstNonEmpty(item.filename, item.file_name, item.path, parsed ? parsed.file_name : '');
+                normalized.file_name = Utils.firstNonEmpty(item.file_name, item.filename, item.path, parsed ? parsed.file_name : '');
+                normalized.index = index;
+
+                // Keep playlist_index separate from TorrServer file_index.
+                normalized.playlist_index = index;
+                if (item.file_index !== undefined && item.file_index !== null && item.file_index !== '') {
+                    normalized.file_index = Number(item.file_index);
+                } else if (parsed && parsed.file_index !== undefined) {
+                    normalized.file_index = Number(parsed.file_index);
+                }
+
+                normalized.season = Number(Utils.firstNonEmpty(item.season, item.season_number, item.s, 0) || 0);
+                normalized.episode = Number(Utils.firstNonEmpty(item.episode, item.episode_number, item.e, 0) || 0);
+
+                if (image) Utils.copyImageFields(normalized, image);
+                return normalized;
+            });
+        }
+
+        function getMovieFromData(data) {
+            data = data || {};
+            return data.card || data.movie || data.card_data || data.data || Utils.getActivityMovie() || data;
+        }
+
+        function getItemAt(playlist, index) {
+            if (!playlist || !playlist.length) return null;
+            index = Number(index || 0);
+            if (index < 0 || index >= playlist.length) return null;
+            return playlist[index] || null;
+        }
+
+        function inferPlaylistIndex(data, playlist, url) {
+            data = data || {};
+
+            if (data.playlist_index !== undefined && data.playlist_index !== null && data.playlist_index !== '') {
+                return Number(data.playlist_index);
+            }
+            if (data.start_index !== undefined && data.start_index !== null && data.start_index !== '') {
+                return Number(data.start_index);
+            }
+            if (data.windowIndex !== undefined && data.windowIndex !== null && data.windowIndex !== '') {
+                return Number(data.windowIndex);
+            }
+
+            var cleanUrl = Utils.stripFragment(url || '');
+            var identity = Utils.streamIdentity(cleanUrl);
+
+            if (playlist && playlist.length && cleanUrl) {
+                for (var i = 0; i < playlist.length; i++) {
+                    if (Utils.stripFragment(playlist[i].url || '') === cleanUrl) return i;
+                    if (Utils.streamIdentity(playlist[i].url || '') === identity) return i;
+
+                    if (playlist[i].quality && typeof playlist[i].quality === 'object') {
+                        var qualities = playlist[i].quality;
+                        var keys = Object.keys(qualities);
+                        for (var q = 0; q < keys.length; q++) {
+                            if (Utils.stripFragment(String(qualities[keys[q]] || '')) === cleanUrl) return i;
+                        }
+                    }
+                }
+            }
+
+            return 0;
+        }
+
+        function playlistHasEpisodeMetadata(playlist) {
+            if (!playlist || !playlist.length) return false;
+            for (var i = 0; i < playlist.length; i++)
