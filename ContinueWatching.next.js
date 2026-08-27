@@ -2344,4 +2344,218 @@
                     });
 
                     if (
-                        current && c
+                        current && current.name === 'full_start' &&
+                        buttons.length && Lampa.Controller.collectionAppend
+                    ) {
+                        Lampa.Controller.collectionAppend(buttons);
+                    }
+                } catch (e) {}
+            }
+
+            appendButton();
+            clearTimeout(controllerRefreshTimer);
+            controllerRefreshTimer = setTimeout(appendButton, 300);
+        }
+
+        function injectStyles() {
+            try {
+                var css =
+                    '.button--continue-watch-native-just{opacity:1!important;}' +
+                    '.button--continue-watch-native-just .continue-watch-native-just-icon{flex-shrink:0;}' +
+                    '.button--continue-watch-native-just span{white-space:nowrap;}' +
+                    '.button--continue-watch-native-just[data-cwu-subtitle]:after{' +
+                        'content:attr(data-cwu-subtitle);display:none!important;margin-left:.45em;' +
+                        'font-size:.72em;line-height:1;opacity:.65;white-space:nowrap;transform:translateY(.06em);' +
+                    '}' +
+                    '.button--continue-watch-native-just:hover:after,' +
+                    '.button--continue-watch-native-just.focus:after{display:inline-block!important;}';
+
+                var style = document.getElementById('continue-watch-native-just-style');
+                if (!style) {
+                    style = document.createElement('style');
+                    style.id = 'continue-watch-native-just-style';
+                    style.type = 'text/css';
+                    document.head.appendChild(style);
+                }
+                style.textContent = css;
+            } catch (e) {}
+        }
+
+        function getEventMovie(event) {
+            var active = null;
+            try { active = Lampa.Activity && Lampa.Activity.active ? Lampa.Activity.active() : null; } catch (e) {}
+
+            var activity = event && event.object && event.object.activity
+                ? event.object.activity
+                : active;
+
+            return (
+                (event && event.data && event.data.movie) ||
+                (activity && activity.movie) ||
+                (activity && activity.card) ||
+                (activity && activity.params && activity.params.movie) ||
+                (active && active.movie) ||
+                (active && active.card) ||
+                getActiveMovieFromCard() ||
+                Utils.getActivityMovie()
+            );
+        }
+
+        function getEventRender(event) {
+            var render = event && event.body && event.body.find ? event.body : null;
+            if (render && render.find('.full-start-new__buttons').length) return render;
+
+            try {
+                var roots = $('.full-start-new');
+                if (roots && roots.length) return roots.last();
+            } catch (e) {}
+
+            return render;
+        }
+
+        function renderCardButtons(render, movie) {
+            if (!render || !render.find || !movie) return;
+
+            Utils.rememberActivityMovie(movie);
+            var params = StorageManager.getLastStreamParams(movie);
+            var existing = render.find('.button--continue-watch-native-just').first();
+
+            if (!params) {
+                if (existing.length) existing.remove();
+                return;
+            }
+
+            var stateKey = [
+                Number(params.timestamp || 0),
+                Number(params.time || 0),
+                Number(params.duration || 0),
+                Number(params.season || 0),
+                Number(params.episode || 0),
+                Number(params.playlist_index || 0)
+            ].join(':');
+
+            if (!existing.length) {
+                insertButton(render, createButton(movie, params));
+            } else if (String(existing.attr('data-cwu-state') || '') !== stateKey) {
+                existing.replaceWith(createButton(movie, params));
+            }
+
+            render.find('.button--continue-watch-native-just').each(function () {
+                bindLaunch($(this), movie);
+            });
+
+            refreshCardController();
+        }
+
+        function scanActiveCard() {
+            cardScanQueued = false;
+            try {
+                var movie = getEventMovie(null);
+                var render = getEventRender(null);
+                if (movie && render) renderCardButtons(render, movie);
+            } catch (e) {}
+        }
+
+        function queueCardScan() {
+            if (cardScanQueued) return;
+            cardScanQueued = true;
+            setTimeout(scanActiveCard, 120);
+        }
+
+        function install() {
+            if (installed) return;
+            installed = true;
+
+            injectStyles();
+
+            $(document)
+                .off('click.continueWatchUniversalDelegate', '.button--continue-watch-native-just')
+                .on('click.continueWatchUniversalDelegate', '.button--continue-watch-native-just', function (event) {
+                    if (event) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                    }
+                    return launchFromButton($(this), null);
+                });
+
+            Lampa.Listener.follow('full', function (event) {
+                if (!event) return;
+
+                var movie = getEventMovie(event);
+                if (movie) Utils.rememberActivityMovie(movie);
+
+                if (event.type !== 'start' && event.type !== 'build' && event.type !== 'complite') return;
+
+                setTimeout(function () {
+                    renderCardButtons(getEventRender(event), getEventMovie(event));
+                }, 0);
+
+                setTimeout(function () {
+                    renderCardButtons(getEventRender(event), getEventMovie(event));
+                }, 350);
+            });
+
+            try {
+                if (window.MutationObserver && document.body) {
+                    cardObserver = new MutationObserver(queueCardScan);
+                    cardObserver.observe(document.body, { childList: true, subtree: true });
+                }
+            } catch (e) {}
+
+            cardScanTimer = setInterval(scanActiveCard, 1500);
+            setTimeout(scanActiveCard, 250);
+        }
+
+        function removeContinueButtons(render) {
+            try {
+                if (render && render.find) render.find('.button--continue-watch-native-just').remove();
+                else $('.button--continue-watch-native-just').remove();
+            } catch (e) {}
+        }
+
+        return {
+            install: install,
+            removeContinueButtons: removeContinueButtons
+        };
+    })();
+
+    // ============================================================
+    // TransportManager
+    // ============================================================
+
+    var TransportManager = (function () {
+        function init() {
+            JustPlusTransport.init();
+            LampaNativeTransport.init();
+
+            Utils.log(
+                'Transport init',
+                'platform=' + Utils.getPlatformKind(),
+                'player_torrent=' + Utils.getTorrentPlayerType(),
+                'selected=' + (JustPlusTransport.matches() ? 'just' : 'lampa')
+            );
+        }
+
+        return { init: init };
+    })();
+
+    // ============================================================
+    // Public API
+    // ============================================================
+
+    function exposeApi() {
+        if (!DEBUG.exposeApi) return;
+
+        window.ContinueWatchUniversal = {
+            version: PLUGIN_VERSION,
+            config: CONFIG,
+            debug: DEBUG,
+            utils: {
+                platform: Utils.getPlatformKind,
+                player: Utils.getTorrentPlayerType,
+                isJustTransport: Utils.isJustTransport,
+                parseStreamUrl: Utils.parseStreamUrl
+            },
+            storage: {
+                get: StorageManager.getParams,
+                last: S
