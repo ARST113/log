@@ -2154,4 +2154,194 @@
                 continue_watch_universal: true
             };
 
-            if (activeItem) data.currentItem = ac
+            if (activeItem) data.currentItem = activeItem;
+            if (activeImage) Utils.copyImageFields(data, activeImage);
+
+            try {
+                Lampa.Player.play(data);
+            } catch (e3) {
+                Utils.error('Launch from continue failed', e3);
+            }
+        }
+
+        return {
+            patchPlayer: patchPlayer,
+            launchFromContinue: launchFromContinue,
+            isPatched: function () { return patched; }
+        };
+    })();
+
+    // ============================================================
+    // UIManager
+    // ============================================================
+
+    var UIManager = (function () {
+        var installed = false;
+        var cardObserver = null;
+        var cardScanTimer = null;
+        var cardScanQueued = false;
+        var controllerRefreshTimer = null;
+
+        function escapeHtml(value) {
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function getContinueRoad(movie, params) {
+            params = params || {};
+
+            var road = {
+                time: Number(params.time || 0),
+                duration: Number(params.duration || 0),
+                percent: Number(params.percent || 0)
+            };
+
+            try {
+                var hash = String(params.timeline_hash || '') || StorageManager.generateTimelineHash(movie, Number(params.season || 0), Number(params.episode || 0));
+                var timeline = hash && Lampa.Timeline && Lampa.Timeline.view ? Lampa.Timeline.view(hash) : null;
+
+                if (timeline) {
+                    road.time = Math.max(road.time, Number(timeline.time || 0));
+                    road.duration = Math.max(road.duration, Number(timeline.duration || 0));
+                    road.percent = Math.max(road.percent, Number(timeline.percent || 0));
+                }
+            } catch (e) {}
+
+            if (!road.percent && road.time && road.duration) {
+                road.percent = Math.round(road.time / road.duration * 100);
+            }
+
+            road.percent = Utils.clamp(road.percent, 0, 100);
+            return road;
+        }
+
+        function formatContinueSubtitle(params, road) {
+            if (!params) return '';
+
+            var parts = [];
+            var season = Number(params.season || 0);
+            var episode = Number(params.episode || 0);
+            var isTv = params.media_type === 'tv' || season || episode;
+
+            if (isTv && season && episode) parts.push('S' + season + 'E' + episode);
+            else if (isTv && episode) parts.push('E' + episode);
+
+            if (road && road.time) parts.push(Utils.formatSeconds(road.time));
+            return parts.join(' / ');
+        }
+
+        function getActiveMovieFromCard() {
+            try {
+                var activity = Lampa.Activity && Lampa.Activity.active ? Lampa.Activity.active() : null;
+                if (activity && activity.movie) return activity.movie;
+                if (activity && activity.card) return activity.card;
+                if (activity && activity.params && activity.params.movie) return activity.params.movie;
+            } catch (e) {}
+            return null;
+        }
+
+        function launchFromButton(button, movie) {
+            var now = Date.now();
+            var lastLaunchAt = Number(button.data('continueWatchUniversalLaunchAt') || 0);
+            if (now - lastLaunchAt < 900) return false;
+
+            button.data('continueWatchUniversalLaunchAt', now);
+
+            var activeMovie = movie || getActiveMovieFromCard();
+            var params = activeMovie ? StorageManager.getLastStreamParams(activeMovie) : null;
+
+            if (!activeMovie || !params) {
+                try { Lampa.Noty.show('Нет истории просмотров'); } catch (e) {}
+                return false;
+            }
+
+            PlayerManager.launchFromContinue(activeMovie, params);
+            return false;
+        }
+
+        function bindLaunch(button, movie) {
+            function launch() {
+                return launchFromButton(button, movie);
+            }
+
+            button
+                .off('click.continueWatchUniversalLaunch')
+                .off('hover:enter.continueWatchUniversalLaunch')
+                .on('click.continueWatchUniversalLaunch', launch)
+                .on('hover:enter.continueWatchUniversalLaunch', launch);
+        }
+
+        function createButton(movie, params) {
+            var road = getContinueRoad(movie, params);
+            var subtitle = formatContinueSubtitle(params, road);
+            var dash = (road.percent * 65.97 / 100).toFixed(2);
+            var movieKey = '';
+
+            try { movieKey = StorageManager.getMovieKey(movie) || ''; } catch (e) {}
+
+            var stateKey = [
+                Number(params && params.timestamp || 0),
+                Number(params && params.time || 0),
+                Number(params && params.duration || 0),
+                Number(params && params.season || 0),
+                Number(params && params.episode || 0),
+                Number(params && params.playlist_index || 0)
+            ].join(':');
+
+            var html =
+                '<div class="full-start__button selector view--continue-watch button--continue-watch button--continue-watch-native-just" ' +
+                    'data-buttons-plugin-id="continue_watch_universal" ' +
+                    'data-cwu-movie-key="' + escapeHtml(movieKey) + '" ' +
+                    'data-cwu-state="' + escapeHtml(stateKey) + '" ' +
+                    'data-cwu-subtitle="' + escapeHtml(subtitle) + '">' +
+                    '<svg class="continue-watch-native-just-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">' +
+                        '<circle cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="1.7" fill="none" opacity="0.22"></circle>' +
+                        '<circle cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="' + dash + ' 65.97" transform="rotate(-90 12 12)"></circle>' +
+                        '<path d="M9 7.7v8.6c0 .55.6.89 1.08.6l6.62-4.3a.72.72 0 0 0 0-1.2l-6.62-4.3A.7.7 0 0 0 9 7.7z" fill="currentColor"></path>' +
+                    '</svg>' +
+                    '<span>Продолжить</span>' +
+                '</div>';
+
+            var button = $(html);
+            bindLaunch(button, movie);
+            return button;
+        }
+
+        function getWatchContainer(render) {
+            var container = render.find('.full-start-new__buttons').first();
+            if (container.length) return container;
+
+            container = render.find('.buttons--container').first();
+            if (container.length) return container;
+
+            container = $('<div class="full-start-new__buttons"></div>');
+            render.append(container);
+            return container;
+        }
+
+        function insertButton(render, button) {
+            var container = getWatchContainer(render);
+            container.find('> .button--continue-watch-native-just').remove();
+
+            var torrentButton = container.find('> .view--torrent').first();
+            var trailerButton = container.find('> .view--trailer').first();
+
+            if (torrentButton.length) torrentButton.before(button);
+            else if (trailerButton.length) trailerButton.before(button);
+            else container.prepend(button);
+        }
+
+        function refreshCardController() {
+            function appendButton() {
+                try {
+                    var current = Lampa.Controller && Lampa.Controller.enabled ? Lampa.Controller.enabled() : null;
+                    var buttons = $('.button--continue-watch-native-just').filter(function () {
+                        return this.offsetParent !== null;
+                    });
+
+                    if (
+                        current && c
