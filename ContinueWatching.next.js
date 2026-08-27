@@ -1334,4 +1334,200 @@
                     time: time,
                     duration: duration,
                     percent: percent,
-                    source
+                    source: params.last_source,
+                    type: event.type
+                });
+            }
+        }
+
+        return {
+            consume: consume
+        };
+    })();
+
+    // ============================================================
+    // JustPlusTransport
+    // ============================================================
+
+    var JustPlusTransport = (function () {
+        var installed = false;
+        var lastTimelineHash = '';
+        var lastResolvedHash = '';
+        var lastResolvedAt = 0;
+        var reconcileTimer = null;
+        var periodicTimer = null;
+
+        function matches() {
+            return Utils.isJustTransport();
+        }
+
+        function readPending() {
+            try {
+                var raw = localStorage.getItem(CONFIG.justPendingKey);
+                if (!raw) return null;
+                var data = JSON.parse(raw);
+                return data && typeof data === 'object' ? data : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function writePending(pending) {
+            try {
+                if (pending) localStorage.setItem(CONFIG.justPendingKey, JSON.stringify(pending));
+                else localStorage.removeItem(CONFIG.justPendingKey);
+            } catch (e) {}
+        }
+
+        function timelineRoad(hash) {
+            if (!hash || !Lampa.Timeline || !Lampa.Timeline.view) return null;
+            try {
+                return Lampa.Timeline.view(hash);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function itemHash(session, item, index) {
+            if (item && item.timeline && item.timeline.hash && String(item.timeline.hash) !== '0') {
+                return String(item.timeline.hash);
+            }
+
+            var meta = null;
+            try {
+                var keys = Object.keys((session && session.playlist) || {});
+                void keys;
+            } catch (e) {}
+
+            var season = Number(item && item.season || 0);
+            var episode = Number(item && item.episode || 0);
+
+            if ((!season || !episode) && session && Number(session.playlistIndex) === Number(index)) {
+                season = Number(session.season || season || 0);
+                episode = Number(session.episode || episode || 0);
+            }
+
+            return StorageManager.generateTimelineHash(session && session.movie, season, episode);
+        }
+
+        function minimalMovie(movie) {
+            movie = movie || {};
+            return {
+                id: movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId || '',
+                original_title: movie.original_title || '',
+                original_name: movie.original_name || movie.name || '',
+                name: movie.name || movie.title || '',
+                title: movie.title || movie.name || '',
+                media_type: Utils.getMediaKind(movie)
+            };
+        }
+
+        function arm(session) {
+            if (!matches() || !session) return false;
+
+            var items = [];
+            var playlist = session.playlist && session.playlist.length
+                ? session.playlist
+                : [session.currentItem || {}];
+
+            for (var i = 0; i < playlist.length; i++) {
+                var item = playlist[i] || {};
+                var hash = itemHash(session, item, i);
+                if (!hash || String(hash) === '0') continue;
+
+                var road = timelineRoad(hash) || {};
+                var parsed = Utils.parseStreamUrl(item.url || item.uri || item.src || '');
+                var image = Utils.extractImage(item);
+
+                items.push({
+                    hash: String(hash),
+                    index: i,
+                    season: Number(item.season || (i === Number(session.playlistIndex) ? session.season : 0) || 0),
+                    episode: Number(item.episode || (i === Number(session.playlistIndex) ? session.episode : 0) || 0),
+                    url: Utils.stripFragment(item.url || item.uri || item.src || ''),
+                    title: item.title || item.name || '',
+                    image: image || '',
+                    file_index: item.file_index !== undefined
+                        ? Number(item.file_index)
+                        : (parsed && parsed.file_index !== undefined ? Number(parsed.file_index) : 0),
+                    before_updated: Number(road.updated || 0)
+                });
+            }
+
+            if (!items.length && session.hash) {
+                var currentRoad = timelineRoad(session.hash) || {};
+                items.push({
+                    hash: String(session.hash),
+                    index: Number(session.playlistIndex || 0),
+                    season: Number(session.season || 0),
+                    episode: Number(session.episode || 0),
+                    url: Utils.stripFragment(session.url || ''),
+                    title: session.episode_title || session.title || '',
+                    image: Utils.extractImage(session) || '',
+                    file_index: Number(session.params && session.params.file_index || 0),
+                    before_updated: Number(currentRoad.updated || 0)
+                });
+            }
+
+            var pending = {
+                version: BOOT_VERSION,
+                launch_at: Utils.now(),
+                source_hash: String(session.hash || ''),
+                movie_key: StorageManager.getMovieKey(session.movie) || '',
+                movie: minimalMovie(session.movie),
+                start_index: Number(session.playlistIndex || 0),
+                items: items,
+                last_event_hash: '',
+                last_event_updated: 0,
+                resolved_hash: '',
+                resolved_updated: 0,
+                resolved_at: 0
+            };
+
+            writePending(pending);
+            return true;
+        }
+
+        function pendingItemByHash(pending, hash) {
+            if (!pending || !pending.items || !hash) return null;
+            for (var i = 0; i < pending.items.length; i++) {
+                if (String(pending.items[i].hash) === String(hash)) return pending.items[i];
+            }
+            return null;
+        }
+
+        function findBaseStored(pending) {
+            var params = StorageManager.getParams();
+            if (!params || typeof params !== 'object') return null;
+
+            if (pending.source_hash && params[pending.source_hash]) return params[pending.source_hash];
+
+            var best = null;
+            Object.keys(params).forEach(function (key) {
+                if (key === '__last_by_movie') return;
+                var item = params[key];
+                if (!item || typeof item !== 'object') return;
+                if (StorageManager.getMovieKeyFromData(item) !== pending.movie_key) return;
+                if (!best || Number(item.timestamp || 0) > Number(best.timestamp || 0)) best = item;
+            });
+            return best;
+        }
+
+        function saveResolvedWithoutSession(pending, candidate) {
+            var base = findBaseStored(pending) || {};
+            var params = Utils.shallowClone(base);
+            var item = candidate.item;
+            var road = candidate.road || {};
+            var movie = pending.movie || {};
+
+            params.url = item.url || params.url || '';
+            params.uri = params.url;
+            params.src = params.url;
+            params.title = item.title || params.title || movie.name || movie.title || '';
+            params.episode_title = item.title || params.episode_title || '';
+            params.movie_id = params.movie_id || movie.id || '';
+            params.tmdb_id = params.tmdb_id || movie.id || '';
+            params.original_title = params.original_title || movie.original_title || '';
+            params.original_name = params.original_name || movie.original_name || movie.name || '';
+            params.name = params.name || movie.name || movie.title || '';
+            params.media_type = params.media_type || movie.media_
