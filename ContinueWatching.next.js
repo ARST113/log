@@ -296,4 +296,228 @@
         }
 
         function isJustTransport() {
-            if (!CONFIG.justTransportEnabled) return
+            if (!CONFIG.justTransportEnabled) return false;
+            return getPlatformKind() === 'android' && getTorrentPlayerType() === CONFIG.justAndroidPlayerValue;
+        }
+
+        function parseStreamUrl(url) {
+            if (!url || typeof url !== 'string') return null;
+            url = stripFragment(url);
+
+            var fileMatch = url.match(/\/stream\/([^?]+)/);
+            var linkMatch = url.match(/[?&]link=([^&#]+)/);
+            var indexMatch = url.match(/[?&]index=(\d+)/);
+
+            if (!fileMatch || !linkMatch) return null;
+
+            return {
+                file_name: safeDecode(fileMatch[1]).replace(/\+/g, ' ').replace(/\s+/g, ' ').trim(),
+                torrent_link: safeDecode(linkMatch[1]),
+                file_index: indexMatch ? parseInt(indexMatch[1], 10) : 0
+            };
+        }
+
+        function streamIdentity(url) {
+            var parsed = parseStreamUrl(url);
+            if (!parsed) return stripFragment(url || '');
+
+            return [
+                parsed.torrent_link || '',
+                parsed.file_index !== undefined ? parsed.file_index : '',
+                parsed.file_name || ''
+            ].join('|');
+        }
+
+        function getMovieTitle(obj) {
+            obj = obj || {};
+            return String(
+                obj.original_name ||
+                obj.original_title ||
+                obj.name ||
+                obj.title ||
+                obj.originalName ||
+                obj.originalTitle ||
+                ''
+            );
+        }
+
+        function getMediaKind(obj) {
+            obj = obj || {};
+            var card = obj.card || obj.movie || obj.data || obj;
+            var media = String(
+                obj.media_type || obj.mediaType || card.media_type || card.mediaType || ''
+            ).toLowerCase();
+
+            if (media === 'movie' || media === 'film') return 'movie';
+            if (media === 'tv' || media === 'show' || media === 'series') return 'tv';
+
+            if (
+                Number(card.number_of_seasons || 0) > 0 ||
+                Number(card.number_of_episodes || 0) > 0 ||
+                card.original_name ||
+                card.first_air_date ||
+                card.seasons !== undefined ||
+                card.episodes !== undefined ||
+                card.last_episode_to_air !== undefined ||
+                card.next_episode_to_air !== undefined
+            ) {
+                return 'tv';
+            }
+
+            return 'movie';
+        }
+
+        function extractExplicitSE(data) {
+            data = data || {};
+
+            var pairs = [
+                [data.season, data.episode],
+                [data.season_number, data.episode_number],
+                [data.s, data.e]
+            ];
+
+            for (var i = 0; i < pairs.length; i++) {
+                var season = Number(pairs[i][0] || 0);
+                var episode = Number(pairs[i][1] || 0);
+                if (season > 0 && episode > 0) {
+                    return { season: season, episode: episode, source: 'explicit_fields' };
+                }
+            }
+
+            return null;
+        }
+
+        function extractSEFromText(data, fallbackSeason) {
+            data = data || {};
+            fallbackSeason = Number(fallbackSeason || 0);
+
+            var texts = [
+                data.file_name,
+                data.filename,
+                data.title,
+                data.name,
+                data.path,
+                data.path_human,
+                data.folder_name,
+                data.episode_title,
+                data.url,
+                data.uri,
+                data.src
+            ];
+
+            if (data.currentItem) {
+                texts.push(
+                    data.currentItem.filename,
+                    data.currentItem.file_name,
+                    data.currentItem.title,
+                    data.currentItem.name,
+                    data.currentItem.uri,
+                    data.currentItem.url
+                );
+            }
+
+            function parse(text) {
+                if (!text || typeof text !== 'string') return null;
+
+                text = safeDecode(text).replace(/\+/g, ' ').replace(/\s+/g, ' ').trim();
+                var m;
+
+                m = text.match(/\bS(?:eason)?\s*0?(\d{1,2})\s*[\.\-_: ]*\s*E(?:p(?:isode)?)?\s*0?(\d{1,3})\b/i);
+                if (m) return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10), source: 'text_sxe' };
+
+                m = text.match(/\b0?(\d{1,2})\s*[xх×]\s*0?(\d{1,3})\b/i);
+                if (m) return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10), source: 'text_1x02' };
+
+                m = text.match(/season\s*0?(\d{1,2}).*?(?:episode|ep\.?)\s*0?(\d{1,3})/i);
+                if (m) return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10), source: 'text_season_episode' };
+
+                m = text.match(/0?(\d{1,2})\s*сезон.*?0?(\d{1,3})\s*сер/i);
+                if (m) return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10), source: 'text_ru_season_episode' };
+
+                m = text.match(/(?:эпизод|сер(?:ия|ии|и)?|episode|ep\.?|сер\.)\s*[-–—:]?\s*0?(\d{1,3})/i);
+                if (m && fallbackSeason > 0) {
+                    return { season: fallbackSeason, episode: parseInt(m[1], 10), source: 'text_episode_only' };
+                }
+
+                m = text.match(/(?:^|[\s._\-\[\(])0?(\d{1,3})(?:\s*(?:v\d+)?\s*(?:\[[^\]]+\]|\([^)]+\))*)?\.(?:mkv|mp4|avi|ts)$/i);
+                if (m && fallbackSeason > 0) {
+                    return { season: fallbackSeason, episode: parseInt(m[1], 10), source: 'filename_episode_only' };
+                }
+
+                return null;
+            }
+
+            for (var i = 0; i < texts.length; i++) {
+                var result = parse(texts[i]);
+                if (result) return result;
+            }
+
+            return null;
+        }
+
+        function shallowClone(obj) {
+            var out = {};
+            if (!obj || typeof obj !== 'object') return out;
+
+            Object.keys(obj).forEach(function (key) {
+                var value = obj[key];
+                if (value === undefined || typeof value === 'function') return;
+                out[key] = value;
+            });
+
+            return out;
+        }
+
+        function getActivityMovie() {
+            try {
+                var active = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
+                var movie = active && (
+                    active.movie ||
+                    active.card ||
+                    (active.params && active.params.movie)
+                );
+
+                if (movie) {
+                    lastActivityMovie = movie;
+                    return movie;
+                }
+            } catch (e) {}
+
+            return lastActivityMovie;
+        }
+
+        function rememberActivityMovie(movie) {
+            if (movie && typeof movie === 'object') lastActivityMovie = movie;
+            return lastActivityMovie;
+        }
+
+        return {
+            now: now,
+            log: log,
+            warn: warn,
+            error: error,
+            stripFragment: stripFragment,
+            safeDecode: safeDecode,
+            safeJson: safeJson,
+            clamp: clamp,
+            formatSeconds: formatSeconds,
+            firstNonEmpty: firstNonEmpty,
+            normalizeImageUrl: normalizeImageUrl,
+            extractImage: extractImage,
+            copyImageFields: copyImageFields,
+            getPlatformKind: getPlatformKind,
+            getTorrentPlayerType: getTorrentPlayerType,
+            isJustTransport: isJustTransport,
+            parseStreamUrl: parseStreamUrl,
+            streamIdentity: streamIdentity,
+            getMovieTitle: getMovieTitle,
+            getMediaKind: getMediaKind,
+            extractExplicitSE: extractExplicitSE,
+            extractSEFromText: extractSEFromText,
+            shallowClone: shallowClone,
+            getActivityMovie: getActivityMovie,
+            rememberActivityMovie: rememberActivityMovie
+        };
+    })();
+
+    /
