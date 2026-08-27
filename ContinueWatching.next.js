@@ -1530,4 +1530,213 @@
             params.original_title = params.original_title || movie.original_title || '';
             params.original_name = params.original_name || movie.original_name || movie.name || '';
             params.name = params.name || movie.name || movie.title || '';
-            params.media_type = params.media_type || movie.media_
+            params.media_type = params.media_type || movie.media_type || 'tv';
+            params.season = Number(item.season || 0);
+            params.episode = Number(item.episode || 0);
+            params.playlist_index = Number(item.index || 0);
+            params.file_index = Number(item.file_index || 0);
+            params.timeline_hash = String(item.hash);
+            params.time = Number(road.time || 0);
+            params.duration = Number(road.duration || 0);
+            params.percent = Number(road.percent || 0);
+            params.last_source = 'just';
+            params.last_event_type = params.percent >= 100 ? 'ended' : 'time';
+            params.last_reason = 'native_return_reconcile';
+            params.transport = 'just';
+
+            if (item.image) Utils.copyImageFields(params, item.image);
+
+            return StorageManager.saveStreamParams(String(item.hash), params, true);
+        }
+
+        function chooseCandidate(pending) {
+            if (!pending || !pending.items || !pending.items.length) return null;
+
+            var candidates = [];
+            var resolvedUpdated = Number(pending.resolved_updated || 0);
+            var launchAt = Number(pending.launch_at || 0);
+
+            pending.items.forEach(function (item) {
+                var road = timelineRoad(item.hash);
+                if (!road) return;
+
+                var updated = Number(road.updated || 0);
+                var baseline = Math.max(Number(item.before_updated || 0), resolvedUpdated);
+
+                if (!updated || updated <= baseline) return;
+                if (launchAt && updated + 2000 < launchAt) return;
+
+                candidates.push({ item: item, road: road, updated: updated });
+            });
+
+            if (!candidates.length) return null;
+
+            candidates.sort(function (a, b) {
+                if (Number(b.updated) !== Number(a.updated)) return Number(b.updated) - Number(a.updated);
+
+                var aLast = String(a.item.hash) === String(pending.last_event_hash || '') ? 1 : 0;
+                var bLast = String(b.item.hash) === String(pending.last_event_hash || '') ? 1 : 0;
+                if (bLast !== aLast) return bLast - aLast;
+
+                var aPlayable = Number(a.road.duration || 0) > 0 || Number(a.road.time || 0) > 0 ? 1 : 0;
+                var bPlayable = Number(b.road.duration || 0) > 0 || Number(b.road.time || 0) > 0 ? 1 : 0;
+                if (bPlayable !== aPlayable) return bPlayable - aPlayable;
+
+                return 0;
+            });
+
+            return candidates[0];
+        }
+
+        function reconcile(reason) {
+            if (!matches()) return false;
+
+            var pending = readPending();
+            if (!pending) return false;
+
+            // Ignore abandoned sessions after six hours.
+            if (pending.launch_at && Utils.now() - Number(pending.launch_at) > 6 * 60 * 60 * 1000) {
+                writePending(null);
+                return false;
+            }
+
+            var candidate = chooseCandidate(pending);
+            if (!candidate) return false;
+
+            var hash = String(candidate.item.hash);
+            var road = candidate.road || {};
+            var session = SessionManager.getCurrent();
+            var handled = false;
+
+            if (session && SessionManager.hasHash(hash)) {
+                session = SessionManager.updateByTimelineHash(hash, {
+                    time: Number(road.time || 0),
+                    duration: Number(road.duration || 0),
+                    percent: Number(road.percent || 0),
+                    reason: 'native_return_reconcile'
+                }) || session;
+
+                Core.consume({
+                    source: 'just',
+                    type: Number(road.percent || 0) >= 100 ? 'ended' : 'time',
+                    session: session,
+                    hash: hash,
+                    time: Number(road.time || 0),
+                    duration: Number(road.duration || 0),
+                    percent: Number(road.percent || 0),
+                    force: true,
+                    reason: reason || 'native_return_reconcile'
+                });
+                handled = true;
+            } else {
+                handled = saveResolvedWithoutSession(pending, candidate) || true;
+            }
+
+            pending.resolved_hash = hash;
+            pending.resolved_updated = Number(candidate.updated || road.updated || Utils.now());
+            pending.resolved_at = Utils.now();
+            writePending(pending);
+
+            lastTimelineHash = hash;
+            lastResolvedHash = hash;
+            lastResolvedAt = pending.resolved_at;
+            return handled;
+        }
+
+        function scheduleReconcile(reason) {
+            if (reconcileTimer) clearTimeout(reconcileTimer);
+            reconcileTimer = setTimeout(function () {
+                reconcileTimer = null;
+                reconcile(reason || 'timeline_settled');
+            }, CONFIG.justResultSettleMs);
+        }
+
+        function handleTimeline(data) {
+            if (!matches() || !data || !data.hash || !data.road) return false;
+
+            var hash = String(data.hash);
+            var pending = readPending();
+            var belongsToPending = !!pendingItemByHash(pending, hash);
+            var session = SessionManager.getCurrent();
+            var belongsToSession = !!(session && SessionManager.hasHash(hash));
+
+            if (!belongsToPending && !belongsToSession) return false;
+
+            lastTimelineHash = hash;
+
+            if (belongsToPending) {
+                pending.last_event_hash = hash;
+                pending.last_event_updated = Number(data.road.updated || Utils.now());
+                writePending(pending);
+                scheduleReconcile('lampa_result_timeline');
+                return true;
+            }
+
+            // Fallback for a live in-memory session with no persisted pending state.
+            session = SessionManager.updateByTimelineHash(hash, {
+                time: Number(data.road.time || 0),
+                duration: Number(data.road.duration || 0),
+                percent: Number(data.road.percent || 0),
+                reason: 'just_timeline_fallback'
+            }) || session;
+
+            Core.consume({
+                source: 'just',
+                type: Number(data.road.percent || 0) >= 100 ? 'ended' : 'time',
+                session: session,
+                hash: hash,
+                time: Number(data.road.time || 0),
+                duration: Number(data.road.duration || 0),
+                percent: Number(data.road.percent || 0),
+                force: true,
+                reason: 'just_timeline_fallback'
+            });
+            return true;
+        }
+
+        function init() {
+            if (installed) return;
+            installed = true;
+
+            setTimeout(function () { reconcile('init_reconcile'); }, 900);
+            periodicTimer = setInterval(function () {
+                reconcile('periodic_reconcile');
+            }, CONFIG.justReconcileIntervalMs);
+        }
+
+        function getStatus() {
+            return {
+                installed: installed,
+                matches: matches(),
+                lastTimelineHash: lastTimelineHash,
+                lastResolvedHash: lastResolvedHash,
+                lastResolvedAt: lastResolvedAt,
+                pending: readPending()
+            };
+        }
+
+        return {
+            init: init,
+            matches: matches,
+            arm: arm,
+            reconcile: reconcile,
+            handleTimeline: handleTimeline,
+            getStatus: getStatus
+        };
+    })();
+
+    // ============================================================
+    // LampaNativeTransport
+    // ============================================================
+
+    var LampaNativeTransport = (function () {
+        var installed = false;
+        var lastTimelineHash = '';
+
+        function getDataFromEvent(event) {
+            if (!event) return null;
+            return event.data || event;
+        }
+
+        function handlePlayerCreate(event) {
+            if 
