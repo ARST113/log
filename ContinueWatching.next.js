@@ -952,4 +952,188 @@
 
         function playlistHasEpisodeMetadata(playlist) {
             if (!playlist || !playlist.length) return false;
-            for (var i = 0; i < playlist.length; i++)
+            for (var i = 0; i < playlist.length; i++) {
+                if (Number(playlist[i].season || 0) > 0 && Number(playlist[i].episode || 0) > 0) return true;
+            }
+            return false;
+        }
+
+        function resolveSE(data, movie, item, playlistIndex, playlist) {
+            var explicit = Utils.extractExplicitSE(data);
+            if (explicit) {
+                explicit.source = 'play_data_explicit';
+                return explicit;
+            }
+
+            explicit = Utils.extractExplicitSE(item);
+            if (explicit) {
+                explicit.source = 'playlist_metadata';
+                return explicit;
+            }
+
+            var fallbackSeason = Number(
+                (data && (data.season || data.season_number || data.s)) ||
+                (item && (item.season || item.season_number || item.s)) ||
+                0
+            );
+
+            var textResult = Utils.extractSEFromText(item || data || {}, fallbackSeason);
+            if (textResult) return textResult;
+
+            textResult = Utils.extractSEFromText(data || {}, fallbackSeason);
+            if (textResult) return textResult;
+
+            // Legacy fallback only when the playlist contains no explicit episode metadata at all.
+            // This prevents playlist index 2 from becoming E03 when the real item is e.g. S02E06.
+            if (
+                Utils.getMediaKind(movie) === 'tv' &&
+                Number(playlistIndex) >= 0 &&
+                !playlistHasEpisodeMetadata(playlist)
+            ) {
+                return {
+                    season: fallbackSeason || 1,
+                    episode: Number(playlistIndex) + 1,
+                    source: 'legacy_playlist_index_fallback'
+                };
+            }
+
+            return { season: 0, episode: 0, source: '' };
+        }
+
+        function buildParams(session) {
+            var parsed = Utils.parseStreamUrl(session.url);
+            var movie = session.movie || {};
+            var item = session.currentItem || {};
+            var image = Utils.extractImage(item) || Utils.extractImage(session) || Utils.extractImage(movie);
+
+            var data = {
+                url: Utils.stripFragment(session.url || ''),
+                uri: Utils.stripFragment(session.url || ''),
+                src: Utils.stripFragment(session.url || ''),
+                title: session.title || item.title || Utils.getMovieTitle(movie),
+                episode_title: item.title || session.episode_title || '',
+                movie_id: movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId || '',
+                tmdb_id: movie.id || movie.tmdb_id || movie.tmdbId || '',
+                original_title: movie.original_title || '',
+                original_name: movie.original_name || movie.name || '',
+                name: movie.name || movie.title || '',
+                media_type: Utils.getMediaKind(movie),
+                season: Number(session.season || 0),
+                episode: Number(session.episode || 0),
+                playlist_index: Number(session.playlistIndex || 0),
+                file_index: parsed && parsed.file_index !== undefined
+                    ? Number(parsed.file_index)
+                    : (item.file_index !== undefined ? Number(item.file_index) : 0),
+                file_name: parsed ? parsed.file_name : (item.file_name || item.filename || ''),
+                torrent_link: parsed ? parsed.torrent_link : '',
+                playlist: session.playlist || [],
+                transport: session.transport || 'lampa',
+                timeline_hash: String(session.hash || '')
+            };
+
+            if (image) Utils.copyImageFields(data, image);
+            return data;
+        }
+
+        function rememberHash(hash, meta) {
+            if (!hash) return;
+            hashMetaByHash[String(hash)] = meta || {};
+        }
+
+        function register(session) {
+            if (!session) return null;
+            currentSession = session;
+
+            if (session.hash) {
+                rememberHash(session.hash, {
+                    session: session,
+                    index: Number(session.playlistIndex || 0),
+                    item: session.currentItem || null,
+                    season: Number(session.season || 0),
+                    episode: Number(session.episode || 0),
+                    source: 'current'
+                });
+            }
+
+            if (session.playlist && session.playlist.length) {
+                for (var i = 0; i < session.playlist.length; i++) {
+                    var item = session.playlist[i];
+                    var se = resolveSE(item, session.movie, item, i, session.playlist);
+                    if (!se.season || !se.episode) continue;
+
+                    var itemHash = item && item.timeline && item.timeline.hash && String(item.timeline.hash) !== '0'
+                        ? String(item.timeline.hash)
+                        : StorageManager.generateTimelineHash(session.movie, se.season, se.episode);
+                    if (!itemHash) continue;
+
+                    rememberHash(itemHash, {
+                        session: session,
+                        index: i,
+                        item: item,
+                        season: Number(se.season),
+                        episode: Number(se.episode),
+                        source: se.source || 'playlist'
+                    });
+                }
+            }
+
+            return session;
+        }
+
+        function buildFromPlayData(data, options) {
+            options = options || {};
+            data = data || {};
+
+            var movie = options.movie || getMovieFromData(data);
+            var url = Utils.stripFragment(options.url || data.url || data.uri || data.src || '');
+            var playlist = normalizePlaylist(options.playlist || data.playlist || []);
+            var playlistIndex = inferPlaylistIndex(data, playlist, url);
+
+            if (playlist.length) {
+                if (playlistIndex < 0) playlistIndex = 0;
+                if (playlistIndex >= playlist.length) playlistIndex = playlist.length - 1;
+            } else {
+                playlistIndex = 0;
+            }
+
+            var item = getItemAt(playlist, playlistIndex);
+            if (!url && item && item.url) url = item.url;
+
+            var se = resolveSE(data, movie, item, playlistIndex, playlist);
+            var timelineHash = data.timeline && data.timeline.hash
+                ? String(data.timeline.hash)
+                : StorageManager.generateTimelineHash(movie, se.season, se.episode);
+
+            var session = {
+                source: options.source || '',
+                transport: options.transport || (Utils.isJustTransport() ? 'just' : 'lampa'),
+                movie: movie,
+                url: url,
+                initialUrl: url,
+                title: data.title || (item && item.title) || Utils.getMovieTitle(movie),
+                episode_title: (item && item.title) || data.episode_title || '',
+                playlist: playlist,
+                playlistIndex: playlistIndex,
+                startIndex: playlistIndex,
+                currentItem: item,
+                season: se.season || 0,
+                episode: se.episode || 0,
+                seSource: se.source || '',
+                hash: timelineHash,
+                createdAt: Utils.now(),
+                updatedAt: Utils.now(),
+                lampaTime: Number(data.time || data.position || (data.timeline && data.timeline.time) || 0),
+                lampaDuration: Number(data.duration || (data.timeline && data.timeline.duration) || 0),
+                lampaPercent: Number(data.percent || (data.timeline && data.timeline.percent) || 0),
+                lastRoad: null,
+                params: null
+            };
+
+            var image = Utils.extractImage(data) || Utils.extractImage(item) || Utils.extractImage(movie);
+            if (image) Utils.copyImageFields(session, image);
+
+            session.params = buildParams(session);
+            return register(session);
+        }
+
+  
