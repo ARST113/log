@@ -1,0 +1,48 @@
+name: Apply ContinueWatching v5.10 last activity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-continuewatch-v510-last-activity.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply v5.10 patch
+        run: python3 scripts/patch_continuewatch_v510_last_activity.py
+
+      - name: Syntax check
+        run: node --check ContinueWatching.js
+
+      - name: Publish cache-safe copy
+        run: cp ContinueWatching.js ContinueWatching-v5.10.js
+
+      - name: Validate DDD stays removed
+        shell: bash
+        run: |
+          if grep -qE 'DDDTransport|ddd_sid|39677|position_tick|playlist_item_changed' ContinueWatching.js; then
+            echo 'Unexpected DDD transport marker found'
+            exit 1
+          fi
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ContinueWatching.js ContinueWatching-v5.10.js
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "Fix ContinueWatching last-source selection and add mobile online diagnostics"
+          git push
