@@ -15,6 +15,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Update patch guard
+        run: |
+          sed -i "s/strict card identity + profile isolated sync initialized/strict identity + online\/torrent resume routing initialized/" scripts/patch_continuewatch_v56.py
+
       - name: Patch ContinueWatching
         run: python3 scripts/patch_continuewatch_v56.py
 
