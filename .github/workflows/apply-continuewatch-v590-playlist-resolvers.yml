@@ -1,0 +1,48 @@
+name: Apply ContinueWatching v5.9 playlist resolvers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-continuewatch-v590-playlist-resolvers.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch ContinueWatching playlist resolvers
+        run: python3 scripts/patch_continuewatch_v590_playlist_resolvers.py
+
+      - name: Syntax check
+        run: node --check ContinueWatching.js
+
+      - name: Validate architecture
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path('ContinueWatching.js').read_text(encoding='utf-8')
+          assert "v5.9.0-online-playlist-resolvers-20260828" in s
+          assert "online_resolver_url" in s
+          assert "episodeEntries" in s
+          assert "attachLazyOnlineResolvers" in s
+          assert "playlist_compact" in s
+          assert "39677" not in s
+          assert "DDDTransport" not in s
+          print('architecture ok', len(s))
+          PY
+
+      - name: Publish cache-safe copy
+        run: cp ContinueWatching.js ContinueWatching-v5.9.js
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ContinueWatching.js ContinueWatching-v5.9.js
+          git commit -m "Sync per-episode online resolvers in ContinueWatching" || exit 0
+          git push
