@@ -1,4126 +1,835 @@
 (function () {
     'use strict';
 
-    var BOOT_VERSION = 'v5.10.0-last-activity-online-noty-20260828';
-    var PLUGIN_NAME = 'ContinueWatchUniversal';
-    var PLUGIN_VERSION = BOOT_VERSION;
+    var VERSION = 'v6.0.0-clean-timeline-core-20260830';
+    var STORAGE_BASE = 'continue_watch_v6';
+    var PENDING_BASE = 'continue_watch_v6_pending';
+    var MIN_TIME = 5;
+    var SYNC_MAX = 9000;
+    var EXTERNAL_SETTLE = 1500;
+    var EXTERNAL_WINDOW = 5000;
 
-    function rememberBootStatus(phase, details) {
-        try {
-            localStorage.setItem('continue_watch_boot_status', JSON.stringify({
-                version: BOOT_VERSION,
-                phase: phase,
-                details: details || '',
-                timestamp: Date.now()
-            }));
-        } catch (e) {}
-    }
+    if (!window.Lampa) return;
+    if (window.__CW_V6_VERSION__ === VERSION) return;
+    window.__CW_V6_VERSION__ = VERSION;
 
-    if (!window.Lampa) {
-        rememberBootStatus('waiting', 'window.Lampa is not ready');
-
-        if (!window.__CONTINUE_WATCH_WAITING_FOR_LAMPA__) {
-            window.__CONTINUE_WATCH_WAITING_FOR_LAMPA__ = true;
-
-            var waitingScriptUrl = '';
-            var waitingAttempts = 0;
-
-            try {
-                waitingScriptUrl = document.currentScript && document.currentScript.src
-                    ? document.currentScript.src
-                    : '';
-            } catch (e) {}
-
-            var waitingTimer = setInterval(function () {
-                waitingAttempts += 1;
-
-                if (window.Lampa && waitingScriptUrl) {
-                    clearInterval(waitingTimer);
-                    window.__CONTINUE_WATCH_WAITING_FOR_LAMPA__ = false;
-                    rememberBootStatus('retrying', 'Lampa became ready');
-
-                    var retryScript = document.createElement('script');
-                    retryScript.async = true;
-                    retryScript.src = waitingScriptUrl;
-                    (document.head || document.documentElement).appendChild(retryScript);
-                    return;
-                }
-
-                if (waitingAttempts >= 120) {
-                    clearInterval(waitingTimer);
-                    window.__CONTINUE_WATCH_WAITING_FOR_LAMPA__ = false;
-                    rememberBootStatus('timeout', 'Lampa did not become ready');
-                }
-            }, 250);
-        }
-
-        return;
-    }
-
-    if (
-        window.__CONTINUE_WATCH_NATIVE_JUST_READY__ &&
-        window.__CONTINUE_WATCH_NATIVE_JUST_VERSION__ === BOOT_VERSION
-    ) {
-        return;
-    }
-
-    window.__CONTINUE_WATCH_NATIVE_JUST_LOADING__ = true;
-    window.__CONTINUE_WATCH_NATIVE_JUST_VERSION__ = BOOT_VERSION;
-
-    var DEBUG = {
-        enabled: false,
-        console: false,
-        exposeApi: true
+    var state = {
+        session: null,
+        resolverByMedia: {},
+        torrentSeedByCard: {},
+        lastMovie: null,
+        settleTimer: null,
+        uiTimer: null,
+        playerPatched: false,
+        torrentPatched: false,
+        installed: false
     };
 
-    var CONFIG = {
-        storageBaseKey: 'continue_watch_params',
-        cleanupAgeMs: 60 * 24 * 60 * 60 * 1000,
-        debounceDelayMs: 800,
-
-        minSaveSeconds: 8,
-        minDurationSeconds: 60,
-        finishPercent: 90,
-
-        nativePlayerEventsEnabled: true,
-        nativeTimelineEnabled: true,
-        saveNativeTimelineToCustomStorage: true,
-
-        // Android Lampa exposes torrent playback as "android". The actual selected
-        // external package is chosen by the native shell. For this plugin that path
-        // is treated as the Just+ transport: the authoritative result comes back via
-        // Lampa.Timeline after Just+ finishes.
-        justTransportEnabled: true,
-        justAndroidPlayerValue: 'android',
-        justPendingKey: 'continue_watch_just_pending_v1',
-        justResultSettleMs: 1400,
-        justReconcileIntervalMs: 1000,
-        justReturnBurstMs: 4000,
-        justCompletionFallbackMs: 3500,
-
-        hookRetryMs: 500,
-        hookRetryMaxMs: 60000,
-        syncRecordMaxChars: 9000,
-        syncPlaylistMaxChars: 6000,
-
-        onlinePhoneNotyDebug: true,
-
-        launchLockMs: 3000
-    };
-
-    // ============================================================
-    // Utils
-    // ============================================================
-
-    var Utils = (function () {
-        var lastActivityMovie = null;
-
-        function now() {
-            return Date.now ? Date.now() : new Date().getTime();
-        }
-
-        function log() {
-            if (!DEBUG.enabled || !DEBUG.console || !window.console) return;
-            try {
-                console.log.apply(console, ['[' + PLUGIN_NAME + ']'].concat(Array.prototype.slice.call(arguments)));
-            } catch (e) {}
-        }
-
-        function warn() {
-            if (!window.console) return;
-            try {
-                console.warn.apply(console, ['[' + PLUGIN_NAME + ']'].concat(Array.prototype.slice.call(arguments)));
-            } catch (e) {}
-        }
-
-        function error() {
-            if (!window.console) return;
-            try {
-                console.error.apply(console, ['[' + PLUGIN_NAME + ']'].concat(Array.prototype.slice.call(arguments)));
-            } catch (e) {}
-        }
-
-        function stripFragment(url) {
-            if (typeof url !== 'string') return url || '';
-            var pos = url.indexOf('#');
-            return pos >= 0 ? url.substring(0, pos) : url;
-        }
-
-        function safeDecode(value) {
-            value = String(value || '');
-            try {
-                return decodeURIComponent(value);
-            } catch (e) {
-                return value;
-            }
-        }
-
-        function safeJson(value) {
-            try {
-                return JSON.stringify(value);
-            } catch (e) {
-                return '';
-            }
-        }
-
-        function clamp(value, min, max) {
-            value = Number(value || 0);
-            if (value < min) return min;
-            if (value > max) return max;
-            return value;
-        }
-
-        function pad2(value) {
-            value = Number(value || 0);
-            return value < 10 ? '0' + value : String(value);
-        }
-
-        function formatSeconds(seconds) {
-            seconds = Number(seconds || 0);
-            if (!seconds || seconds < 0) return '0:00';
-
-            var total = Math.floor(seconds);
-            var h = Math.floor(total / 3600);
-            var m = Math.floor((total % 3600) / 60);
-            var s = total % 60;
-
-            if (h > 0) return h + ':' + pad2(m) + ':' + pad2(s);
-            return m + ':' + pad2(s);
-        }
-
-        function firstNonEmpty() {
-            for (var i = 0; i < arguments.length; i++) {
-                if (arguments[i] !== undefined && arguments[i] !== null && arguments[i] !== '') {
-                    return arguments[i];
-                }
-            }
-            return '';
-        }
-
-        function normalizeImageUrl(src) {
-            src = String(src || '').trim();
-            if (!src) return '';
-
-            if (/^\/\//.test(src)) return location.protocol + src;
-            if (/^(https?:|data:image\/|blob:)/i.test(src)) return src;
-
-            if (src.charAt(0) === '/') {
-                try {
-                    if (Lampa.Api && Lampa.Api.img) return Lampa.Api.img(src, 'w300');
-                } catch (e) {}
-
-                try {
-                    if (Lampa.TMDB && Lampa.TMDB.image) return Lampa.TMDB.image(src, 'w300');
-                } catch (e2) {}
-            }
-
-            return src;
-        }
-
-        function extractImage(obj) {
-            if (!obj || typeof obj !== 'object') return '';
-
-            var direct = firstNonEmpty(
-                obj.img,
-                obj.image,
-                obj.picture,
-                obj.poster,
-                obj.cover,
-                obj.thumb,
-                obj.thumbnail,
-                obj.preview,
-                obj.still_path,
-                obj.still,
-                obj.poster_path,
-                obj.backdrop_path
-            );
-
-            if (direct) return normalizeImageUrl(direct);
-
-            var nested = [
-                obj.currentItem,
-                obj.item,
-                obj.file,
-                obj.episode_data,
-                obj.episodeData,
-                obj.timeline,
-                obj.card,
-                obj.movie,
-                obj.data
-            ];
-
-            for (var i = 0; i < nested.length; i++) {
-                direct = extractImage(nested[i]);
-                if (direct) return direct;
-            }
-
-            return '';
-        }
-
-        function copyImageFields(target, image) {
-            image = normalizeImageUrl(image);
-            if (!target || !image) return target;
-
-            target.img = target.img || image;
-            target.image = target.image || image;
-            target.picture = target.picture || image;
-            target.poster = target.poster || image;
-            target.cover = target.cover || image;
-            target.thumb = target.thumb || image;
-            target.thumbnail = target.thumbnail || image;
-            target.preview = target.preview || image;
-            target.still_path = target.still_path || image;
-
-            return target;
-        }
-
-        function getPlatformKind() {
-            var ua = '';
-            try { ua = String(navigator.userAgent || '').toLowerCase(); } catch (e) {}
-
-            try {
-                if (Lampa.Platform && Lampa.Platform.is) {
-                    if (Lampa.Platform.is('android')) return 'android';
-                    if (Lampa.Platform.is('webos')) return 'lg_webos';
-                    if (Lampa.Platform.is('tizen')) return 'samsung_tizen';
-                    if (Lampa.Platform.is('apple_tv')) return 'apple_tv';
-                    if (Lampa.Platform.is('apple')) return 'apple';
-                }
-            } catch (e2) {}
-
-            if (/android/.test(ua)) return 'android';
-            if (/web0s|webos|netcast|lg browser/.test(ua)) return 'lg_webos';
-            if (/tizen|samsungbrowser|smart-tv|smarttv/.test(ua)) return 'samsung_tizen';
-            return 'unknown';
-        }
-
-        function getTorrentPlayerType() {
-            try {
-                return String(Lampa.Storage.field('player_torrent') || '');
-            } catch (e) {
-                return '';
-            }
-        }
-
-        function isJustTransport() {
-            if (!CONFIG.justTransportEnabled) return false;
-            return getPlatformKind() === 'android' && getTorrentPlayerType() === CONFIG.justAndroidPlayerValue;
-        }
-
-        function parseStreamUrl(url) {
-            if (!url || typeof url !== 'string') return null;
-            url = stripFragment(url);
-
-            var fileMatch = url.match(/\/stream\/([^?]+)/);
-            var linkMatch = url.match(/[?&]link=([^&#]+)/);
-            var indexMatch = url.match(/[?&]index=(\d+)/);
-
-            if (!fileMatch || !linkMatch) return null;
-
-            return {
-                file_name: safeDecode(fileMatch[1]).replace(/\+/g, ' ').replace(/\s+/g, ' ').trim(),
-                torrent_link: safeDecode(linkMatch[1]),
-                file_index: indexMatch ? parseInt(indexMatch[1], 10) : 0
-            };
-        }
-
-        function streamIdentity(url) {
-            var parsed = parseStreamUrl(url);
-            if (!parsed) return stripFragment(url || '');
-
-            return [
-                parsed.torrent_link || '',
-                parsed.file_index !== undefined ? parsed.file_index : '',
-                parsed.file_name || ''
-            ].join('|');
-        }
-
-        function extractTorrentHash(value) {
-            value = safeDecode(String(value || '')).trim();
-            if (!value) return '';
-
-            var match = value.match(/btih:([a-z0-9]+)/i);
-            if (match) return match[1];
-
-            match = value.match(/(?:^|[^a-f0-9])([a-f0-9]{40}|[a-f0-9]{64})(?:[^a-f0-9]|$)/i);
-            return match ? match[1] : '';
-        }
-
-        function getMovieTitle(obj) {
-            obj = obj || {};
-            return String(
-                obj.original_name ||
-                obj.original_title ||
-                obj.name ||
-                obj.title ||
-                obj.originalName ||
-                obj.originalTitle ||
-                ''
-            );
-        }
-
-        function getMediaKind(obj) {
-            obj = obj || {};
-            var card = obj.card || obj.movie || obj.data || obj;
-            var media = String(
-                obj.media_type || obj.mediaType || card.media_type || card.mediaType || ''
-            ).toLowerCase();
-
-            if (media === 'movie' || media === 'film') return 'movie';
-            if (media === 'tv' || media === 'show' || media === 'series') return 'tv';
-
-            if (
-                Number(card.number_of_seasons || 0) > 0 ||
-                Number(card.number_of_episodes || 0) > 0 ||
-                card.original_name ||
-                card.first_air_date ||
-                card.seasons !== undefined ||
-                card.episodes !== undefined ||
-                card.last_episode_to_air !== undefined ||
-                card.next_episode_to_air !== undefined
-            ) {
-                return 'tv';
-            }
-
-            return 'movie';
-        }
-
-        function extractExplicitSE(data) {
-            data = data || {};
-
-            var pairs = [
-                [data.season, data.episode],
-                [data.season_number, data.episode_number],
-                [data.s, data.e]
-            ];
-
-            for (var i = 0; i < pairs.length; i++) {
-                var season = Number(pairs[i][0] || 0);
-                var episode = Number(pairs[i][1] || 0);
-                if (season > 0 && episode > 0) {
-                    return { season: season, episode: episode, source: 'explicit_fields' };
-                }
-            }
-
-            return null;
-        }
-
-        function extractSEFromText(data, fallbackSeason) {
-            data = data || {};
-            fallbackSeason = Number(fallbackSeason || 0);
-
-            var texts = [
-                data.file_name,
-                data.filename,
-                data.title,
-                data.name,
-                data.path,
-                data.path_human,
-                data.folder_name,
-                data.episode_title,
-                data.url,
-                data.uri,
-                data.src
-            ];
-
-            if (data.currentItem) {
-                texts.push(
-                    data.currentItem.filename,
-                    data.currentItem.file_name,
-                    data.currentItem.title,
-                    data.currentItem.name,
-                    data.currentItem.uri,
-                    data.currentItem.url
-                );
-            }
-
-            function parse(text) {
-                if (!text || typeof text !== 'string') return null;
-
-                text = safeDecode(text).replace(/\+/g, ' ').replace(/\s+/g, ' ').trim();
-                var m;
-
-                m = text.match(/\bS(?:eason)?\s*0?(\d{1,2})\s*[\.\-_: ]*\s*E(?:p(?:isode)?)?\s*0?(\d{1,3})\b/i);
-                if (m) return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10), source: 'text_sxe' };
-
-                m = text.match(/\b0?(\d{1,2})\s*[xх×]\s*0?(\d{1,3})\b/i);
-                if (m) return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10), source: 'text_1x02' };
-
-                m = text.match(/season\s*0?(\d{1,2}).*?(?:episode|ep\.?)\s*0?(\d{1,3})/i);
-                if (m) return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10), source: 'text_season_episode' };
-
-                m = text.match(/0?(\d{1,2})\s*сезон.*?0?(\d{1,3})\s*сер/i);
-                if (m) return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10), source: 'text_ru_season_episode' };
-
-                m = text.match(/(?:эпизод|сер(?:ия|ии|и)?|episode|ep\.?|сер\.)\s*[-–—:]?\s*0?(\d{1,3})/i);
-                if (m && fallbackSeason > 0) {
-                    return { season: fallbackSeason, episode: parseInt(m[1], 10), source: 'text_episode_only' };
-                }
-
-                m = text.match(/(?:^|[\s._\-\[\(])0?(\d{1,3})(?:\s*(?:v\d+)?\s*(?:\[[^\]]+\]|\([^)]+\))*)?\.(?:mkv|mp4|avi|ts)$/i);
-                if (m && fallbackSeason > 0) {
-                    return { season: fallbackSeason, episode: parseInt(m[1], 10), source: 'filename_episode_only' };
-                }
-
-                return null;
-            }
-
-            for (var i = 0; i < texts.length; i++) {
-                var result = parse(texts[i]);
-                if (result) return result;
-            }
-
-            return null;
-        }
-
-        function shallowClone(obj) {
-            var out = {};
-            if (!obj || typeof obj !== 'object') return out;
-
-            Object.keys(obj).forEach(function (key) {
-                var value = obj[key];
-                if (value === undefined || typeof value === 'function') return;
-                out[key] = value;
-            });
-
-            return out;
-        }
-
-        function getActivityMovie() {
-            try {
-                var active = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
-                var movie = active && (
-                    active.movie ||
-                    active.card ||
-                    (active.params && active.params.movie)
-                );
-
-                if (movie) {
-                    lastActivityMovie = movie;
-                    return movie;
-                }
-            } catch (e) {}
-
-            return lastActivityMovie;
-        }
-
-        function captureOnlineContext(data, movie) {
-            data = data || {};
-            if (!data.isonline) return null;
-
-            var active = null;
-            try {
-                active = Lampa.Activity && Lampa.Activity.active ? Lampa.Activity.active() : null;
-            } catch (e) {}
-
-            active = active || {};
-            movie = movie || data.card || data.movie || {};
-
-            var context = {
-                component: String(active.component || ''),
-                url: String(active.url || ''),
-                title: String(active.title || ''),
-                search: String(active.search || ''),
-                search_one: String(active.search_one || ''),
-                search_two: String(active.search_two || ''),
-                clarification: !!active.clarification,
-                similar: active.similar !== false,
-                balanser: String(active.balanser || ''),
-                page: Number(active.page || 1)
-            };
-
-            if (!context.search) context.search = String(movie.title || movie.name || '');
-            if (!context.search_one) context.search_one = String(movie.title || movie.name || '');
-            if (!context.search_two) context.search_two = String(movie.original_title || movie.original_name || '');
-
-            return context.component ? context : null;
-        }
-
-        function rememberActivityMovie(movie) {
-            if (movie && typeof movie === 'object') lastActivityMovie = movie;
-            return lastActivityMovie;
-        }
-
-        function isPhoneLike() {
-            var ua = '';
-            var touch = false;
-            var minSide = 9999;
-
-            try { ua = String(navigator.userAgent || '').toLowerCase(); } catch (e) {}
-            try { touch = Number(navigator.maxTouchPoints || 0) > 0 || ('ontouchstart' in window); } catch (e2) {}
-            try { minSide = Math.min(Number(window.innerWidth || 9999), Number(window.innerHeight || 9999)); } catch (e3) {}
-
-            if (!touch) return false;
-            if (/iphone|ipod|android.*mobile|mobile/i.test(ua)) return true;
-            return minSide <= 900;
-        }
-
-        function shortDebugUrl(url) {
-            url = String(url || '');
-            if (!url) return '-';
-            try {
-                var parsed = new URL(url, location.href);
-                var out = parsed.host + parsed.pathname;
-                if (out.length > 58) out = out.slice(0, 55) + '...';
-                return out;
-            } catch (e) {
-                return url.length > 58 ? url.slice(0, 55) + '...' : url;
-            }
-        }
-
-        function onlineNoty(message) {
-            if (!CONFIG.onlinePhoneNotyDebug || !isPhoneLike()) return;
-            try {
-                if (Lampa.Noty && Lampa.Noty.show) {
-                    Lampa.Noty.show('[CW online] ' + String(message || '').slice(0, 180));
-                }
-            } catch (e) {}
-        }
-
-        return {
-            now: now,
-            log: log,
-            warn: warn,
-            error: error,
-            stripFragment: stripFragment,
-            safeDecode: safeDecode,
-            safeJson: safeJson,
-            clamp: clamp,
-            formatSeconds: formatSeconds,
-            firstNonEmpty: firstNonEmpty,
-            normalizeImageUrl: normalizeImageUrl,
-            extractImage: extractImage,
-            copyImageFields: copyImageFields,
-            getPlatformKind: getPlatformKind,
-            getTorrentPlayerType: getTorrentPlayerType,
-            isJustTransport: isJustTransport,
-            parseStreamUrl: parseStreamUrl,
-            streamIdentity: streamIdentity,
-            extractTorrentHash: extractTorrentHash,
-            getMovieTitle: getMovieTitle,
-            getMediaKind: getMediaKind,
-            extractExplicitSE: extractExplicitSE,
-            extractSEFromText: extractSEFromText,
-            shallowClone: shallowClone,
-            getActivityMovie: getActivityMovie,
-            rememberActivityMovie: rememberActivityMovie,
-            captureOnlineContext: captureOnlineContext,
-            isPhoneLike: isPhoneLike,
-            shortDebugUrl: shortDebugUrl,
-            onlineNoty: onlineNoty
-        };
-    })();
-
-    // ============================================================
-    // OnlineResolverCapture
-    // ------------------------------------------------------------
-    // Lampac Online resolves a stable episode URL through
-    // Lampa.Reguest.native() and receives a short-lived media/proxy URL.
-    // Lampa.Reguest publishes request_secuses BEFORE Lampac calls
-    // Lampa.Player.play(), so we can remember resolver -> media without
-    // opening the Online component on resume.
-    // ============================================================
-
-    var OnlineResolverCapture = (function () {
-        var installed = false;
-        var byMediaUrl = {};
-        var byEpisodeKey = {};
-        var lastCapture = null;
-        var lastPlaylistCapture = null;
-
-        function clonePlain(obj) {
-            var out = {};
-            if (!obj || typeof obj !== 'object') return out;
-            Object.keys(obj).forEach(function (key) {
-                var value = obj[key];
-                if (value === undefined || typeof value === 'function') return;
-                out[key] = value;
-            });
-            return out;
-        }
-
-        function normalizeMediaUrl(url) {
-            if (typeof url !== 'string') return '';
-            url = url.trim();
-            if (!url) return '';
-            if (url.indexOf(' or ') !== -1) url = url.split(' or ')[0].trim();
-            return Utils.stripFragment(url);
-        }
-
-        function looksPlayable(url) {
-            url = normalizeMediaUrl(url);
-            if (!/^https?:\/\//i.test(url)) return false;
-            return /\/proxy(?:-dash)?\//i.test(url) ||
-                /\.(?:m3u8?|mpd|mp4|mkv|webm|mov|ts)(?:$|[?#])/i.test(url);
-        }
-
-        function isTransientMediaUrl(url) {
-            url = normalizeMediaUrl(url);
-            return !!(url && /\/proxy(?:-dash)?\//i.test(url));
-        }
-
-        function absoluteResolverUrl(url, baseUrl) {
-            url = String(url || '').trim();
-            if (!url) return '';
-            try {
-                return new URL(url, baseUrl || location.href).toString();
-            } catch (e) {
-                return url;
-            }
-        }
-
-        function portableResolverUrl(url) {
-            url = String(url || '').trim();
-            if (!url) return '';
-
-            try {
-                var parsed = new URL(url, location.href);
-                if (!/^https?:$/i.test(parsed.protocol)) return url;
-
-                // These belong to the current device/account and must never be the
-                // identity of a synchronized resolver.
-                parsed.searchParams.delete('account_email');
-                parsed.searchParams.delete('uid');
-                parsed.searchParams.delete('nws_id');
-
-                return parsed.toString();
-            } catch (e) {
-                return url;
-            }
-        }
-
-        function refreshAccountParams(url) {
-            url = String(url || '').trim();
-            if (!url) return '';
-
-            try {
-                var parsed = new URL(url, location.href);
-                if (!/^https?:$/i.test(parsed.protocol)) return url;
-
-                parsed.searchParams.delete('account_email');
-                parsed.searchParams.delete('uid');
-                parsed.searchParams.delete('nws_id');
-
-                var email = '';
-                var uid = '';
-                var nws = '';
-                try { email = String(Lampa.Storage.get('account_email', '') || ''); } catch (e) {}
-                try { uid = String(Lampa.Storage.get('lampac_unic_id', '') || ''); } catch (e2) {}
-                try { nws = String(Lampa.Storage.get('lampac_nws_id', '') || ''); } catch (e3) {}
-
-                if (email) parsed.searchParams.set('account_email', email);
-                if (uid) parsed.searchParams.set('uid', uid);
-                if (nws) parsed.searchParams.set('nws_id', nws);
-
-                return parsed.toString();
-            } catch (e4) {
-                return url;
-            }
-        }
-
-        function currentRequestHeaders(saved) {
-            var headers = clonePlain(saved || {});
-            try {
-                var aes = String(Lampa.Storage.get('aesgcmkey', '') || '');
-                if (aes) headers['X-Kit-AesGcm'] = aes;
-            } catch (e) {}
-            return headers;
-        }
-
-        function movieIdentity(movie) {
-            movie = movie || {};
-            var id = movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId || '';
-            var mediaType = Utils.getMediaKind(movie) || '';
-            if (id) return mediaType + ':' + String(id);
-
-            var title = Utils.getMovieTitle(movie);
-            var year = String(movie.release_date || movie.first_air_date || movie.year || '').slice(0, 4);
-            if (title) return mediaType + ':title:' + String(Lampa.Utils.hash([title, year].join('|')));
-            return '';
-        }
-
-        function episodeKeys(movie, item) {
-            item = item || {};
-            var keys = [];
-            var hash = item.timeline && item.timeline.hash && String(item.timeline.hash) !== '0'
-                ? String(item.timeline.hash)
-                : String(item.timeline_hash || '');
-            if (hash) keys.push('h:' + hash);
-
-            var season = Number(item.season || item.season_number || item.s || 0);
-            var episode = Number(item.episode || item.episode_number || item.e || 0);
-            var movieKey = movieIdentity(movie);
-            if (movieKey && season > 0 && episode > 0) {
-                keys.push('m:' + movieKey + '|s:' + season + '|e:' + episode);
-            }
-            return keys;
-        }
-
-        function rememberEpisode(movie, item, resolver) {
-            if (!resolver || !resolver.url) return;
-            var keys = episodeKeys(movie, item);
-            if (!keys.length) return;
-
-            var clean = {
-                url: portableResolverUrl(resolver.url),
-                headers: clonePlain(resolver.headers || {}),
-                capturedAt: Number(resolver.capturedAt || Utils.now())
-            };
-
-            keys.forEach(function (key) {
-                byEpisodeKey[key] = clean;
-            });
-        }
-
-        function lookupEpisode(movie, item) {
-            var keys = episodeKeys(movie, item);
-            for (var i = 0; i < keys.length; i++) {
-                var found = byEpisodeKey[keys[i]];
-                if (!found) continue;
-                return {
-                    url: found.url,
-                    headers: clonePlain(found.headers || {}),
-                    capturedAt: Number(found.capturedAt || 0)
-                };
-            }
-            return null;
-        }
-
-        function rememberOne(mediaUrl, resolver) {
-            mediaUrl = normalizeMediaUrl(mediaUrl);
-            if (!mediaUrl || !looksPlayable(mediaUrl) || !resolver || !resolver.url) return;
-            byMediaUrl[mediaUrl] = {
-                url: portableResolverUrl(resolver.url),
-                headers: clonePlain(resolver.headers || {}),
-                capturedAt: Number(resolver.capturedAt || Utils.now())
-            };
-        }
-
-        function capturePlaylistHtml(event, response) {
-            if (typeof response !== 'string') return false;
-            if (response.indexOf('videos__item') === -1 || response.indexOf('data-json') === -1) return false;
-
-            var movie = Utils.getActivityMovie();
-            if (!movie) return false;
-
-            var requestUrl = String(event && event.params && event.params.url || '').trim();
-            var headers = currentRequestHeaders(event && event.params && event.params.headers || {});
-            var foundCount = 0;
-
-            try {
-                var html = $('<div>' + response + '</div>');
-                html.find('.videos__item').each(function () {
-                    var node = $(this);
-                    var raw = node.attr('data-json');
-                    if (!raw) return;
-
-                    var data = null;
-                    try { data = JSON.parse(raw); } catch (e) { return; }
-                    if (!data || String(data.method || '').toLowerCase() !== 'call' || !data.url) return;
-
-                    var season = Number(node.attr('s') || data.season || data.season_number || 0);
-                    var episode = Number(node.attr('e') || data.episode || data.episode_number || 0);
-                    if (!season || !episode) return;
-
-                    var resolverUrl = absoluteResolverUrl(data.url, requestUrl || location.href);
-                    if (!resolverUrl) return;
-
-                    rememberEpisode(movie, {
-                        season: season,
-                        episode: episode
-                    }, {
-                        url: resolverUrl,
-                        headers: headers,
-                        capturedAt: Utils.now()
-                    });
-                    foundCount += 1;
-                });
-            } catch (e2) {
-                return false;
-            }
-
-            if (foundCount) {
-                lastPlaylistCapture = {
-                    movie: movieIdentity(movie),
-                    entries: foundCount,
-                    at: Utils.now()
-                };
-            }
-            return foundCount > 0;
-        }
-
-        function captureSuccess(event) {
-            if (!event || !event.params || !event.params.url) return;
-
-            var response = event.data;
-            if (typeof response === 'string') {
-                capturePlaylistHtml(event, response);
-                try { response = JSON.parse(response); } catch (e) { return; }
-            }
-            if (!response || typeof response !== 'object') return;
-
-            var requestUrl = String(event.params.url || '').trim();
-            var mediaUrl = typeof response.url === 'string' ? response.url : '';
-            if (!requestUrl || !mediaUrl || !looksPlayable(mediaUrl)) return;
-
-            // Do not treat a direct media GET as a resolver request.
-            if (normalizeMediaUrl(requestUrl) === normalizeMediaUrl(mediaUrl)) return;
-
-            var resolver = {
-                url: portableResolverUrl(requestUrl),
-                headers: currentRequestHeaders(event.params.headers || {}),
-                capturedAt: Utils.now()
-            };
-
-            rememberOne(mediaUrl, resolver);
-
-            if (response.quality && typeof response.quality === 'object') {
-                Object.keys(response.quality).forEach(function (key) {
-                    var value = response.quality[key];
-                    if (typeof value !== 'string') return;
-                    if (value.indexOf(' or ') !== -1) {
-                        value.split(' or ').forEach(function (part) {
-                            rememberOne(part, resolver);
-                        });
-                    } else {
-                        rememberOne(value, resolver);
-                    }
-                });
-            }
-
-            lastCapture = {
-                mediaUrl: normalizeMediaUrl(mediaUrl),
-                resolver: resolver,
-                response: response,
-                at: Utils.now()
-            };
-        }
-
-        function lookup(mediaUrl) {
-            mediaUrl = normalizeMediaUrl(mediaUrl);
-            if (!mediaUrl) return null;
-            var found = byMediaUrl[mediaUrl];
-            if (!found) return null;
-            return {
-                url: found.url,
-                headers: clonePlain(found.headers || {}),
-                capturedAt: Number(found.capturedAt || 0)
-            };
-        }
-
-        function enrichPlaylist(movie, playlist) {
-            if (!Array.isArray(playlist) || !playlist.length) return playlist;
-            playlist.forEach(function (item) {
-                if (!item || typeof item !== 'object') return;
-                if (item.online_resolver_url) {
-                    item.online_resolver_url = portableResolverUrl(item.online_resolver_url);
-                    return;
-                }
-                var resolver = lookupEpisode(movie, item);
-                if (!resolver) return;
-                item.online_resolver_url = resolver.url;
-                item.online_resolver_headers = resolver.headers || {};
-                item.online_resolver_at = Number(resolver.capturedAt || 0);
-            });
-            return playlist;
-        }
-
-        function chooseMediaUrl(json) {
-            if (!json || typeof json !== 'object') return '';
-
-            var url = typeof json.url === 'string' ? json.url : '';
-            var quality = json.quality && typeof json.quality === 'object' ? json.quality : null;
-
-            if (quality) {
-                var preferred = 0;
-                try { preferred = parseInt(Lampa.Storage.field('video_quality_default') || 0, 10); } catch (e) {}
-                if (preferred) {
-                    Object.keys(quality).some(function (key) {
-                        if (parseInt(key, 10) === preferred && typeof quality[key] === 'string') {
-                            url = quality[key];
-                            return true;
-                        }
-                        return false;
-                    });
-                }
-            }
-
-            if (typeof url === 'string' && url.indexOf(' or ') !== -1) {
-                url = url.split(' or ')[0].trim();
-            }
-            return normalizeMediaUrl(url);
-        }
-
-        function resolve(params, callback) {
-            params = params || {};
-            callback = typeof callback === 'function' ? callback : function () {};
-
-            var portable = portableResolverUrl(params.online_resolver_url || '');
-            var resolverUrl = refreshAccountParams(portable);
-            if (!resolverUrl || !Lampa.Reguest) {
-                callback(null);
-                return;
-            }
-
-            var network = new Lampa.Reguest();
-            try { network.timeout(12000); } catch (e) {}
-
-            var headers = currentRequestHeaders(params.online_resolver_headers || {});
-
-            network.native(
-                resolverUrl,
-                function (json) {
-                    if (typeof json === 'string') {
-                        try { json = JSON.parse(json); } catch (e2) { json = null; }
-                    }
-                    if (!json || typeof json !== 'object' || json.rch) {
-                        callback(null);
-                        return;
-                    }
-
-                    var mediaUrl = chooseMediaUrl(json);
-                    if (!mediaUrl) {
-                        callback(null);
-                        return;
-                    }
-
-                    var mediaHeaders = clonePlain(json.headers || {});
-                    callback({
-                        url: mediaUrl,
-                        headers: mediaHeaders,
-                        quality: json.quality && typeof json.quality === 'object' ? json.quality : null,
-                        segments: json.segments || null,
-                        subtitles: json.subtitles || null,
-                        subtitles_call: json.subtitles_call || null,
-                        hls_manifest_timeout: json.hls_manifest_timeout,
-                        resolver_url: portable,
-                        resolver_headers: headers
-                    });
-                },
-                function () {
-                    callback(null);
-                },
-                false,
-                { headers: headers }
-            );
-        }
-
-        function init() {
-            if (installed) return;
-            installed = true;
-            try {
-                Lampa.Listener.follow('request_secuses', captureSuccess);
-            } catch (e) {
-                installed = false;
-                Utils.error('Online resolver listener failed', e);
-            }
-        }
-
-        function status() {
-            return {
-                installed: installed,
-                entries: Object.keys(byMediaUrl).length,
-                episodeEntries: Object.keys(byEpisodeKey).length,
-                lastCapture: lastCapture,
-                lastPlaylistCapture: lastPlaylistCapture
-            };
-        }
-
-        return {
-            init: init,
-            lookup: lookup,
-            lookupEpisode: lookupEpisode,
-            enrichPlaylist: enrichPlaylist,
-            resolve: resolve,
-            status: status,
-            refreshAccountParams: refreshAccountParams,
-            portableResolverUrl: portableResolverUrl,
-            isTransientMediaUrl: isTransientMediaUrl
-        };
-    })();
-
-    // ============================================================
-    // StorageManager
-    // ============================================================
-
-    var StorageManager = (function () {
-        var memoryCache = null;
-        var activeStorageKey = null;
-        var syncedStorageKey = null;
-        var saveTimer = null;
-
-        function getProfileId() {
-            var account = null;
-
-            try {
-                if (Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.account) {
-                    account = Lampa.Account.Permit.account;
-                }
-            } catch (e) {}
-
-            try {
-                if (!account && Lampa.Storage && Lampa.Storage.get) {
-                    account = Lampa.Storage.get('account', {});
-                }
-            } catch (e2) {}
-
-            if (
-                account && account.profile &&
-                account.profile.id !== undefined &&
-                account.profile.id !== null &&
-                account.profile.id !== ''
-            ) {
-                return account.profile.id;
-            }
-
-            return null;
-        }
-
-        function getStorageKey() {
-            var profileId = getProfileId();
-            return profileId !== null && profileId !== undefined
-                ? CONFIG.storageBaseKey + '_' + profileId
-                : CONFIG.storageBaseKey + '_guest';
-        }
-
-        function getActiveStorageKey() {
-            var key = getStorageKey();
-            if (activeStorageKey !== key) {
-                activeStorageKey = key;
-                memoryCache = null;
-            }
-            return key;
-        }
-
-        function ensureSync() {
-            var key = getActiveStorageKey();
-            var profileId = getProfileId();
-            if (profileId === null || profileId === undefined) return;
-            if (syncedStorageKey === key) return;
-
-            try {
-                Lampa.Storage.sync(key, 'object_object');
-                syncedStorageKey = key;
-            } catch (e) {
-                Utils.error('Storage sync failed', e);
-            }
-        }
-
-        function getParams() {
-            ensureSync();
-
-            if (!memoryCache) {
-                try {
-                    memoryCache = Lampa.Storage.get(getActiveStorageKey(), {});
-                    if (!memoryCache || typeof memoryCache !== 'object') memoryCache = {};
-                } catch (e) {
-                    Utils.error('Storage get failed', e);
-                    memoryCache = {};
-                }
-            }
-
-            return memoryCache;
-        }
-
-        function setParams(data, force) {
-            ensureSync();
-            memoryCache = data;
-
-            var key = getActiveStorageKey();
-
-            function save() {
-                try {
-                    Lampa.Storage.set(key, data);
-                } catch (e) {
-                    Utils.error('Storage set failed', e);
-                }
-            }
-
-            if (saveTimer) {
-                clearTimeout(saveTimer);
-                saveTimer = null;
-            }
-
-            if (force) save();
-            else {
-                saveTimer = setTimeout(function () {
-                    saveTimer = null;
-                    save();
-                }, CONFIG.debounceDelayMs);
-            }
-        }
-
-        function getMovieKey(movie) {
-            if (!movie) return '';
-
-            var id = movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId || '';
-            var title = Utils.getMovieTitle(movie);
-            var mediaType = Utils.getMediaKind(movie) || '';
-            var year = String(movie.release_date || movie.first_air_date || movie.year || '').slice(0, 4);
-
-            if (id) return 'tmdb:' + mediaType + ':' + id;
-            if (title) return 'title:' + mediaType + ':' + Lampa.Utils.hash([title, year].join('|'));
-            return '';
-        }
-
-        function getMovieKeyFromData(data) {
-            if (!data) return '';
-            if (data.card_key) return String(data.card_key);
-            if (data.movie_key && String(data.movie_key).indexOf('tmdb:') === 0) return String(data.movie_key);
-
-            var id = data.movie_id || data.tmdb_id || data.tmdbId || '';
-            var mediaType = String(data.media_type || data.mediaType || '').toLowerCase();
-            if (!mediaType) mediaType = (data.original_name || data.name) ? 'tv' : 'movie';
-
-            if (id) return 'tmdb:' + mediaType + ':' + id;
-
-            var title = data.original_title || data.original_name || data.title || data.name || '';
-            var year = String(data.release_date || data.first_air_date || data.year || '').slice(0, 4);
-            if (title) return 'title:' + mediaType + ':' + Lampa.Utils.hash([title, year].join('|'));
-            return '';
-        }
-
-
-        function pointerStorageKey(movieKey) {
-            return '__last__' + String(Lampa.Utils.hash(String(movieKey || '')));
-        }
-
-        function packResolverUrls(packed) {
-            var resolverItems = packed.items.filter(function (item) {
-                return item && Object.prototype.hasOwnProperty.call(item, 'r');
-            });
-            if (resolverItems.length < 2) return;
-
-            var urls = resolverItems.map(function (item) { return String(item.r || ''); });
-            var rawSize = urls.reduce(function (sum, value) { return sum + value.length; }, 0);
-
-            // Best case for Lampac: same endpoint, same common query, only episode
-            // parameters differ. Store the endpoint/common query once.
-            try {
-                var parsed = urls.map(function (url) { return new URL(url, location.href); });
-                var base = parsed[0].origin + parsed[0].pathname;
-                var sameBase = parsed.every(function (url) {
-                    return url.origin + url.pathname === base;
-                });
-
-                if (sameBase) {
-                    var common = [];
-                    parsed[0].searchParams.forEach(function (value, key) {
-                        var allSame = parsed.every(function (url) {
-                            var values = url.searchParams.getAll(key);
-                            return values.length === 1 && values[0] === value;
-                        });
-                        if (allSame) common.push([key, value]);
-                    });
-
-                    var commonQuery = new URLSearchParams();
-                    common.forEach(function (pair) { commonQuery.append(pair[0], pair[1]); });
-
-                    var diffs = parsed.map(function (url) {
-                        var diff = new URLSearchParams();
-                        url.searchParams.forEach(function (value, key) {
-                            var isCommon = common.some(function (pair) {
-                                return pair[0] === key && pair[1] === value;
-                            });
-                            if (!isCommon) diff.append(key, value);
-                        });
-                        return diff.toString() + (url.hash || '');
-                    });
-
-                    var packedSize = base.length + commonQuery.toString().length +
-                        diffs.reduce(function (sum, value) { return sum + value.length; }, 0) + 24;
-
-                    if (packedSize + 16 < rawSize) {
-                        packed.rm = 'q';
-                        packed.ro = base;
-                        packed.rc = commonQuery.toString();
-                        resolverItems.forEach(function (item, index) {
-                            item.r = diffs[index];
-                        });
-                        return;
-                    }
-                }
-            } catch (e) {}
-
-            var prefix = urls[0] || '';
-            for (var i = 1; i < urls.length && prefix; i++) {
-                var current = urls[i];
-                var max = Math.min(prefix.length, current.length);
-                var j = 0;
-                while (j < max && prefix.charAt(j) === current.charAt(j)) j += 1;
-                prefix = prefix.slice(0, j);
-            }
-
-            if (prefix.length >= 32) {
-                packed.rm = 'p';
-                packed.rb = prefix;
-                resolverItems.forEach(function (item) {
-                    item.r = String(item.r || '').slice(prefix.length);
-                });
-            }
-        }
-
-        function unpackResolverUrl(item, packed) {
-            item = item || {};
-            packed = packed || {};
-            if (!Object.prototype.hasOwnProperty.call(item, 'r')) return '';
-
-            if (packed.rm === 'q' && packed.ro) {
-                try {
-                    var url = new URL(String(packed.ro), location.href);
-                    var common = new URLSearchParams(String(packed.rc || ''));
-                    common.forEach(function (value, key) { url.searchParams.append(key, value); });
-
-                    var diffRaw = String(item.r || '');
-                    var hashAt = diffRaw.indexOf('#');
-                    var diffQuery = hashAt >= 0 ? diffRaw.slice(0, hashAt) : diffRaw;
-                    var hash = hashAt >= 0 ? diffRaw.slice(hashAt) : '';
-                    var diff = new URLSearchParams(diffQuery);
-                    diff.forEach(function (value, key) { url.searchParams.append(key, value); });
-                    if (hash) url.hash = hash;
-                    return url.toString();
-                } catch (e) {}
-            }
-
-            if (packed.rm === 'p') return String(packed.rb || '') + String(item.r || '');
-            return String(item.r || '');
-        }
-
-        function compactPlaylist(playlist, fallbackTorrentLink) {
-            if (!Array.isArray(playlist) || !playlist.length) return null;
-
-            var commonLink = String(fallbackTorrentLink || '');
-            var items = [];
-
-            playlist.forEach(function (item, index) {
-                item = item || {};
-                var rawUrl = item.url || item.uri || item.src || '';
-                var url = typeof rawUrl === 'string' ? Utils.stripFragment(rawUrl) : '';
-                var parsed = Utils.parseStreamUrl(url);
-                if (!commonLink && parsed && parsed.torrent_link) commonLink = parsed.torrent_link;
-
-                var compact = {
-                    i: item.file_index !== undefined && item.file_index !== null
-                        ? Number(item.file_index)
-                        : (parsed && parsed.file_index !== undefined ? Number(parsed.file_index) : index),
-                    s: Number(item.season || item.season_number || item.s || 0),
-                    e: Number(item.episode || item.episode_number || item.e || 0)
-                };
-
-                var fileName = item.file_name || item.filename || item.path || (parsed && parsed.file_name) || '';
-                var title = item.title || item.name || item.label || '';
-                var hash = item.timeline && item.timeline.hash && String(item.timeline.hash) !== '0'
-                    ? String(item.timeline.hash)
-                    : '';
-                var resolverUrl = item.online_resolver_url
-                    ? OnlineResolverCapture.portableResolverUrl(item.online_resolver_url)
-                    : '';
-
-                if (fileName) compact.f = String(fileName).slice(0, 220);
-                if (title) compact.t = String(title).slice(0, 96);
-                if (hash) compact.h = hash;
-                if (resolverUrl) compact.r = resolverUrl;
-
-                // Once a stable resolver is known, a short-lived Lampac /proxy URL is
-                // not useful after synchronization. Stable direct/stream URLs remain.
-                if (!parsed && url && !(resolverUrl && OnlineResolverCapture.isTransientMediaUrl(url))) {
-                    compact.u = url;
-                }
-
-                items.push(compact);
-            });
-
-            var packed = { v: 2, link: commonLink, items: items };
-            packResolverUrls(packed);
-            var json = Utils.safeJson(packed);
-
-            if (json.length > CONFIG.syncPlaylistMaxChars) {
-                items.forEach(function (item) { delete item.t; });
-                json = Utils.safeJson(packed);
-            }
-
-            if (json.length > CONFIG.syncPlaylistMaxChars) {
-                items.forEach(function (item) { delete item.h; });
-                json = Utils.safeJson(packed);
-            }
-
-            if (json.length > CONFIG.syncPlaylistMaxChars) {
-                items.forEach(function (item) {
-                    if (Object.prototype.hasOwnProperty.call(item, 'r')) delete item.u;
-                });
-                json = Utils.safeJson(packed);
-            }
-
-            if (json.length > CONFIG.syncPlaylistMaxChars) {
-                items.forEach(function (item) {
-                    if (Object.prototype.hasOwnProperty.call(item, 'r')) delete item.f;
-                });
-                json = Utils.safeJson(packed);
-            }
-
-            if (json.length > CONFIG.syncPlaylistMaxChars) {
-                items.forEach(function (item) {
-                    if (item.f) item.f = String(item.f).slice(0, 120);
-                });
-            }
-
-            return packed;
-        }
-
-        function expandCompactPlaylist(params) {
-            params = params || {};
-            var packed = params.playlist_compact;
-            if (!packed || !Array.isArray(packed.items)) return [];
-
-            var commonLink = String(packed.link || params.torrent_link || '');
-
-            return packed.items.map(function (item, index) {
-                item = item || {};
-                var url = String(item.u || '');
-
-                if (!url && item.f && commonLink) {
-                    url = buildStreamUrl({
-                        file_name: item.f,
-                        torrent_link: commonLink,
-                        file_index: item.i !== undefined ? Number(item.i) : index
-                    }) || '';
-                }
-
-                var season = Number(item.s || 0);
-                var episode = Number(item.e || 0);
-                var hash = String(item.h || '') || generateTimelineHash(params, season, episode);
-                var title = item.t || (episode ? String(episode) : '');
-                var resolverUrl = unpackResolverUrl(item, packed);
-
-                return {
-                    url: url,
-                    uri: url,
-                    src: url,
-                    title: title,
-                    name: title,
-                    filename: item.f || '',
-                    file_name: item.f || '',
-                    file_index: item.i !== undefined ? Number(item.i) : index,
-                    playlist_index: index,
-                    season: season,
-                    episode: episode,
-                    torrent_hash: params.torrent_hash || '',
-                    online_resolver_url: resolverUrl,
-                    online_resolver_headers: null,
-                    online_resolver_at: Number(params.online_resolver_at || 0),
-                    timeline: hash ? { hash: hash, time: 0, duration: 0, percent: 0 } : undefined
-                };
-            });
-        }
-
-        function sanitizeRecord(data) {
-            data = data || {};
-            var out = Utils.shallowClone(data);
-            var image = Utils.extractImage(data);
-            var canonicalUrl = Utils.stripFragment(data.url || data.uri || data.src || '');
-            if (canonicalUrl) out.url = canonicalUrl;
-
-            if (Array.isArray(data.playlist) && data.playlist.length) {
-                out.playlist_compact = compactPlaylist(data.playlist, data.torrent_link);
-            }
-            delete out.playlist;
-
-            var compactActive = null;
-            var compactResolver = '';
-            if (out.playlist_compact && Array.isArray(out.playlist_compact.items)) {
-                var compactIndex = Number(data.playlist_index || 0);
-                if (compactIndex < 0) compactIndex = 0;
-                if (compactIndex >= out.playlist_compact.items.length) compactIndex = out.playlist_compact.items.length - 1;
-                compactActive = out.playlist_compact.items[compactIndex];
-                compactResolver = compactActive ? unpackResolverUrl(compactActive, out.playlist_compact) : '';
-                if (!out.url && compactActive && compactActive.u) out.url = Utils.stripFragment(compactActive.u);
-            }
-
-            if (compactResolver) {
-                if (
-                    out.online_resolver_url &&
-                    OnlineResolverCapture.portableResolverUrl(out.online_resolver_url) ===
-                        OnlineResolverCapture.portableResolverUrl(compactResolver)
-                ) {
-                    delete out.online_resolver_url;
-                    delete out.online_resolver_headers;
-                    delete out.online_resolver_at;
-                }
-
-                if (out.isonline && out.url && OnlineResolverCapture.isTransientMediaUrl(out.url)) {
-                    delete out.url;
-                }
-            }
-
-            // Duplicated values make one synchronized object unnecessarily large.
-            delete out.uri;
-            delete out.src;
-            delete out.currentItem;
-            delete out.image;
-            delete out.picture;
-            delete out.poster;
-            delete out.cover;
-            delete out.thumb;
-            delete out.thumbnail;
-            delete out.preview;
-            delete out.still_path;
-            if (image) out.img = image;
-
-            if (Utils.safeJson(out).length > CONFIG.syncRecordMaxChars && out.playlist_compact) {
-                out.playlist_compact.items.forEach(function (item) {
-                    delete item.t;
-                    delete item.h;
-                });
-            }
-
-            if (Utils.safeJson(out).length > CONFIG.syncRecordMaxChars) {
-                delete out.online_context;
-                delete out.online_resolver_headers;
-                delete out.online_resolver_at;
-                delete out.img;
-                if (out.episode_title && String(out.episode_title).length > 80) {
-                    out.episode_title = String(out.episode_title).slice(0, 80);
-                }
-                if (out.title && String(out.title).length > 100) {
-                    out.title = String(out.title).slice(0, 100);
-                }
-            }
-
-            return out;
-        }
-
-        function migrateCompactStorage(forceWrite) {
-            var params = getParams();
-            var changed = false;
-
-            Object.keys(params).forEach(function (key) {
-                if (key === '__last_by_movie' || key.indexOf('__last__') === 0) return;
-                var item = params[key];
-                if (!item || typeof item !== 'object') return;
-                var strictKey = getMovieKeyFromData(item);
-                if (strictKey && String(strictKey).indexOf('tmdb:') === 0 && item.card_key !== strictKey) {
-                    item.card_key = strictKey;
-                    changed = true;
-                }
-            });
-
-            if (params.__last_by_movie && typeof params.__last_by_movie === 'object') {
-                Object.keys(params.__last_by_movie).forEach(function (legacyMovieKey) {
-                    var pointer = params.__last_by_movie[legacyMovieKey];
-                    if (!pointer || !pointer.hash || !params[pointer.hash]) return;
-                    var record = params[pointer.hash];
-                    var strictKey = getMovieKeyFromData(record);
-                    if (!strictKey || String(strictKey).indexOf('tmdb:') !== 0) return;
-                    params[pointerStorageKey(strictKey)] = {
-                        kind: 'pointer',
-                        movie_key: strictKey,
-                        hash: pointer.hash,
-                        season: Number(record.season || pointer.season || 0),
-                        episode: Number(record.episode || pointer.episode || 0),
-                        media_type: record.media_type || pointer.media_type || '',
-                        timestamp: Number(record.timestamp || pointer.timestamp || Utils.now())
-                    };
-                });
-                delete params.__last_by_movie;
-                changed = true;
-            }
-
-            Object.keys(params).forEach(function (key) {
-                if (key.indexOf('__last__') === 0) return;
-                var item = params[key];
-                if (!item || typeof item !== 'object') return;
-
-                var clean = sanitizeRecord(item);
-                if (Utils.safeJson(clean) !== Utils.safeJson(item)) {
-                    params[key] = clean;
-                    changed = true;
-                }
-            });
-
-            if (changed || forceWrite) setParams(params, true);
-            return changed;
-        }
-
-        function recordActivityAt(data, hash) {
-            data = data || {};
-            hash = String(data.timeline_hash || hash || '');
-
-            var timelineUpdated = 0;
-            try {
-                var road = hash && Lampa.Timeline && Lampa.Timeline.view ? Lampa.Timeline.view(hash) : null;
-                timelineUpdated = Number(road && road.updated || 0);
-            } catch (e) {}
-
-            var explicitActivity = Number(data.activity_at || data.last_activity_at || 0);
-            var authoritative = Math.max(timelineUpdated, explicitActivity);
-            if (authoritative > 0) return authoritative;
-
-            // Legacy fallback only. Once Timeline/activity_at exists, storage rewrites
-            // and migrations can no longer make an older source look newer.
-            return Number(data.timestamp || data.original_timestamp || 0);
-        }
-
-        function updateLastPointer(params, data, hash) {
-            if (!data || !hash) return;
-
-            var mediaType = String(data.media_type || data.mediaType || '').toLowerCase();
-            var isMovie = mediaType === 'movie';
-            if (!isMovie && (!data.season || !data.episode)) return;
-
-            var movieKey = getMovieKeyFromData(data);
-            if (!movieKey) return;
-
-            var pointerKey = pointerStorageKey(movieKey);
-            var candidateAt = recordActivityAt(data, hash);
-            var currentPointer = params[pointerKey];
-
-            if (currentPointer && currentPointer.hash && params[currentPointer.hash]) {
-                var currentAt = recordActivityAt(params[currentPointer.hash], currentPointer.hash);
-                if (currentAt > candidateAt) return;
-            }
-
-            params[pointerKey] = {
-                kind: 'pointer',
-                movie_key: movieKey,
-                hash: hash,
-                season: Number(data.season || 0),
-                episode: Number(data.episode || 0),
-                media_type: mediaType || '',
-                activity_at: candidateAt,
-                timestamp: Utils.now()
-            };
-        }
-
-        function saveStreamParams(hash, data, forceTimestamp) {
-            if (!hash || !data) return false;
-
-            var params = getParams();
-            var previous = sanitizeRecord(params[hash] || {});
-            var incoming = sanitizeRecord(data);
-            var next = Utils.shallowClone(previous);
-
-            Object.keys(incoming).forEach(function (key) {
-                if (incoming[key] !== undefined) next[key] = incoming[key];
-            });
-
-            var changed = Utils.safeJson(previous) !== Utils.safeJson(next);
-
-            if (forceTimestamp || changed || !next.timestamp) {
-                next.timestamp = Utils.now();
-                if (!next.original_timestamp) next.original_timestamp = next.timestamp;
-                params[hash] = sanitizeRecord(next);
-                updateLastPointer(params, params[hash], hash);
-                setParams(params, true);
-                return true;
-            }
-
-            return false;
-        }
-
-        function getTorrServerUrl() {
-            try {
-                var url1 = Lampa.Storage.get('torrserver_url');
-                var url2 = Lampa.Storage.get('torrserver_url_two');
-                var useTwo = Lampa.Storage.field('torrserver_use_link') === 'two';
-                var url = useTwo ? (url2 || url1) : (url1 || url2);
-
-                if (!url) return null;
-                url = String(url).trim();
-                if (!url.match(/^https?:\/\//)) url = 'http://' + url;
-                return url.replace(/\/$/, '');
-            } catch (e) {
-                return null;
-            }
-        }
-
-        function buildStreamUrl(params) {
-            if (!params || !params.file_name || !params.torrent_link) return null;
-
-            var server = getTorrServerUrl();
-            if (!server) return null;
-
-            var file = encodeURIComponent(params.file_name);
-            var link = encodeURIComponent(params.torrent_link);
-            var index = params.file_index !== undefined ? Number(params.file_index || 0) : 0;
-
-            return server + '/stream/' + file + '?link=' + link + '&index=' + index + '&play';
-        }
-
-        function buildLaunchUrl(params) {
-            if (!params) return '';
-
-            var index = Number(params.playlist_index || 0);
-
-            if (Array.isArray(params.playlist) && params.playlist.length) {
-                if (index < 0) index = 0;
-                if (index >= params.playlist.length) index = params.playlist.length - 1;
-                var fullItem = params.playlist[index] || {};
-                var fullUrl = Utils.stripFragment(fullItem.url || fullItem.uri || fullItem.src || '');
-                if (fullUrl) {
-                    return Utils.parseStreamUrl(fullUrl) ? rebuildStreamUrl(fullUrl) : fullUrl;
-                }
-            }
-
-            var packed = params.playlist_compact;
-            if (packed && Array.isArray(packed.items) && packed.items.length) {
-                if (index < 0) index = 0;
-                if (index >= packed.items.length) index = packed.items.length - 1;
-                var compactItem = packed.items[index] || {};
-
-                if (compactItem.u) return Utils.stripFragment(compactItem.u);
-
-                var compactLink = String(packed.link || params.torrent_link || '');
-                if (compactItem.f && compactLink) {
-                    return buildStreamUrl({
-                        file_name: compactItem.f,
-                        torrent_link: compactLink,
-                        file_index: compactItem.i !== undefined ? Number(compactItem.i) : index
-                    }) || '';
-                }
-            }
-
-            if (params.file_name && params.torrent_link) return buildStreamUrl(params) || '';
-
-            var direct = Utils.stripFragment(params.url || params.uri || params.src || '');
-            if (direct) return Utils.parseStreamUrl(direct) ? rebuildStreamUrl(direct) : direct;
-            return '';
-        }
-
-        function rebuildStreamUrl(url) {
-            var parsed = Utils.parseStreamUrl(url);
-            if (!parsed) return Utils.stripFragment(url || '');
-            return buildStreamUrl(parsed) || Utils.stripFragment(url || '');
-        }
-
-        function generateTimelineHash(movie, season, episode) {
-            if (!movie) return '';
-
-            var originalTitle = Utils.getMovieTitle(movie);
-            season = Number(season || 0);
-            episode = Number(episode || 0);
-
-            if (!originalTitle) return '';
-
-            if (season > 0 && episode > 0) {
-                var separator = season > 10 ? ':' : '';
-                return Lampa.Utils.hash([season, separator, episode, originalTitle].join(''));
-            }
-
-            return Lampa.Utils.hash(originalTitle);
-        }
-
-        function getLastStreamParams(movie) {
-            if (!movie) return null;
-
-            var params = getParams();
-            var movieKey = getMovieKey(movie);
-            var originalTitle = Utils.getMovieTitle(movie);
-            var movieId = movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId || '';
-            var movieType = Utils.getMediaKind(movie) || '';
-            var pointer = movieKey ? params[pointerStorageKey(movieKey)] : null;
-            var pointerHash = pointer && pointer.hash ? String(pointer.hash) : '';
-            var list = [];
-
-            Object.keys(params).forEach(function (key) {
-                if (key === '__last_by_movie' || key.indexOf('__last__') === 0) return;
-
-                var item = params[key];
-                if (!item || typeof item !== 'object') return;
-
-                var matched = false;
-                var itemKey = getMovieKeyFromData(item);
-                if (itemKey && itemKey === movieKey) matched = true;
-
-                if (!matched) {
-                    // Legacy v5.3 and older: never match by bare numeric id alone.
-                    var itemId = item.movie_id || item.tmdb_id || item.tmdbId || '';
-                    var itemTitle = item.original_title || item.original_name || item.name || item.title || '';
-                    var itemType = String(item.media_type || item.mediaType || '').toLowerCase();
-                    var sameId = movieId && itemId && String(movieId) === String(itemId);
-                    var sameTitle = originalTitle && itemTitle && String(originalTitle) === String(itemTitle);
-                    var typeCompatible = !itemType || !movieType || itemType === movieType;
-                    matched = !!(sameId && sameTitle && typeCompatible);
-                }
-
-                if (!matched) return;
-
-                list.push({
-                    key: String(key),
-                    item: item,
-                    activity: recordActivityAt(item, key),
-                    pointer: pointerHash && String(key) === pointerHash ? 1 : 0,
-                    timestamp: Number(item.timestamp || 0)
-                });
-            });
-
-            list.sort(function (a, b) {
-                if (b.activity !== a.activity) return b.activity - a.activity;
-                if (b.pointer !== a.pointer) return b.pointer - a.pointer;
-                return b.timestamp - a.timestamp;
-            });
-
-            return list.length ? list[0].item : null;
-        }
-
-        function cleanupOld() {
-            var params = getParams();
-            var current = Utils.now();
-            var changed = false;
-
-            Object.keys(params).forEach(function (key) {
-                if (key === '__last_by_movie' || key.indexOf('__last__') === 0) return;
-                var item = params[key];
-                if (!item || typeof item !== 'object') return;
-
-                if (item.timestamp && current - Number(item.timestamp) > CONFIG.cleanupAgeMs) {
-                    delete params[key];
-                    changed = true;
-                }
-            });
-
-            if (params.__last_by_movie) {
-                Object.keys(params.__last_by_movie).forEach(function (key) {
-                    var pointer = params.__last_by_movie[key];
-                    if (!pointer || !pointer.hash || !params[pointer.hash]) {
-                        delete params.__last_by_movie[key];
-                        changed = true;
-                    }
-                });
-            }
-
-            Object.keys(params).forEach(function (key) {
-                if (key.indexOf('__last__') !== 0) return;
-                var pointer = params[key];
-                if (!pointer || !pointer.hash || !params[pointer.hash]) {
-                    delete params[key];
-                    changed = true;
-                }
-            });
-
-            if (changed) setParams(params, true);
-        }
-
-        return {
-            ensureSync: ensureSync,
-            getParams: getParams,
-            setParams: setParams,
-            getProfileId: getProfileId,
-            getStorageKey: getStorageKey,
-            getMovieKey: getMovieKey,
-            getMovieKeyFromData: getMovieKeyFromData,
-            compactPlaylist: compactPlaylist,
-            expandCompactPlaylist: expandCompactPlaylist,
-            migrateCompactStorage: migrateCompactStorage,
-            saveStreamParams: saveStreamParams,
-            buildLaunchUrl: buildLaunchUrl,
-            rebuildStreamUrl: rebuildStreamUrl,
-            generateTimelineHash: generateTimelineHash,
-            getLastStreamParams: getLastStreamParams,
-            cleanupOld: cleanupOld
-        };
-    })();
-
-    // ============================================================
-    // SessionManager
-    // ============================================================
-
-    var SessionManager = (function () {
-        var currentSession = null;
-        var hashMetaByHash = {};
-
-        function normalizePlaylist(playlist) {
-            if (!Array.isArray(playlist)) return [];
-
-            return playlist.filter(function (item) {
-                return item && typeof item === 'object';
-            }).map(function (item, index) {
-                var normalized = Utils.shallowClone(item);
-                var rawUrl = item.url || item.uri || item.src || '';
-                var url = typeof rawUrl === 'string' ? rawUrl : '';
-                var parsed = Utils.parseStreamUrl(url);
-                var image = Utils.extractImage(item);
-
-                normalized.url = Utils.stripFragment(url || '');
-                normalized.uri = normalized.uri || normalized.url;
-                normalized.src = normalized.src || normalized.url;
-                normalized.title = Utils.firstNonEmpty(item.title, item.name, item.label);
-                normalized.name = Utils.firstNonEmpty(item.name, item.title, item.label);
-                normalized.filename = Utils.firstNonEmpty(item.filename, item.file_name, item.path, parsed ? parsed.file_name : '');
-                normalized.file_name = Utils.firstNonEmpty(item.file_name, item.filename, item.path, parsed ? parsed.file_name : '');
-                normalized.index = index;
-
-                // Keep playlist_index separate from TorrServer file_index.
-                normalized.playlist_index = index;
-                if (item.file_index !== undefined && item.file_index !== null && item.file_index !== '') {
-                    normalized.file_index = Number(item.file_index);
-                } else if (parsed && parsed.file_index !== undefined) {
-                    normalized.file_index = Number(parsed.file_index);
-                }
-
-                normalized.season = Number(Utils.firstNonEmpty(item.season, item.season_number, item.s, 0) || 0);
-                normalized.episode = Number(Utils.firstNonEmpty(item.episode, item.episode_number, item.e, 0) || 0);
-
-                if (image) Utils.copyImageFields(normalized, image);
-                return normalized;
-            });
-        }
-
-        function getMovieFromData(data) {
-            data = data || {};
-            return data.card || data.movie || data.card_data || data.data || Utils.getActivityMovie() || data;
-        }
-
-        function getItemAt(playlist, index) {
-            if (!playlist || !playlist.length) return null;
-            index = Number(index || 0);
-            if (index < 0 || index >= playlist.length) return null;
-            return playlist[index] || null;
-        }
-
-        function inferPlaylistIndex(data, playlist, url) {
-            data = data || {};
-
-            if (data.playlist_index !== undefined && data.playlist_index !== null && data.playlist_index !== '') {
-                return Number(data.playlist_index);
-            }
-            if (data.start_index !== undefined && data.start_index !== null && data.start_index !== '') {
-                return Number(data.start_index);
-            }
-            if (data.windowIndex !== undefined && data.windowIndex !== null && data.windowIndex !== '') {
-                return Number(data.windowIndex);
-            }
-
-            var cleanUrl = Utils.stripFragment(url || '');
-            var identity = Utils.streamIdentity(cleanUrl);
-
-            if (playlist && playlist.length && cleanUrl) {
-                for (var i = 0; i < playlist.length; i++) {
-                    if (Utils.stripFragment(playlist[i].url || '') === cleanUrl) return i;
-                    if (Utils.streamIdentity(playlist[i].url || '') === identity) return i;
-
-                    if (playlist[i].quality && typeof playlist[i].quality === 'object') {
-                        var qualities = playlist[i].quality;
-                        var keys = Object.keys(qualities);
-                        for (var q = 0; q < keys.length; q++) {
-                            if (Utils.stripFragment(String(qualities[keys[q]] || '')) === cleanUrl) return i;
-                        }
-                    }
-                }
-            }
-
-            return 0;
-        }
-
-        function playlistHasEpisodeMetadata(playlist) {
-            if (!playlist || !playlist.length) return false;
-            for (var i = 0; i < playlist.length; i++) {
-                if (Number(playlist[i].season || 0) > 0 && Number(playlist[i].episode || 0) > 0) return true;
-            }
-            return false;
-        }
-
-        function resolveSE(data, movie, item, playlistIndex, playlist) {
-            var explicit = Utils.extractExplicitSE(data);
-            if (explicit) {
-                explicit.source = 'play_data_explicit';
-                return explicit;
-            }
-
-            explicit = Utils.extractExplicitSE(item);
-            if (explicit) {
-                explicit.source = 'playlist_metadata';
-                return explicit;
-            }
-
-            var fallbackSeason = Number(
-                (data && (data.season || data.season_number || data.s)) ||
-                (item && (item.season || item.season_number || item.s)) ||
-                0
-            );
-
-            var textResult = Utils.extractSEFromText(item || data || {}, fallbackSeason);
-            if (textResult) return textResult;
-
-            textResult = Utils.extractSEFromText(data || {}, fallbackSeason);
-            if (textResult) return textResult;
-
-            // Legacy fallback only when the playlist contains no explicit episode metadata at all.
-            // This prevents playlist index 2 from becoming E03 when the real item is e.g. S02E06.
-            if (
-                Utils.getMediaKind(movie) === 'tv' &&
-                Number(playlistIndex) >= 0 &&
-                !playlistHasEpisodeMetadata(playlist)
-            ) {
-                return {
-                    season: fallbackSeason || 1,
-                    episode: Number(playlistIndex) + 1,
-                    source: 'legacy_playlist_index_fallback'
-                };
-            }
-
-            return { season: 0, episode: 0, source: '' };
-        }
-
-        function buildParams(session) {
-            var parsed = Utils.parseStreamUrl(session.url);
-            var movie = session.movie || {};
-            var item = session.currentItem || {};
-            var image = Utils.extractImage(item) || Utils.extractImage(session) || Utils.extractImage(movie);
-
-            var data = {
-                card_key: StorageManager.getMovieKey(movie) || '',
-                profile_id: StorageManager.getProfileId() !== null ? StorageManager.getProfileId() : 'guest',
-                isonline: !!session.isOnline,
-                online_context: session.onlineContext || null,
-                online_resolver_url: session.onlineResolver && session.onlineResolver.url ? String(session.onlineResolver.url) : '',
-                online_resolver_headers: session.onlineResolver && session.onlineResolver.headers ? session.onlineResolver.headers : null,
-                online_resolver_at: session.onlineResolver ? Number(session.onlineResolver.capturedAt || 0) : 0,
-                url: Utils.stripFragment(session.url || ''),
-                uri: Utils.stripFragment(session.url || ''),
-                src: Utils.stripFragment(session.url || ''),
-                title: session.title || item.title || Utils.getMovieTitle(movie),
-                episode_title: item.title || session.episode_title || '',
-                movie_id: movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId || '',
-                tmdb_id: movie.id || movie.tmdb_id || movie.tmdbId || '',
-                original_title: movie.original_title || '',
-                original_name: movie.original_name || movie.name || '',
-                name: movie.name || movie.title || '',
-                media_type: Utils.getMediaKind(movie),
-                season: Number(session.season || 0),
-                episode: Number(session.episode || 0),
-                playlist_index: Number(session.playlistIndex || 0),
-                file_index: parsed && parsed.file_index !== undefined
-                    ? Number(parsed.file_index)
-                    : (item.file_index !== undefined ? Number(item.file_index) : 0),
-                file_name: parsed ? parsed.file_name : (item.file_name || item.filename || ''),
-                torrent_link: parsed ? parsed.torrent_link : '',
-                torrent_hash: String(session.torrentHash || item.torrent_hash || ''),
-                playlist: session.playlist || [],
-                transport: session.transport || 'lampa',
-                timeline_hash: String(session.hash || '')
-            };
-
-            if (image) data.img = image;
-            return data;
-        }
-
-        function rememberHash(hash, meta) {
-            if (!hash) return;
-            hashMetaByHash[String(hash)] = meta || {};
-        }
-
-        function register(session) {
-            if (!session) return null;
-            currentSession = session;
-
-            if (session.hash) {
-                rememberHash(session.hash, {
-                    session: session,
-                    index: Number(session.playlistIndex || 0),
-                    item: session.currentItem || null,
-                    season: Number(session.season || 0),
-                    episode: Number(session.episode || 0),
-                    source: 'current'
-                });
-            }
-
-            if (session.playlist && session.playlist.length) {
-                for (var i = 0; i < session.playlist.length; i++) {
-                    var item = session.playlist[i];
-                    var se = resolveSE(item, session.movie, item, i, session.playlist);
-                    if (!se.season || !se.episode) continue;
-
-                    var itemHash = item && item.timeline && item.timeline.hash && String(item.timeline.hash) !== '0'
-                        ? String(item.timeline.hash)
-                        : StorageManager.generateTimelineHash(session.movie, se.season, se.episode);
-                    if (!itemHash) continue;
-
-                    rememberHash(itemHash, {
-                        session: session,
-                        index: i,
-                        item: item,
-                        season: Number(se.season),
-                        episode: Number(se.episode),
-                        source: se.source || 'playlist'
-                    });
-                }
-            }
-
-            return session;
-        }
-
-        function buildFromPlayData(data, options) {
-            options = options || {};
-            data = data || {};
-
-            var movie = options.movie || getMovieFromData(data);
-            var url = Utils.stripFragment(options.url || data.url || data.uri || data.src || '');
-            var playlist = normalizePlaylist(options.playlist || data.playlist || []);
-            if (data.isonline && playlist.length) OnlineResolverCapture.enrichPlaylist(movie, playlist);
-            var playlistIndex = inferPlaylistIndex(data, playlist, url);
-
-            if (playlist.length) {
-                if (playlistIndex < 0) playlistIndex = 0;
-                if (playlistIndex >= playlist.length) playlistIndex = playlist.length - 1;
-            } else {
-                playlistIndex = 0;
-            }
-
-            var item = getItemAt(playlist, playlistIndex);
-            if (!url && item && item.url) url = item.url;
-
-            var se = resolveSE(data, movie, item, playlistIndex, playlist);
-            var timelineHash = data.timeline && data.timeline.hash
-                ? String(data.timeline.hash)
-                : StorageManager.generateTimelineHash(movie, se.season, se.episode);
-
-            var session = {
-                source: options.source || '',
-                transport: options.transport || (Utils.isJustTransport() ? 'just' : 'lampa'),
-                movie: movie,
-                url: url,
-                initialUrl: url,
-                title: data.title || (item && item.title) || Utils.getMovieTitle(movie),
-                episode_title: (item && item.title) || data.episode_title || '',
-                playlist: playlist,
-                playlistIndex: playlistIndex,
-                startIndex: playlistIndex,
-                currentItem: item,
-                season: se.season || 0,
-                episode: se.episode || 0,
-                seSource: se.source || '',
-                hash: timelineHash,
-                createdAt: Utils.now(),
-                updatedAt: Utils.now(),
-                lampaTime: Number(data.time || data.position || (data.timeline && data.timeline.time) || 0),
-                lampaDuration: Number(data.duration || (data.timeline && data.timeline.duration) || 0),
-                lampaPercent: Number(data.percent || (data.timeline && data.timeline.percent) || 0),
-                torrentHash: String(data.torrent_hash || (item && item.torrent_hash) || ''),
-                isOnline: !!data.isonline,
-                onlineContext: Utils.captureOnlineContext(data, movie),
-                onlineResolver: data.online_resolver_url
-                    ? {
-                        url: OnlineResolverCapture.portableResolverUrl(data.online_resolver_url || ''),
-                        headers: data.online_resolver_headers || {},
-                        capturedAt: Number(data.online_resolver_at || Utils.now())
-                    }
-                    : (data.isonline
-                        ? (OnlineResolverCapture.lookup(url) || OnlineResolverCapture.lookupEpisode(movie, item || data))
-                        : null),
-                lastRoad: null,
-                params: null
-            };
-
-            var image = Utils.extractImage(data) || Utils.extractImage(item) || Utils.extractImage(movie);
-            if (image) Utils.copyImageFields(session, image);
-
-            session.params = buildParams(session);
-            return register(session);
-        }
-
-        function updateByPlaylistIndex(index, payload) {
-            if (!currentSession) return null;
-
-            index = Number(index);
-            if (isNaN(index) || index < 0 || index >= currentSession.playlist.length) return currentSession;
-
-            payload = payload || {};
-            var item = getItemAt(currentSession.playlist, index);
-            var explicit = Utils.extractExplicitSE(payload) || Utils.extractExplicitSE(payload.currentItem);
-            var itemExplicit = Utils.extractExplicitSE(item);
-            var se = explicit || itemExplicit || resolveSE(payload, currentSession.movie, item, index, currentSession.playlist);
-
-            var url = Utils.stripFragment(
-                payload.uri || payload.url ||
-                (payload.currentItem && (payload.currentItem.uri || payload.currentItem.url)) ||
-                (item && item.url) ||
-                currentSession.url || ''
-            );
-
-            var hash = item && item.timeline && item.timeline.hash && String(item.timeline.hash) !== '0'
-                ? String(item.timeline.hash)
-                : StorageManager.generateTimelineHash(currentSession.movie, se.season, se.episode);
-            var image = Utils.extractImage(item) || Utils.extractImage(payload) || Utils.extractImage(currentSession);
-
-            currentSession.url = url;
-            if (currentSession.isOnline) {
-                var resolverFromPayload = payload.online_resolver_url
-                    ? {
-                        url: OnlineResolverCapture.portableResolverUrl(payload.online_resolver_url || ''),
-                        headers: payload.online_resolver_headers || {},
-                        capturedAt: Number(payload.online_resolver_at || Utils.now())
-                    }
-                    : (item && item.online_resolver_url
-                        ? {
-                            url: OnlineResolverCapture.portableResolverUrl(item.online_resolver_url || ''),
-                            headers: item.online_resolver_headers || {},
-                            capturedAt: Number(item.online_resolver_at || Utils.now())
-                        }
-                        : (OnlineResolverCapture.lookup(url) ||
-                            OnlineResolverCapture.lookupEpisode(currentSession.movie, item || payload)));
-                if (resolverFromPayload) currentSession.onlineResolver = resolverFromPayload;
-            }
-            currentSession.playlistIndex = index;
-            currentSession.currentItem = item;
-            currentSession.title = payload.title || (item && item.title) || currentSession.title;
-            currentSession.episode_title = (item && item.title) || currentSession.episode_title || '';
-            currentSession.season = Number(se.season || currentSession.season || 0);
-            currentSession.episode = Number(se.episode || currentSession.episode || 0);
-            currentSession.torrentHash = String(
-                payload.torrent_hash || (item && item.torrent_hash) || currentSession.torrentHash || ''
-            );
-            currentSession.seSource = se.source || currentSession.seSource || '';
-            currentSession.hash = hash || currentSession.hash;
-            currentSession.updatedAt = Utils.now();
-
-            if (image) Utils.copyImageFields(currentSession, image);
-            currentSession.params = buildParams(currentSession);
-
-            return register(currentSession);
-        }
-
-        function updateByTimelineHash(hash, payload) {
-            if (!hash) return currentSession;
-
-            var meta = hashMetaByHash[String(hash)];
-            if (!meta || !currentSession) return currentSession;
-
-            var updatePayload = payload ? Utils.shallowClone(payload) : {};
-            var item = meta.item || getItemAt(currentSession.playlist, meta.index);
-
-            updatePayload.season = Number(meta.season || 0);
-            updatePayload.episode = Number(meta.episode || 0);
-            updatePayload.playlist_index = Number(meta.index || 0);
-
-            if (item) {
-                updatePayload.uri = updatePayload.uri || item.url || item.uri || item.src || '';
-                updatePayload.title = updatePayload.title || item.title || item.name || '';
-                updatePayload.currentItem = updatePayload.currentItem || item;
-            }
-
-            currentSession = updateByPlaylistIndex(Number(meta.index || 0), updatePayload) || currentSession;
-            currentSession.hash = String(hash);
-            currentSession.season = Number(meta.season || currentSession.season || 0);
-            currentSession.episode = Number(meta.episode || currentSession.episode || 0);
-            currentSession.params = buildParams(currentSession);
-            register(currentSession);
-
-            return currentSession;
-        }
-
-        function hasHash(hash) {
-            return !!(hash && hashMetaByHash[String(hash)]);
-        }
-
-        function getMetaByHash(hash) {
-            return hash ? hashMetaByHash[String(hash)] || null : null;
-        }
-
-        function getCurrent() {
-            return currentSession;
-        }
-
-        function updateRoad(road) {
-            if (!currentSession) return;
-            currentSession.lastRoad = road;
-            currentSession.updatedAt = Utils.now();
-        }
-
-        return {
-            normalizePlaylist: normalizePlaylist,
-            buildFromPlayData: buildFromPlayData,
-            buildParams: buildParams,
-            updateByPlaylistIndex: updateByPlaylistIndex,
-            updateByTimelineHash: updateByTimelineHash,
-            hasHash: hasHash,
-            getMetaByHash: getMetaByHash,
-            getCurrent: getCurrent,
-            updateRoad: updateRoad,
-            register: register
-        };
-    })();
-
-    // ============================================================
-    // Core
-    // ============================================================
-
-    var Core = (function () {
-        var lastSaveByHash = {};
-
-        function calculatePercent(time, duration, percent) {
-            time = Number(time || 0);
-            duration = Number(duration || 0);
-            percent = Number(percent || 0);
-
-            if (!percent && duration > 0) percent = Math.round(time / duration * 100);
-            return Utils.clamp(percent, 0, 100);
-        }
-
-        function shouldSave(hash, force) {
-            if (!hash) return false;
-            var current = Utils.now();
-            var last = Number(lastSaveByHash[hash] || 0);
-
-            if (force || current - last >= 1000) {
-                lastSaveByHash[hash] = current;
-                return true;
-            }
-
-            return false;
-        }
-
-        function consume(event) {
-            if (!event || !event.type) return;
-
-            var session = event.session || SessionManager.getCurrent();
-            if (!session) return;
-
-            if (event.hash && String(event.hash) !== String(session.hash || '') && SessionManager.hasHash(event.hash)) {
-                session = SessionManager.updateByTimelineHash(event.hash, event) || session;
-            }
-
-            if (event.playlist_index !== undefined && event.playlist_index !== null) {
-                session = SessionManager.updateByPlaylistIndex(event.playlist_index, event) || session;
-            }
-
-            var hash = event.hash || session.hash;
-            if (!hash) return;
-
-            var time = Number(event.time || 0);
-            var duration = Number(event.duration || 0);
-            var percent = calculatePercent(time, duration, event.percent);
-
-            if (event.type === 'ended') {
-                percent = 100;
-                if (!time && duration) time = duration;
-            }
-
-            var params = SessionManager.buildParams(session);
-            params.time = time;
-            params.duration = duration;
-            params.percent = percent;
-            params.timeline_hash = String(hash || params.timeline_hash || '');
-            params.last_source = event.source || session.transport || 'lampa';
-            params.last_event_type = event.type;
-            params.last_reason = event.reason || '';
-
-            var previousActivityAt = 0;
-            try {
-                var storedForActivity = StorageManager.getParams();
-                previousActivityAt = Number(storedForActivity && storedForActivity[hash] && storedForActivity[hash].activity_at || 0);
-            } catch (eActivity) {}
-
-            var eventActivityAt = Number(event.activity_at || event.updated || 0);
-            var meaningfulActivity = event.type !== 'start' && (
-                time > 0 || percent > 0 || event.type === 'ended' || event.type === 'stop'
-            );
-            if (!eventActivityAt && meaningfulActivity) eventActivityAt = Utils.now();
-            params.activity_at = Math.max(previousActivityAt, eventActivityAt, Number(params.activity_at || 0));
-
-            session.lampaTime = time;
-            session.lampaDuration = duration;
-            session.lampaPercent = percent;
-            session.params = params;
-
-            if (event.type === 'start') {
-                StorageManager.saveStreamParams(hash, params, true);
-                return;
-            }
-
-            if (!shouldSave(hash, !!event.force)) return;
-
-            if (
-                duration >= CONFIG.minDurationSeconds ||
-                event.force ||
-                event.type === 'ended' ||
-                event.type === 'stop'
-            ) {
-                if (
-                    time >= CONFIG.minSaveSeconds ||
-                    percent >= CONFIG.finishPercent ||
-                    event.force ||
-                    event.type === 'ended'
-                ) {
-                    StorageManager.saveStreamParams(hash, params, true);
-                }
-
-                SessionManager.updateRoad({
-                    hash: hash,
-                    time: time,
-                    duration: duration,
-                    percent: percent,
-                    source: params.last_source,
-                    type: event.type
-                });
-            }
-        }
-
-        return {
-            consume: consume
-        };
-    })();
-
-    // ============================================================
-    // JustPlusTransport
-    // ============================================================
-
-    var JustPlusTransport = (function () {
-        var installed = false;
-        var lastTimelineHash = '';
-        var lastResolvedHash = '';
-        var lastResolvedAt = 0;
-        var reconcileTimer = null;
-        var periodicTimer = null;
-
-        function matches() {
-            return Utils.isJustTransport();
-        }
-
-        function readPending() {
-            try {
-                var raw = localStorage.getItem(CONFIG.justPendingKey);
-                if (!raw) return null;
-                var data = JSON.parse(raw);
-                return data && typeof data === 'object' ? data : null;
-            } catch (e) {
-                return null;
-            }
-        }
-
-        function writePending(pending) {
-            try {
-                if (pending) localStorage.setItem(CONFIG.justPendingKey, JSON.stringify(pending));
-                else localStorage.removeItem(CONFIG.justPendingKey);
-            } catch (e) {}
-        }
-
-        function timelineRoad(hash) {
-            if (!hash || !Lampa.Timeline || !Lampa.Timeline.view) return null;
-            try {
-                return Lampa.Timeline.view(hash);
-            } catch (e) {
-                return null;
-            }
-        }
-
-        function itemHash(session, item, index) {
-            if (item && item.timeline && item.timeline.hash && String(item.timeline.hash) !== '0') {
-                return String(item.timeline.hash);
-            }
-
-            var season = Number(item && item.season || 0);
-            var episode = Number(item && item.episode || 0);
-
-            if ((!season || !episode) && session && Number(session.playlistIndex) === Number(index)) {
-                season = Number(session.season || season || 0);
-                episode = Number(session.episode || episode || 0);
-            }
-
-            return StorageManager.generateTimelineHash(session && session.movie, season, episode);
-        }
-
-        function minimalMovie(movie) {
-            movie = movie || {};
-            return {
-                id: movie.id || movie.movie_id || movie.tmdb_id || movie.tmdbId || '',
-                original_title: movie.original_title || '',
-                original_name: movie.original_name || movie.name || '',
-                name: movie.name || movie.title || '',
-                title: movie.title || movie.name || '',
-                media_type: Utils.getMediaKind(movie)
-            };
-        }
-
-        function arm(session) {
-            if (!matches() || !session) return false;
-
-            var items = [];
-            var playlist = session.playlist && session.playlist.length
-                ? session.playlist
-                : [session.currentItem || {}];
-
-            for (var i = 0; i < playlist.length; i++) {
-                var item = playlist[i] || {};
-                var hash = itemHash(session, item, i);
-                if (!hash || String(hash) === '0') continue;
-
-                var road = timelineRoad(hash) || {};
-                var parsed = Utils.parseStreamUrl(item.url || item.uri || item.src || '');
-                var image = Utils.extractImage(item);
-
-                items.push({
-                    hash: String(hash),
-                    index: i,
-                    season: Number(item.season || (i === Number(session.playlistIndex) ? session.season : 0) || 0),
-                    episode: Number(item.episode || (i === Number(session.playlistIndex) ? session.episode : 0) || 0),
-                    url: Utils.stripFragment(item.url || item.uri || item.src || ''),
-                    title: item.title || item.name || '',
-                    image: image || '',
-                    file_index: item.file_index !== undefined
-                        ? Number(item.file_index)
-                        : (parsed && parsed.file_index !== undefined ? Number(parsed.file_index) : 0),
-                    before_updated: Number(road.updated || 0)
-                });
-            }
-
-            if (!items.length && session.hash) {
-                var currentRoad = timelineRoad(session.hash) || {};
-                items.push({
-                    hash: String(session.hash),
-                    index: Number(session.playlistIndex || 0),
-                    season: Number(session.season || 0),
-                    episode: Number(session.episode || 0),
-                    url: Utils.stripFragment(session.url || ''),
-                    title: session.episode_title || session.title || '',
-                    image: Utils.extractImage(session) || '',
-                    file_index: Number(session.params && session.params.file_index || 0),
-                    before_updated: Number(currentRoad.updated || 0)
-                });
-            }
-
-            writePending({
-                version: BOOT_VERSION,
-                launch_at: Utils.now(),
-                source_hash: String(session.hash || ''),
-                movie_key: StorageManager.getMovieKey(session.movie) || '',
-                movie: minimalMovie(session.movie),
-                start_index: Number(session.playlistIndex || 0),
-                items: items,
-                events: [],
-                return_started_at: 0,
-                return_window_until: 0,
-                last_event_hash: '',
-                last_event_seen_at: 0,
-                resolved_hash: '',
-                resolved_event_seen_at: 0,
-                resolved_at: 0
-            });
-
-            return true;
-        }
-
-        function pendingItemByHash(pending, hash) {
-            if (!pending || !pending.items || !hash) return null;
-            for (var i = 0; i < pending.items.length; i++) {
-                if (String(pending.items[i].hash) === String(hash)) return pending.items[i];
-            }
-            return null;
-        }
-
-        function pendingItemByIndex(pending, index) {
-            if (!pending || !pending.items) return null;
-            index = Number(index);
-            for (var i = 0; i < pending.items.length; i++) {
-                if (Number(pending.items[i].index) === index) return pending.items[i];
-            }
-            return null;
-        }
-
-        function pageLooksActive() {
-            try {
-                if (document.visibilityState === 'hidden') return false;
-            } catch (e) {}
-            try {
-                if (document.hasFocus && !document.hasFocus()) return false;
-            } catch (e2) {}
-            return true;
-        }
-
-        function appendReturnEvent(pending, data, knownItem) {
-            if (!pending || !data || !data.hash || !data.road) return pending;
-
-            var now = Utils.now();
-            var road = data.road || {};
-            var hash = String(data.hash);
-            var event = {
-                hash: hash,
-                seen_at: now,
-                updated: Number(road.updated || now),
-                time: Number(road.time || 0),
-                duration: Number(road.duration || 0),
-                percent: Number(road.percent || 0),
-                known_index: knownItem ? Number(knownItem.index) : -1
-            };
-
-            if (!Array.isArray(pending.events)) pending.events = [];
-
-            var replaced = false;
-            for (var i = pending.events.length - 1; i >= 0; i--) {
-                var old = pending.events[i];
-                if (
-                    String(old.hash) === hash &&
-                    Number(old.updated || 0) === Number(event.updated || 0) &&
-                    Number(old.time || 0) === Number(event.time || 0) &&
-                    Number(old.duration || 0) === Number(event.duration || 0)
-                ) {
-                    pending.events[i] = event;
-                    replaced = true;
-                    break;
-                }
-            }
-
-            if (!replaced) pending.events.push(event);
-            if (pending.events.length > 40) pending.events = pending.events.slice(-40);
-
-            if (!pending.return_started_at) pending.return_started_at = now;
-            pending.return_window_until = now + CONFIG.justReturnBurstMs;
-            pending.last_event_hash = hash;
-            pending.last_event_seen_at = now;
-            return pending;
-        }
-
-        function buildSyntheticEvents(pending) {
-            var events = [];
-            if (!pending || !pending.items) return events;
-
-            for (var i = 0; i < pending.items.length; i++) {
-                var item = pending.items[i];
-                var road = timelineRoad(item.hash);
-                if (!road) continue;
-
-                var updated = Number(road.updated || 0);
-                if (!updated || updated <= Number(item.before_updated || 0)) continue;
-                if (pending.launch_at && updated + 2000 < Number(pending.launch_at)) continue;
-
-                events.push({
-                    hash: String(item.hash),
-                    seen_at: updated,
-                    updated: updated,
-                    time: Number(road.time || 0),
-                    duration: Number(road.duration || 0),
-                    percent: Number(road.percent || 0),
-                    known_index: Number(item.index)
-                });
-            }
-
-            return events;
-        }
-
-        function getFreshEvents(pending) {
-            var all = [];
-            var resolvedSeen = Number(pending && pending.resolved_event_seen_at || 0);
-
-            if (pending && Array.isArray(pending.events)) {
-                pending.events.forEach(function (event) {
-                    if (Number(event.seen_at || 0) > resolvedSeen) all.push(event);
-                });
-            }
-
-            buildSyntheticEvents(pending).forEach(function (event) {
-                var duplicate = false;
-                for (var i = 0; i < all.length; i++) {
-                    if (
-                        String(all[i].hash) === String(event.hash) &&
-                        Number(all[i].updated || 0) === Number(event.updated || 0)
-                    ) {
-                        duplicate = true;
-                        break;
-                    }
-                }
-                if (!duplicate && Number(event.seen_at || 0) > resolvedSeen) all.push(event);
-            });
-
-            all.sort(function (a, b) {
-                return Number(a.seen_at || 0) - Number(b.seen_at || 0);
-            });
-
-            return all;
-        }
-
-        function inferItemForEvent(pending, event, events) {
-            var direct = pendingItemByHash(pending, event.hash);
-            if (direct) return direct;
-
-            if (Number(event.known_index) >= 0) {
-                direct = pendingItemByIndex(pending, event.known_index);
-                if (direct) return direct;
-            }
-
-            var startIndex = Number(pending.start_index || 0);
-            var firstCompletionIndex = null;
-            var lastCompletionIndex = null;
-
-            for (var i = 0; i < events.length; i++) {
-                var e = events[i];
-                if (Number(e.seen_at || 0) > Number(event.seen_at || 0)) break;
-                if (Number(e.percent || 0) < 100 || Number(e.known_index) < 0) continue;
-
-                if (firstCompletionIndex === null) firstCompletionIndex = Number(e.known_index);
-                lastCompletionIndex = Number(e.known_index);
-            }
-
-            var inferredIndex = startIndex;
-
-            if (firstCompletionIndex !== null) {
-                if (firstCompletionIndex < startIndex) {
-                    inferredIndex = firstCompletionIndex - 1;
-                } else if (lastCompletionIndex !== null) {
-                    inferredIndex = lastCompletionIndex + 1;
-                }
-            }
-
-            if (inferredIndex < 0) inferredIndex = 0;
-            if (pending.items && inferredIndex >= pending.items.length) inferredIndex = pending.items.length - 1;
-
-            return pendingItemByIndex(pending, inferredIndex);
-        }
-
-        function chooseCandidate(pending) {
-            var events = getFreshEvents(pending);
-            if (!events.length) return null;
-
-            var playable = events.filter(function (event) {
-                return Number(event.time || 0) > 0 &&
-                    Number(event.duration || 0) > 0 &&
-                    Number(event.percent || 0) < 100;
-            });
-
-            var pool = playable.length ? playable : events.filter(function (event) {
-                return Number(event.time || 0) > 0 && Number(event.duration || 0) > 0;
-            });
-
-            if (!pool.length) {
-                // A 100% update for the launched episode is usually Lampa marking the
-                // previous item complete while Just+ has already moved to another item.
-                // Never let that alone overwrite Continue Watching immediately.
-                return {
-                    completionOnly: true,
-                    events: events,
-                    lastEvent: events[events.length - 1]
-                };
-            }
-
-            pool.sort(function (a, b) {
-                if (Number(b.seen_at || 0) !== Number(a.seen_at || 0)) {
-                    return Number(b.seen_at || 0) - Number(a.seen_at || 0);
-                }
-                if (Number(b.updated || 0) !== Number(a.updated || 0)) {
-                    return Number(b.updated || 0) - Number(a.updated || 0);
-                }
-                return 0;
-            });
-
-            var event = pool[0];
-            var item = inferItemForEvent(pending, event, events);
-            if (!item) return null;
-
-            return {
-                completionOnly: false,
-                item: item,
-                event: event,
-                road: {
-                    time: Number(event.time || 0),
-                    duration: Number(event.duration || 0),
-                    percent: Number(event.percent || 0),
-                    updated: Number(event.updated || event.seen_at || 0)
-                },
-                events: events
-            };
-        }
-
-        function findBaseStored(pending) {
-            var params = StorageManager.getParams();
-            if (!params || typeof params !== 'object') return null;
-
-            if (pending.source_hash && params[pending.source_hash]) {
-                var sourceRecord = params[pending.source_hash];
-                var sourceKey = StorageManager.getMovieKeyFromData(sourceRecord);
-                if (sourceKey && sourceKey === pending.movie_key) return sourceRecord;
-            }
-
-            var best = null;
-            Object.keys(params).forEach(function (key) {
-                if (key === '__last_by_movie') return;
-                var item = params[key];
-                if (!item || typeof item !== 'object') return;
-                if (StorageManager.getMovieKeyFromData(item) !== pending.movie_key) return;
-                if (!best || Number(item.timestamp || 0) > Number(best.timestamp || 0)) best = item;
-            });
-            return best;
-        }
-
-        function saveResolvedWithoutSession(pending, candidate) {
-            var base = findBaseStored(pending) || {};
-            var params = Utils.shallowClone(base);
-            var item = candidate.item;
-            var road = candidate.road || {};
-            var movie = pending.movie || {};
-            var hash = String(candidate.event && candidate.event.hash || item.hash || '');
-
-            params.card_key = pending.movie_key || params.card_key || '';
-            params.profile_id = StorageManager.getProfileId() !== null ? StorageManager.getProfileId() : 'guest';
-            params.url = item.url || params.url || '';
-            params.uri = params.url;
-            params.src = params.url;
-            params.title = item.title || params.title || movie.name || movie.title || '';
-            params.episode_title = item.title || params.episode_title || '';
-            params.movie_id = params.movie_id || movie.id || '';
-            params.tmdb_id = params.tmdb_id || movie.id || '';
-            params.original_title = params.original_title || movie.original_title || '';
-            params.original_name = params.original_name || movie.original_name || movie.name || '';
-            params.name = params.name || movie.name || movie.title || '';
-            params.media_type = params.media_type || movie.media_type || 'tv';
-            params.season = Number(item.season || 0);
-            params.episode = Number(item.episode || 0);
-            params.playlist_index = Number(item.index || 0);
-            params.file_index = Number(item.file_index || 0);
-            params.timeline_hash = hash;
-            params.time = Number(road.time || 0);
-            params.duration = Number(road.duration || 0);
-            params.percent = Number(road.percent || 0);
-            params.activity_at = Number(road.updated || candidate.event && candidate.event.updated || Utils.now());
-            params.last_source = 'just';
-            params.last_event_type = 'time';
-            params.last_reason = 'native_return_burst';
-            params.transport = 'just';
-
-            if (item.image) Utils.copyImageFields(params, item.image);
-
-            return StorageManager.saveStreamParams(hash, params, true);
-        }
-
-        function markResolved(pending, candidate) {
-            var event = candidate && candidate.event;
-            pending.resolved_hash = String(event && event.hash || '');
-            pending.resolved_event_seen_at = Number(event && event.seen_at || pending.last_event_seen_at || Utils.now());
-            pending.resolved_at = Utils.now();
-            writePending(pending);
-
-            lastResolvedHash = pending.resolved_hash;
-            lastResolvedAt = pending.resolved_at;
-        }
-
-        function reconcile(reason) {
-            if (!matches()) return false;
-
-            var pending = readPending();
-            if (!pending) return false;
-
-            if (pending.launch_at && Utils.now() - Number(pending.launch_at) > 6 * 60 * 60 * 1000) {
-                writePending(null);
-                return false;
-            }
-
-            var candidate = chooseCandidate(pending);
-            if (!candidate) return false;
-
-            if (candidate.completionOnly) {
-                var burstAge = Utils.now() - Number(pending.last_event_seen_at || pending.return_started_at || 0);
-                if (burstAge < CONFIG.justCompletionFallbackMs) return false;
-
-                // Do not overwrite Continue Watching with "100%, 0:00". This was the bug
-                // that reset the launched episode after an internal Just+ switch.
-                pending.resolved_event_seen_at = Number(
-                    candidate.lastEvent && candidate.lastEvent.seen_at ||
-                    pending.last_event_seen_at ||
-                    Utils.now()
-                );
-                pending.resolved_at = Utils.now();
-                writePending(pending);
-                return false;
-            }
-
-            var hash = String(candidate.event.hash || candidate.item.hash || '');
-            var road = candidate.road || {};
-            var session = SessionManager.getCurrent();
-
-            if (session) {
-                var payload = {
-                    season: Number(candidate.item.season || 0),
-                    episode: Number(candidate.item.episode || 0),
-                    playlist_index: Number(candidate.item.index || 0),
-                    currentItem: candidate.item,
-                    uri: candidate.item.url || '',
-                    title: candidate.item.title || '',
-                    time: Number(road.time || 0),
-                    duration: Number(road.duration || 0),
-                    percent: Number(road.percent || 0),
-                    reason: reason || 'native_return_burst'
-                };
-
-                session = SessionManager.updateByPlaylistIndex(Number(candidate.item.index || 0), payload) || session;
-
-                Core.consume({
-                    source: 'just',
-                    type: 'time',
-                    session: session,
-                    hash: hash,
-                    playlist_index: Number(candidate.item.index || 0),
-                    season: Number(candidate.item.season || 0),
-                    episode: Number(candidate.item.episode || 0),
-                    currentItem: candidate.item,
-                    url: candidate.item.url || '',
-                    time: Number(road.time || 0),
-                    duration: Number(road.duration || 0),
-                    percent: Number(road.percent || 0),
-                    activity_at: Number(road.updated || candidate.event && candidate.event.updated || Utils.now()),
-                    force: true,
-                    reason: reason || 'native_return_burst'
-                });
-            } else {
-                saveResolvedWithoutSession(pending, candidate);
-            }
-
-            lastTimelineHash = hash;
-            markResolved(pending, candidate);
-            return true;
-        }
-
-        function scheduleReconcile(reason) {
-            if (reconcileTimer) clearTimeout(reconcileTimer);
-            reconcileTimer = setTimeout(function () {
-                reconcileTimer = null;
-                reconcile(reason || 'timeline_burst_settled');
-            }, CONFIG.justResultSettleMs);
-        }
-
-        function handleTimeline(data) {
-            if (!matches() || !data || !data.hash || !data.road) return false;
-
-            var hash = String(data.hash);
-            var pending = readPending();
-            var session = SessionManager.getCurrent();
-            var knownItem = pendingItemByHash(pending, hash);
-            var now = Utils.now();
-
-            if (pending) {
-                var inReturnWindow = Number(pending.return_window_until || 0) >= now;
-                var playableUnknown = !knownItem &&
-                    pageLooksActive() &&
-                    Number(data.road.time || 0) > 0 &&
-                    Number(data.road.duration || 0) > 0 &&
-                    Number(data.road.percent || 0) < 100;
-
-                if (knownItem || inReturnWindow || playableUnknown) {
-                    pending = appendReturnEvent(pending, data, knownItem);
-
-                    // Once one playlist hash confirms that Lampa is processing the external
-                    // result, accept the following hashes for a few seconds too. This covers
-                    // a mismatched/missing hash map for the final current item.
-                    if (knownItem && !pending.return_started_at) {
-                        pending.return_started_at = now;
-                    }
-
-                    writePending(pending);
-                    lastTimelineHash = hash;
-                    scheduleReconcile('lampa_result_burst');
-                    return true;
-                }
-            }
-
-            if (session && SessionManager.hasHash(hash)) {
-                session = SessionManager.updateByTimelineHash(hash, {
-                    time: Number(data.road.time || 0),
-                    duration: Number(data.road.duration || 0),
-                    percent: Number(data.road.percent || 0),
-                    reason: 'just_timeline_fallback'
-                }) || session;
-
-                Core.consume({
-                    source: 'just',
-                    type: Number(data.road.percent || 0) >= 100 ? 'ended' : 'time',
-                    session: session,
-                    hash: hash,
-                    time: Number(data.road.time || 0),
-                    duration: Number(data.road.duration || 0),
-                    percent: Number(data.road.percent || 0),
-                    activity_at: Number(data.road.updated || Utils.now()),
-                    force: true,
-                    reason: 'just_timeline_fallback'
-                });
-
-                return true;
-            }
-
-            return false;
-        }
-
-        function init() {
-            if (installed) return;
-            installed = true;
-
-            setTimeout(function () { reconcile('init_reconcile'); }, 1200);
-
-            periodicTimer = setInterval(function () {
-                reconcile('periodic_reconcile');
-            }, CONFIG.justReconcileIntervalMs);
-
-            try {
-                window.addEventListener('focus', function () {
-                    var pending = readPending();
-                    if (!pending) return;
-                    pending.return_window_until = Utils.now() + CONFIG.justReturnBurstMs;
-                    writePending(pending);
-                    scheduleReconcile('window_focus');
-                });
-            } catch (e) {}
-
-            try {
-                document.addEventListener('visibilitychange', function () {
-                    if (document.visibilityState === 'hidden') return;
-                    var pending = readPending();
-                    if (!pending) return;
-                    pending.return_window_until = Utils.now() + CONFIG.justReturnBurstMs;
-                    writePending(pending);
-                    scheduleReconcile('visibility_return');
-                });
-            } catch (e2) {}
-        }
-
-        function getStatus() {
-            return {
-                installed: installed,
-                matches: matches(),
-                lastTimelineHash: lastTimelineHash,
-                lastResolvedHash: lastResolvedHash,
-                lastResolvedAt: lastResolvedAt,
-                pending: readPending()
-            };
-        }
-
-        return {
-            init: init,
-            matches: matches,
-            arm: arm,
-            reconcile: reconcile,
-            handleTimeline: handleTimeline,
-            getStatus: getStatus
-        };
-    })();
-
-    // ============================================================
-    // LampaNativeTransport
-    // ============================================================
-
-    var LampaNativeTransport = (function () {
-        var installed = false;
-        var lastTimelineHash = '';
-        var lastOnlineDebugHash = '';
-
-        function getDataFromEvent(event) {
-            if (!event) return null;
-            return event.data || event;
-        }
-
-        function handlePlayerCreate(event) {
-            if (!CONFIG.nativePlayerEventsEnabled) return;
-
-            var data = getDataFromEvent(event);
-            if (!data || !(data.url || data.uri || data.src)) return;
-
-            var session = SessionManager.getCurrent();
-            var url = data.url || data.uri || data.src || '';
-
-            if (!session || Utils.streamIdentity(session.url || '') !== Utils.streamIdentity(url)) {
-                var options = {
-                    source: 'player_event',
-                    transport: JustPlusTransport.matches() ? 'just' : 'lampa'
-                };
-
-                if (session) {
-                    if ((!data.playlist || !data.playlist.length) && session.playlist && session.playlist.length) {
-                        options.playlist = session.playlist;
-                    }
-                    if (!data.card && !data.movie && session.movie) options.movie = session.movie;
-                }
-
-                session = SessionManager.buildFromPlayData(data, options);
-            }
-
-            if (!session) return;
-
-            Core.consume({
-                source: session.transport,
-                type: 'start',
-                session: session,
-                hash: session.hash,
-                url: session.url,
-                force: true
-            });
-        }
-
-        function handlePlayerDestroy() {
-            if (!CONFIG.nativePlayerEventsEnabled) return;
-
-            var session = SessionManager.getCurrent();
-            if (!session || !session.lastRoad) return;
-
-            Core.consume({
-                source: session.transport,
-                type: 'stop',
-                session: session,
-                hash: session.lastRoad.hash || session.hash,
-                time: Number(session.lastRoad.time || 0),
-                duration: Number(session.lastRoad.duration || 0),
-                percent: Number(session.lastRoad.percent || 0),
-                force: true,
-                reason: 'destroy'
-            });
-        }
-
-        function handleTimelineUpdate(event) {
-            if (!CONFIG.nativeTimelineEnabled) return;
-
-            var data = event && event.data ? event.data : event;
-            if (!data || !data.hash || !data.road) return;
-
-            // Just+ gets first refusal on Android. If it handled the result timeline,
-            // ordinary native handling must not save the same update again.
-            if (JustPlusTransport.handleTimeline(data)) return;
-
-            var hash = String(data.hash);
-            var road = data.road || {};
-            var session = SessionManager.getCurrent();
-
-            if (session && SessionManager.hasHash(hash)) {
-                session = SessionManager.updateByTimelineHash(hash, {
-                    time: Number(road.time || 0),
-                    duration: Number(road.duration || 0),
-                    percent: Number(road.percent || 0),
-                    reason: 'native_timeline_hash'
-                }) || session;
-            }
-
-            if (!session) {
-                var stored = StorageManager.getParams();
-                if (!stored || !stored[hash]) return;
-
-                var patch = Utils.shallowClone(stored[hash]);
-                patch.time = Number(road.time || 0);
-                patch.duration = Number(road.duration || 0);
-                patch.percent = Number(road.percent || 0);
-                patch.activity_at = Number(road.updated || Utils.now());
-                patch.last_source = 'lampa';
-                patch.last_event_type = 'timeline_update';
-                StorageManager.saveStreamParams(hash, patch, true);
-                lastTimelineHash = hash;
-                return;
-            }
-
-            if (String(hash) !== String(session.hash || '') && !SessionManager.hasHash(hash)) return;
-
-            lastTimelineHash = hash;
-
-            if (session && session.isOnline && lastOnlineDebugHash !== hash) {
-                lastOnlineDebugHash = hash;
-                Utils.onlineNoty(
-                    'timeline S' + Number(session.season || 0) +
-                    'E' + Number(session.episode || 0) +
-                    ' ' + Utils.formatSeconds(Number(road.time || 0)) +
-                    ' hash=' + hash
-                );
-            }
-
-            if (CONFIG.saveNativeTimelineToCustomStorage) {
-                Core.consume({
-                    source: 'lampa',
-                    type: Number(road.percent || 0) >= 100 ? 'ended' : 'time',
-                    session: session,
-                    hash: hash,
-                    time: Number(road.time || 0),
-                    duration: Number(road.duration || 0),
-                    percent: Number(road.percent || 0),
-                    activity_at: Number(road.updated || Utils.now()),
-                    force: false,
-                    reason: 'timeline_update'
-                });
-            }
-        }
-
-        var playerListenersInstalled = false;
-        var timelineListenerInstalled = false;
-        var hookRetryTimer = null;
-        var hookRetryStartedAt = 0;
-
-        function installPlayerListeners() {
-            if (playerListenersInstalled) return true;
-            if (!Lampa.Player || !Lampa.Player.listener || !Lampa.Player.listener.follow) return false;
-
-            try {
-                Lampa.Player.listener.follow('create', handlePlayerCreate);
-                Lampa.Player.listener.follow('start', handlePlayerCreate);
-                Lampa.Player.listener.follow('ready', handlePlayerCreate);
-                Lampa.Player.listener.follow('destroy', handlePlayerDestroy);
-                playerListenersInstalled = true;
-                return true;
-            } catch (e) {
-                Utils.error('Player listener failed', e);
-                return false;
-            }
-        }
-
-        function installTimelineListener() {
-            if (timelineListenerInstalled) return true;
-            if (!Lampa.Timeline || !Lampa.Timeline.listener || !Lampa.Timeline.listener.follow) return false;
-
-            try {
-                Lampa.Timeline.listener.follow('update', handleTimelineUpdate);
-                timelineListenerInstalled = true;
-                return true;
-            } catch (e) {
-                Utils.error('Timeline listener failed', e);
-                return false;
-            }
-        }
-
-        function ensureHooks() {
-            installPlayerListeners();
-            installTimelineListener();
-
-            if (playerListenersInstalled && timelineListenerInstalled && hookRetryTimer) {
-                clearInterval(hookRetryTimer);
-                hookRetryTimer = null;
-            }
-
-            return playerListenersInstalled && timelineListenerInstalled;
-        }
-
-        function init() {
-            if (installed) return;
-            installed = true;
-            hookRetryStartedAt = Utils.now();
-            ensureHooks();
-
-            if (!playerListenersInstalled || !timelineListenerInstalled) {
-                hookRetryTimer = setInterval(function () {
-                    ensureHooks();
-                    if (Utils.now() - hookRetryStartedAt > CONFIG.hookRetryMaxMs && hookRetryTimer) {
-                        clearInterval(hookRetryTimer);
-                        hookRetryTimer = null;
-                    }
-                }, CONFIG.hookRetryMs);
-            }
-        }
-
-        function getStatus() {
-            return {
-                installed: installed,
-                playerListenersInstalled: playerListenersInstalled,
-                timelineListenerInstalled: timelineListenerInstalled,
-                lastTimelineHash: lastTimelineHash
-            };
-        }
-
-        return {
-            init: init,
-            getStatus: getStatus
-        };
-    })();
-
-    // ============================================================
-    // PlayerManager
-    // ============================================================
-
-    var PlayerManager = (function () {
-        var patched = false;
-        var patchRetryTimer = null;
-        var patchRetryStartedAt = 0;
-
-        function schedulePatchRetry() {
-            if (patchRetryTimer || patched) return;
-            patchRetryStartedAt = patchRetryStartedAt || Utils.now();
-
-            patchRetryTimer = setInterval(function () {
-                if (patched) {
-                    clearInterval(patchRetryTimer);
-                    patchRetryTimer = null;
-                    return;
-                }
-
-                if (Utils.now() - patchRetryStartedAt > CONFIG.hookRetryMaxMs) {
-                    clearInterval(patchRetryTimer);
-                    patchRetryTimer = null;
-                    return;
-                }
-
-                patchPlayer();
-            }, CONFIG.hookRetryMs);
-        }
-
-        function patchPlayer() {
-            if (patched) return true;
-            if (!Lampa.Player || !Lampa.Player.play) {
-                schedulePatchRetry();
-                return false;
-            }
-
-            if (Lampa.Player.__continueWatchNativeJustPatchVersion === BOOT_VERSION) {
-                patched = true;
-                if (patchRetryTimer) {
-                    clearInterval(patchRetryTimer);
-                    patchRetryTimer = null;
-                }
-                return true;
-            }
-
-            var originalPlay = Lampa.Player.play;
-
-            Lampa.Player.play = function (data) {
-                try {
-                    data = data || {};
-
-                    if (data.isonline) {
-                        var movieForResolver = data.card || data.movie || Utils.getActivityMovie() || {};
-                        if (Array.isArray(data.playlist) && data.playlist.length) {
-                            OnlineResolverCapture.enrichPlaylist(movieForResolver, data.playlist);
-                        }
-
-                        var mediaForResolver = data.url || data.uri || data.src || '';
-                        var resolverMeta = OnlineResolverCapture.lookup(mediaForResolver) ||
-                            OnlineResolverCapture.lookupEpisode(movieForResolver, data);
-                        Utils.onlineNoty(
-                            'play S' + Number(data.season || 0) + 'E' + Number(data.episode || 0) +
-                            ' resolver=' + (resolverMeta ? 'yes' : 'no') +
-                            ' url=' + Utils.shortDebugUrl(mediaForResolver)
-                        );
-                        if (resolverMeta) {
-                            data.online_resolver_url = resolverMeta.url;
-                            data.online_resolver_headers = resolverMeta.headers || {};
-                            data.online_resolver_at = Number(resolverMeta.capturedAt || Utils.now());
-                        }
-                    }
-
-                    var transport = JustPlusTransport.matches() ? 'just' : 'lampa';
-                    var session = SessionManager.buildFromPlayData(data, {
-                        source: 'player_patch',
-                        transport: transport
-                    });
-
-                    if (session) {
-                        Core.consume({
-                            source: transport,
-                            type: 'start',
-                            session: session,
-                            hash: session.hash,
-                            url: session.url,
-                            force: true
-                        });
-
-                        // Persist a minimal native-hash map before Android leaves Lampa.
-                        // It survives WebView/app recreation while Just+ is in front.
-                        if (transport === 'just') JustPlusTransport.arm(session);
-                    }
-                } catch (e) {
-                    Utils.error('Player patch failed', e);
-                }
-
-                // No transport mutates the URL or suppresses Lampa.Player.play.
-                // Lampa remains fully responsible for launching Just+ and receiving its result.
-                return originalPlay.apply(this, arguments);
-            };
-
-            Lampa.Player.__continueWatchNativeJustPatched = true;
-            Lampa.Player.__continueWatchNativeJustPatchVersion = BOOT_VERSION;
-            patched = true;
-
-            if (patchRetryTimer) {
-                clearInterval(patchRetryTimer);
-                patchRetryTimer = null;
-            }
-            return true;
-        }
-
-        function makeLaunchLockKey(movie, params) {
-            var movieKey = '';
-            try { movieKey = StorageManager.getMovieKey(movie) || ''; } catch (e) {}
-
-            return [
-                movieKey,
-                params && params.torrent_link || '',
-                params && params.url || '',
-                params && params.file_index !== undefined ? params.file_index : '',
-                params && params.playlist_index !== undefined ? params.playlist_index : '',
-                params && params.season || 0,
-                params && params.episode || 0
-            ].join('|');
-        }
-
-        function acquireLaunchLock(movie, params) {
-            var current = Utils.now();
-            var key = makeLaunchLockKey(movie, params);
-            var lock = window.__CONTINUE_WATCH_UNIVERSAL_LAUNCH_LOCK__;
-
-            if (!lock || typeof lock !== 'object') {
-                lock = { key: '', ts: 0 };
-                window.__CONTINUE_WATCH_UNIVERSAL_LAUNCH_LOCK__ = lock;
-            }
-
-            if (lock.key === key && current - Number(lock.ts || 0) < CONFIG.launchLockMs) return false;
-
-            lock.key = key;
-            lock.ts = current;
-            return true;
-        }
-
-        function rebuildPlaylistForLaunch(params) {
-            var sourcePlaylist = Array.isArray(params.playlist) && params.playlist.length
-                ? params.playlist
-                : StorageManager.expandCompactPlaylist(params);
-            if (!Array.isArray(sourcePlaylist) || !sourcePlaylist.length) return null;
-
-            return sourcePlaylist.map(function (item, index) {
-                var clone = Utils.shallowClone(item || {});
-                var url = clone.url || clone.uri || clone.src || '';
-                if (typeof url !== 'string') url = '';
-
-                if (url) {
-                    clone.url = Utils.parseStreamUrl(url)
-                        ? StorageManager.rebuildStreamUrl(url)
-                        : Utils.stripFragment(url);
-                    clone.uri = clone.url;
-                    clone.src = clone.url;
-                }
-
-                clone.playlist_index = index;
-                clone.torrent_hash = clone.torrent_hash || params.torrent_hash || '';
-
-                var parsed = Utils.parseStreamUrl(clone.url || '');
-                if (parsed && parsed.file_index !== undefined) clone.file_index = Number(parsed.file_index);
-
-                var image = Utils.extractImage(item) || Utils.extractImage(clone);
-                if (image) Utils.copyImageFields(clone, image);
-
-                return clone;
-            });
-        }
-
-        function applyResolvedToPlaylistItem(item, resolved) {
-            if (!item || !resolved || !resolved.url) return false;
-            var freshUrl = Utils.stripFragment(resolved.url);
-            item.url = freshUrl;
-            item.uri = freshUrl;
-            item.src = freshUrl;
-            if (resolved.headers && Object.keys(resolved.headers).length) item.headers = resolved.headers;
-            if (resolved.quality) item.quality = resolved.quality;
-            if (resolved.segments) item.segments = resolved.segments;
-            if (resolved.subtitles) item.subtitles = resolved.subtitles;
-            if (resolved.subtitles_call) item.subtitles_call = resolved.subtitles_call;
-            if (resolved.hls_manifest_timeout !== undefined) item.hls_manifest_timeout = resolved.hls_manifest_timeout;
-            item.online_resolver_url = resolved.resolver_url || item.online_resolver_url || '';
-            item.online_resolver_headers = resolved.resolver_headers || item.online_resolver_headers || {};
-            item.online_resolver_at = Utils.now();
-            return true;
-        }
-
-        function attachLazyOnlineResolvers(playlist, activeIndex) {
-            if (!Array.isArray(playlist) || !playlist.length) return;
-
-            var playerType = '';
-            try { playerType = String(Lampa.Storage.field('player') || ''); } catch (e) {}
-            if (playerType && playerType !== 'inner') return;
-
-            playlist.forEach(function (item, index) {
-                if (!item || index === activeIndex || !item.online_resolver_url) return;
-
-                var resolverUrl = OnlineResolverCapture.portableResolverUrl(item.online_resolver_url);
-                var resolverHeaders = item.online_resolver_headers || {};
-                var oldUrl = typeof item.url === 'string' ? Utils.stripFragment(item.url) : '';
-                if (OnlineResolverCapture.isTransientMediaUrl(oldUrl)) oldUrl = '';
-
-                (function (target, portableResolver, headers, fallbackUrl) {
-                    target.url = function (call) {
-                        OnlineResolverCapture.resolve({
-                            online_resolver_url: portableResolver,
-                            online_resolver_headers: headers
-                        }, function (resolved) {
-                            if (!applyResolvedToPlaylistItem(target, resolved)) {
-                                target.url = fallbackUrl || '';
-                                target.uri = target.url;
-                                target.src = target.url;
-                            }
-                            if (typeof call === 'function') call();
-                        });
-                    };
-                    target.uri = '';
-                    target.src = '';
-                })(item, resolverUrl, resolverHeaders, oldUrl);
-            });
-        }
-
-        function launchFromContinue(movie, params) {
-            if (!movie || !params) return;
-            if (!acquireLaunchLock(movie, params)) return;
-
-            var playlist = rebuildPlaylistForLaunch(params);
-            var playlistIndex = Number(params.playlist_index || 0);
-
-            if (playlist && playlist.length) {
-                if (isNaN(playlistIndex) || playlistIndex < 0) playlistIndex = 0;
-                if (playlistIndex >= playlist.length) playlistIndex = playlist.length - 1;
-            } else {
-                playlistIndex = 0;
-            }
-
-            var activeItem = playlist && playlist.length ? playlist[playlistIndex] : null;
-            var rawActiveUrl = activeItem ? (activeItem.url || activeItem.uri || activeItem.src || '') : '';
-            var url = typeof rawActiveUrl === 'string' ? Utils.stripFragment(rawActiveUrl) : '';
-            if (!url) url = StorageManager.buildLaunchUrl(params);
-
-            var activeResolverUrl = OnlineResolverCapture.portableResolverUrl(
-                params.online_resolver_url ||
-                (activeItem && activeItem.online_resolver_url) ||
-                ''
-            );
-            var activeResolverHeaders = params.online_resolver_headers ||
-                (activeItem && activeItem.online_resolver_headers) || {};
-
-            if (!url && !(params.isonline && activeResolverUrl)) {
-                try { Lampa.Noty.show('Не удалось восстановить ссылку просмотра'); } catch (e) {}
-                return;
-            }
-
-            var season = Number(params.season || 0);
-            var episode = Number(params.episode || 0);
-            var hash = String(params.timeline_hash || '') || StorageManager.generateTimelineHash(movie, season, episode);
-            var timeline = null;
-
-            try {
-                timeline = hash && Lampa.Timeline && Lampa.Timeline.view ? Lampa.Timeline.view(hash) : null;
-            } catch (e2) {}
-
-            var resumeTime = Math.max(Number(params.time || params.position || 0), Number(timeline && timeline.time || 0));
-            var resumeDuration = Math.max(Number(params.duration || 0), Number(timeline && timeline.duration || 0));
-            var resumePercent = Math.max(Number(params.percent || 0), Number(timeline && timeline.percent || 0));
-
-            if (!resumePercent && resumeTime > 0 && resumeDuration > 0) {
-                resumePercent = Math.round(resumeTime / resumeDuration * 100);
-            }
-
-            resumePercent = Utils.clamp(resumePercent, 0, 100);
-
-            if (!timeline || typeof timeline !== 'object') timeline = {};
-            timeline.hash = hash;
-            timeline.time = resumeTime;
-            timeline.duration = resumeDuration;
-            timeline.percent = resumePercent;
-
-            var activeImage = Utils.extractImage(activeItem) || Utils.extractImage(params) || Utils.extractImage(movie);
-            var parsedLaunch = Utils.parseStreamUrl(url);
-            var torrentHash = String(
-                params.torrent_hash ||
-                Utils.extractTorrentHash(params.torrent_link) ||
-                Utils.extractTorrentHash(parsedLaunch && parsedLaunch.torrent_link) ||
-                ''
-            );
-            var compactTorrentLink = params.playlist_compact && params.playlist_compact.link
-                ? String(params.playlist_compact.link)
-                : '';
-            var isTorrentResume = !!(
-                params.torrent_hash || params.torrent_link || compactTorrentLink || parsedLaunch
-            );
-
-            if (!torrentHash && isTorrentResume) torrentHash = 'continue_watch_external';
-
-            var data = {
-                url: url,
-                uri: url,
-                src: url,
-                title: params.episode_title || params.title || Utils.getMovieTitle(movie),
-                card: movie,
-                movie: movie,
-                timeline: timeline,
-                time: resumeTime,
-                position: resumeTime > 0 ? resumeTime : -1,
-                duration: resumeDuration,
-                percent: resumePercent,
-                playlist: playlist,
-                playlist_index: playlistIndex,
-                start_index: playlistIndex,
-                season: season,
-                episode: episode,
-                torrent_hash: torrentHash,
-                isonline: !!params.isonline,
-                continue_watch_universal: true
-            };
-
-            if (activeItem) data.currentItem = activeItem;
-            if (activeImage) Utils.copyImageFields(data, activeImage);
-
-            function startPlayback(resolved) {
-                if (resolved && resolved.url) {
-                    var freshUrl = Utils.stripFragment(resolved.url);
-                    data.url = freshUrl;
-                    data.uri = freshUrl;
-                    data.src = freshUrl;
-
-                    if (activeItem) applyResolvedToPlaylistItem(activeItem, resolved);
-
-                    if (resolved.headers && Object.keys(resolved.headers).length) data.headers = resolved.headers;
-                    if (resolved.quality) data.quality = resolved.quality;
-                    if (resolved.segments) data.segments = resolved.segments;
-                    if (resolved.subtitles) data.subtitles = resolved.subtitles;
-                    if (resolved.subtitles_call) data.subtitles_call = resolved.subtitles_call;
-                    if (resolved.hls_manifest_timeout !== undefined) data.hls_manifest_timeout = resolved.hls_manifest_timeout;
-
-                    data.online_resolver_url = resolved.resolver_url || activeResolverUrl || '';
-                    data.online_resolver_headers = resolved.resolver_headers || activeResolverHeaders || {};
-                    data.online_resolver_at = Utils.now();
-                } else if (
-                    params.isonline && activeResolverUrl &&
-                    (!url || OnlineResolverCapture.isTransientMediaUrl(url))
-                ) {
-                    try { Lampa.Noty.show('Не удалось получить свежую ссылку серии'); } catch (e4) {}
-                    return;
-                }
-
-                if (params.isonline && playlist && playlist.length) {
-                    attachLazyOnlineResolvers(playlist, playlistIndex);
-                }
-
-                if (params.isonline) {
-                    Utils.onlineNoty('player -> ' + Utils.shortDebugUrl(data.url || data.uri || data.src || ''));
-                }
-
-                try {
-                    Lampa.Player.play(data);
-                } catch (e3) {
-                    Utils.error('Launch from continue failed', e3);
-                }
-            }
-
-            if (params.isonline) {
-                Utils.onlineNoty(
-                    'continue S' + season + 'E' + episode +
-                    ' ' + Utils.formatSeconds(resumeTime) +
-                    ' resolver=' + (activeResolverUrl ? 'yes' : 'no') +
-                    ' hash=' + hash
-                );
-            }
-
-            if (params.isonline && activeResolverUrl) {
-                Utils.onlineNoty('resolve -> ' + Utils.shortDebugUrl(activeResolverUrl));
-                OnlineResolverCapture.resolve({
-                    online_resolver_url: activeResolverUrl,
-                    online_resolver_headers: activeResolverHeaders
-                }, function (resolved) {
-                    Utils.onlineNoty(
-                        resolved && resolved.url
-                            ? 'resolve OK -> ' + Utils.shortDebugUrl(resolved.url)
-                            : 'resolve FAIL'
-                    );
-                    startPlayback(resolved);
-                });
-                return;
-            }
-
-            startPlayback(null);
-        }
-
-
-        return {
-            patchPlayer: patchPlayer,
-            launchFromContinue: launchFromContinue,
-            isPatched: function () { return patched; }
-        };
-    })();
-
-    // ============================================================
-    // UIManager
-    // ============================================================
-
-    var UIManager = (function () {
-        var installed = false;
-        var cardObserver = null;
-        var cardScanTimer = null;
-        var cardScanQueued = false;
-        var controllerRefreshTimer = null;
-        var controllerRegisteredNode = null;
-        var controllerRegisteredState = '';
-
-        function escapeHtml(value) {
-            return String(value || '')
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        function getContinueRoad(movie, params) {
-            params = params || {};
-
-            var road = {
-                time: Number(params.time || 0),
-                duration: Number(params.duration || 0),
-                percent: Number(params.percent || 0)
-            };
-
-            try {
-                var hash = String(params.timeline_hash || '') || StorageManager.generateTimelineHash(movie, Number(params.season || 0), Number(params.episode || 0));
-                var timeline = hash && Lampa.Timeline && Lampa.Timeline.view ? Lampa.Timeline.view(hash) : null;
-
-                if (timeline) {
-                    road.time = Math.max(road.time, Number(timeline.time || 0));
-                    road.duration = Math.max(road.duration, Number(timeline.duration || 0));
-                    road.percent = Math.max(road.percent, Number(timeline.percent || 0));
-                }
-            } catch (e) {}
-
-            if (!road.percent && road.time && road.duration) {
-                road.percent = Math.round(road.time / road.duration * 100);
-            }
-
-            road.percent = Utils.clamp(road.percent, 0, 100);
-            return road;
-        }
-
-        function formatContinueSubtitle(params, road) {
-            if (!params) return '';
-
-            var parts = [];
-            var season = Number(params.season || 0);
-            var episode = Number(params.episode || 0);
-            var isTv = params.media_type === 'tv' || season || episode;
-
-            if (isTv && season && episode) parts.push('S' + season + 'E' + episode);
-            else if (isTv && episode) parts.push('E' + episode);
-
-            if (road && road.time) parts.push(Utils.formatSeconds(road.time));
-            return parts.join(' / ');
-        }
-
-        function getActiveMovieFromCard() {
-            try {
-                var activity = Lampa.Activity && Lampa.Activity.active ? Lampa.Activity.active() : null;
-                if (activity && activity.movie) return activity.movie;
-                if (activity && activity.card) return activity.card;
-                if (activity && activity.params && activity.params.movie) return activity.params.movie;
-            } catch (e) {}
-            return null;
-        }
-
-        function launchFromButton(button, movie) {
-            var now = Date.now();
-            var lastLaunchAt = Number(button.data('continueWatchUniversalLaunchAt') || 0);
-            if (now - lastLaunchAt < 900) return false;
-
-            button.data('continueWatchUniversalLaunchAt', now);
-
-            var activeMovie = movie || getActiveMovieFromCard();
-            var params = activeMovie ? StorageManager.getLastStreamParams(activeMovie) : null;
-
-            if (!activeMovie || !params) {
-                try { Lampa.Noty.show('Нет истории просмотров'); } catch (e) {}
-                return false;
-            }
-
-            PlayerManager.launchFromContinue(activeMovie, params);
-            return false;
-        }
-
-        function bindLaunch(button, movie) {
-            function launch(event) {
-                if (event) {
-                    try { event.preventDefault(); } catch (e) {}
-                    try { event.stopPropagation(); } catch (e2) {}
-                    try { event.stopImmediatePropagation(); } catch (e3) {}
-                }
-                return launchFromButton(button, movie);
-            }
-
-            button
-                .off('.continueWatchUniversalLaunch')
-                .on('hover:enter.continueWatchUniversalLaunch', function () {
-                    return launch();
-                })
-                .on('click.continueWatchUniversalLaunch', function (event) {
-                    return launch(event);
-                });
-
-            // Desktop browsers let Lampa's mouse-navigation move controller focus on
-            // mousedown before click. Prevent that default focus hop while keeping the
-            // actual click handler above. Android/touch does not depend on this branch.
-            if (Utils.getPlatformKind() === 'unknown') {
-                button
-                    .on('mousedown.continueWatchUniversalLaunch', function (event) {
-                        try { event.preventDefault(); } catch (e) {}
-                        try { event.stopPropagation(); } catch (e2) {}
-                    })
-                    .on('pointerdown.continueWatchUniversalLaunch', function (event) {
-                        if (event && event.pointerType && event.pointerType !== 'mouse') return;
-                        try { event.preventDefault(); } catch (e) {}
-                        try { event.stopPropagation(); } catch (e2) {}
-                    });
-            }
-        }
-
-        function createButton(movie, params) {
-            var road = getContinueRoad(movie, params);
-            var subtitle = formatContinueSubtitle(params, road);
-            var dash = (road.percent * 65.97 / 100).toFixed(2);
-            var movieKey = '';
-
-            try { movieKey = StorageManager.getMovieKey(movie) || ''; } catch (e) {}
-
-            var stateKey = [
-                Number(params && params.timestamp || 0),
-                Number(params && params.time || 0),
-                Number(params && params.duration || 0),
-                Number(params && params.season || 0),
-                Number(params && params.episode || 0),
-                Number(params && params.playlist_index || 0)
-            ].join(':');
-
-            var html =
-                '<div class="full-start__button selector view--continue-watch button--continue-watch button--continue-watch-native-just" ' +
-                    'data-buttons-plugin-id="continue_watch_universal" ' +
-                    'data-cwu-movie-key="' + escapeHtml(movieKey) + '" ' +
-                    'data-cwu-state="' + escapeHtml(stateKey) + '" ' +
-                    'data-cwu-subtitle="' + escapeHtml(subtitle) + '">' +
-                    '<svg class="continue-watch-native-just-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">' +
-                        '<circle cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="1.7" fill="none" opacity="0.22"></circle>' +
-                        '<circle cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="' + dash + ' 65.97" transform="rotate(-90 12 12)"></circle>' +
-                        '<path d="M9 7.7v8.6c0 .55.6.89 1.08.6l6.62-4.3a.72.72 0 0 0 0-1.2l-6.62-4.3A.7.7 0 0 0 9 7.7z" fill="currentColor"></path>' +
-                    '</svg>' +
-                    '<span>Продолжить</span>' +
-                '</div>';
-
-            var button = $(html);
-            bindLaunch(button, movie);
-            return button;
-        }
-
-        function getWatchContainer(render) {
-            var container = render.find('.full-start-new__buttons').first();
-            if (container.length) return container;
-
-            container = render.find('.buttons--container').first();
-            if (container.length) return container;
-
-            container = $('<div class="full-start-new__buttons"></div>');
-            render.append(container);
-            return container;
-        }
-
-        function insertButton(render, button) {
-            var container = getWatchContainer(render);
-            container.find('> .button--continue-watch-native-just').remove();
-
-            var torrentButton = container.find('> .view--torrent').first();
-            var trailerButton = container.find('> .view--trailer').first();
-
-            if (torrentButton.length) torrentButton.before(button);
-            else if (trailerButton.length) trailerButton.before(button);
-            else container.prepend(button);
-        }
-
-        function refreshCardController(force) {
-            function appendButton(forceAppend) {
-                try {
-                    var current = Lampa.Controller && Lampa.Controller.enabled ? Lampa.Controller.enabled() : null;
-                    var buttons = $('.button--continue-watch-native-just').filter(function () {
-                        return this.offsetParent !== null;
-                    }).first();
-
-                    if (!(
-                        current && current.name === 'full_start' &&
-                        buttons.length && Lampa.Controller.collectionAppend
-                    )) return;
-
-                    var node = buttons[0];
-                    var state = String(buttons.attr('data-cwu-state') || '');
-
-                    // collectionAppend rebuilds the controller collection. Repeating it on
-                    // every MutationObserver/scan tick makes desktop mouse focus jump to a
-                    // neighbouring selector. Register only a new/replaced button.
-                    if (!forceAppend && controllerRegisteredNode === node && controllerRegisteredState === state) {
-                        return;
-                    }
-
-                    Lampa.Controller.collectionAppend(buttons);
-                    controllerRegisteredNode = node;
-                    controllerRegisteredState = state;
-                } catch (e) {}
-            }
-
-            appendButton(!!force);
-            clearTimeout(controllerRefreshTimer);
-            controllerRefreshTimer = setTimeout(function () {
-                appendButton(false);
-            }, 300);
-        }
-
-        function injectStyles() {
-            try {
-                var css =
-                    '.button--continue-watch-native-just{opacity:1!important;pointer-events:auto!important;cursor:pointer!important;position:relative!important;}' +
-                    '.button--continue-watch-native-just .continue-watch-native-just-icon{flex-shrink:0;pointer-events:none!important;}' +
-                    '.button--continue-watch-native-just span,.button--continue-watch-native-just:after{pointer-events:none!important;}' +
-                    '.button--continue-watch-native-just span{white-space:nowrap;}' +
-                    '.button--continue-watch-native-just[data-cwu-subtitle]:after{' +
-                        'content:attr(data-cwu-subtitle);display:none!important;margin-left:.45em;' +
-                        'font-size:.72em;line-height:1;opacity:.65;white-space:nowrap;transform:translateY(.06em);' +
-                    '}' +
-                    '.button--continue-watch-native-just:hover:after,' +
-                    '.button--continue-watch-native-just.focus:after{display:inline-block!important;}';
-
-                var style = document.getElementById('continue-watch-native-just-style');
-                if (!style) {
-                    style = document.createElement('style');
-                    style.id = 'continue-watch-native-just-style';
-                    style.type = 'text/css';
-                    document.head.appendChild(style);
-                }
-                style.textContent = css;
-            } catch (e) {}
-        }
-
-        function getEventMovie(event) {
-            var active = null;
-            try { active = Lampa.Activity && Lampa.Activity.active ? Lampa.Activity.active() : null; } catch (e) {}
-
-            var activity = event && event.object && event.object.activity
-                ? event.object.activity
-                : active;
-
-            return (
-                (event && event.data && event.data.movie) ||
-                (activity && activity.movie) ||
-                (activity && activity.card) ||
-                (activity && activity.params && activity.params.movie) ||
-                (active && active.movie) ||
-                (active && active.card) ||
-                getActiveMovieFromCard() ||
-                Utils.getActivityMovie()
-            );
-        }
-
-        function getEventRender(event) {
-            var render = event && event.body && event.body.find ? event.body : null;
-            if (render && render.find('.full-start-new__buttons').length) return render;
-
-            try {
-                var roots = $('.full-start-new');
-                if (roots && roots.length) return roots.last();
-            } catch (e) {}
-
-            return render;
-        }
-
-        function renderCardButtons(render, movie) {
-            if (!render || !render.find || !movie) return;
-
-            Utils.rememberActivityMovie(movie);
-            var params = StorageManager.getLastStreamParams(movie);
-            var existing = render.find('.button--continue-watch-native-just').first();
-
-            if (!params) {
-                if (existing.length) existing.remove();
-                return;
-            }
-
-            var stateKey = [
-                Number(params.timestamp || 0),
-                Number(params.time || 0),
-                Number(params.duration || 0),
-                Number(params.season || 0),
-                Number(params.episode || 0),
-                Number(params.playlist_index || 0)
-            ].join(':');
-
-            var controllerChanged = false;
-
-            if (!existing.length) {
-                insertButton(render, createButton(movie, params));
-                controllerChanged = true;
-            } else if (String(existing.attr('data-cwu-state') || '') !== stateKey) {
-                existing.replaceWith(createButton(movie, params));
-                controllerChanged = true;
-            }
-
-            render.find('.button--continue-watch-native-just').each(function () {
-                bindLaunch($(this), movie);
-            });
-
-            if (controllerChanged) refreshCardController(true);
-        }
-
-        function scanActiveCard() {
-            cardScanQueued = false;
-            try {
-                var movie = getEventMovie(null);
-                var render = getEventRender(null);
-                if (movie && render) renderCardButtons(render, movie);
-            } catch (e) {}
-        }
-
-        function queueCardScan() {
-            if (cardScanQueued) return;
-            cardScanQueued = true;
-            setTimeout(scanActiveCard, 120);
-        }
-
-        function install() {
-            if (installed) return;
-            installed = true;
-
-            injectStyles();
-
-            $(document)
-                .off('click.continueWatchUniversalDelegate', '.button--continue-watch-native-just')
-                .on('click.continueWatchUniversalDelegate', '.button--continue-watch-native-just', function (event) {
-                    if (event) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                    }
-                    return launchFromButton($(this), null);
-                });
-
-            Lampa.Listener.follow('full', function (event) {
-                if (!event) return;
-
-                var movie = getEventMovie(event);
-                if (movie) Utils.rememberActivityMovie(movie);
-
-                if (event.type !== 'start' && event.type !== 'build' && event.type !== 'complite') return;
-
-                setTimeout(function () {
-                    renderCardButtons(getEventRender(event), getEventMovie(event));
-                }, 0);
-
-                setTimeout(function () {
-                    renderCardButtons(getEventRender(event), getEventMovie(event));
-                }, 350);
-            });
-
-            try {
-                if (window.MutationObserver && document.body) {
-                    cardObserver = new MutationObserver(queueCardScan);
-                    cardObserver.observe(document.body, { childList: true, subtree: true });
-                }
-            } catch (e) {}
-
-            cardScanTimer = setInterval(scanActiveCard, 1500);
-            setTimeout(scanActiveCard, 250);
-        }
-
-        function removeContinueButtons(render) {
-            try {
-                if (render && render.find) render.find('.button--continue-watch-native-just').remove();
-                else $('.button--continue-watch-native-just').remove();
-            } catch (e) {}
-        }
-
-        return {
-            install: install,
-            removeContinueButtons: removeContinueButtons
-        };
-    })();
-
-    // ============================================================
-    // TransportManager
-    // ============================================================
-
-    var TransportManager = (function () {
-        function init() {
-            OnlineResolverCapture.init();
-            JustPlusTransport.init();
-            LampaNativeTransport.init();
-
-            Utils.log(
-                'Transport init',
-                'platform=' + Utils.getPlatformKind(),
-                'player_torrent=' + Utils.getTorrentPlayerType(),
-                'selected=' + (JustPlusTransport.matches() ? 'just' : 'lampa')
-            );
-        }
-
-        return { init: init };
-    })();
-
-    // ============================================================
-    // Public API
-    // ============================================================
-
-    function exposeApi() {
-        if (!DEBUG.exposeApi) return;
-
-        window.ContinueWatchUniversal = {
-            version: PLUGIN_VERSION,
-            config: CONFIG,
-            debug: DEBUG,
-            utils: {
-                platform: Utils.getPlatformKind,
-                player: Utils.getTorrentPlayerType,
-                isJustTransport: Utils.isJustTransport,
-                parseStreamUrl: Utils.parseStreamUrl
-            },
-            storage: {
-                get: StorageManager.getParams,
-                last: StorageManager.getLastStreamParams,
-                cleanup: StorageManager.cleanupOld
-            },
-            session: {
-                current: SessionManager.getCurrent,
-                metaByHash: SessionManager.getMetaByHash
-            },
-            transport: {
-                just: JustPlusTransport.getStatus,
-                lampa: LampaNativeTransport.getStatus,
-                onlineResolver: OnlineResolverCapture.status
-            },
-            hooks: {
-                playerPatched: PlayerManager.isPatched
-            },
-            ui: {
-                remove: UIManager.removeContinueButtons
-            }
-        };
-    }
-
-    // ============================================================
-    // Init
-    // ============================================================
-
-    var initStarted = false;
-
-    function init() {
-        if (initStarted) return;
-        initStarted = true;
-
-        try {
-            StorageManager.ensureSync();
-            TransportManager.init();
-            PlayerManager.patchPlayer();
-            UIManager.install();
-            exposeApi();
-
-            setTimeout(function () {
-                StorageManager.migrateCompactStorage();
-                StorageManager.cleanupOld();
-            }, 7000);
-
-            setTimeout(function () {
-                StorageManager.migrateCompactStorage(true);
-            }, 16000);
-
-            window.__CONTINUE_WATCH_NATIVE_JUST_READY__ = true;
-            window.__CONTINUE_WATCH_NATIVE_JUST_LOADING__ = false;
-            window.__CONTINUE_WATCH_NATIVE_JUST_VERSION__ = PLUGIN_VERSION;
-            rememberBootStatus('ready', 'timeline + per-episode online resolvers + Just+ native return initialized');
-        } catch (e) {
-            initStarted = false;
-            window.__CONTINUE_WATCH_NATIVE_JUST_READY__ = false;
-            window.__CONTINUE_WATCH_NATIVE_JUST_LOADING__ = false;
-            rememberBootStatus('init-error', String(e && e.message ? e.message : e));
-            Utils.error('Init failed', e);
-
-            try {
-                if (Lampa.Noty && Lampa.Noty.show) {
-                    Lampa.Noty.show('ContinueWatch init error: ' + String(e && e.message ? e.message : e).slice(0, 120));
-                }
-            } catch (ee) {}
-        }
-    }
-
-    if (window.appready) {
-        init();
-    } else {
-        Lampa.Listener.follow('app', function (event) {
-            if (event && event.type === 'ready') init();
+    function now() { return Date.now ? Date.now() : new Date().getTime(); }
+    function num(v) { v = Number(v || 0); return isNaN(v) ? 0 : v; }
+    function str(v) { return v === undefined || v === null ? '' : String(v); }
+    function clone(obj) {
+        var out = {};
+        if (!obj || typeof obj !== 'object') return out;
+        Object.keys(obj).forEach(function (k) {
+            var v = obj[k];
+            if (v === undefined || typeof v === 'function') return;
+            out[k] = v;
         });
+        return out;
+    }
+    function json(v) { try { return JSON.stringify(v); } catch (e) { return ''; } }
+    function clamp(v, a, b) { v = num(v); return Math.max(a, Math.min(b, v)); }
+    function formatTime(sec) {
+        sec = Math.max(0, Math.floor(num(sec)));
+        var h = Math.floor(sec / 3600);
+        var m = Math.floor((sec % 3600) / 60);
+        var s = sec % 60;
+        function p(x) { return x < 10 ? '0' + x : String(x); }
+        return h ? h + ':' + p(m) + ':' + p(s) : m + ':' + p(s);
+    }
+    function cleanUrl(url) {
+        url = str(url).trim();
+        var i = url.indexOf('#');
+        return i >= 0 ? url.slice(0, i) : url;
+    }
+    function movieTitle(movie) {
+        movie = movie || {};
+        return str(movie.original_name || movie.original_title || movie.name || movie.title || '');
+    }
+    function mediaType(movie) {
+        movie = movie || {};
+        var t = str(movie.media_type || '').toLowerCase();
+        if (t === 'tv' || t === 'movie') return t;
+        return movie.original_name || movie.name || movie.number_of_seasons || movie.first_air_date ? 'tv' : 'movie';
+    }
+    function cardKey(movie) {
+        if (!movie) return '';
+        var id = movie.id || movie.tmdb_id || movie.tmdbId || movie.movie_id || '';
+        var type = mediaType(movie);
+        if (id !== '') return 'tmdb:' + type + ':' + id;
+        var title = movieTitle(movie);
+        var year = str(movie.first_air_date || movie.release_date || movie.year || '').slice(0, 4);
+        return title ? 'title:' + type + ':' + Lampa.Utils.hash(title + '|' + year) : '';
+    }
+    function recordKey(movie) {
+        var key = typeof movie === 'string' ? movie : cardKey(movie);
+        return key ? 'c_' + Lampa.Utils.hash(key) : '';
+    }
+    function getMovieFromData(data) {
+        data = data || {};
+        return data.card || data.movie || (data.currentItem && data.currentItem.card) || state.lastMovie || activeMovie() || {};
+    }
+    function activeMovie() {
+        try {
+            var a = Lampa.Activity && Lampa.Activity.active ? Lampa.Activity.active() : null;
+            var m = a && (a.movie || a.card || (a.params && a.params.movie));
+            if (m) state.lastMovie = m;
+            return m || state.lastMovie;
+        } catch (e) { return state.lastMovie; }
+    }
+    function profileId() {
+        var a = null;
+        try { a = Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.account; } catch (e) {}
+        try { if (!a) a = Lampa.Storage.get('account', {}); } catch (e2) {}
+        if (a && a.profile && a.profile.id !== undefined && a.profile.id !== null && a.profile.id !== '') return str(a.profile.id);
+        return 'guest';
+    }
+    function storageKey() { return STORAGE_BASE + '_' + profileId(); }
+    function pendingKey() { return PENDING_BASE + '_' + profileId(); }
+    function ensureSync() {
+        if (profileId() === 'guest') return;
+        try { Lampa.Storage.sync(storageKey(), 'object_object'); } catch (e) {}
+    }
+    function store() {
+        ensureSync();
+        try {
+            var v = Lampa.Storage.get(storageKey(), {});
+            return v && typeof v === 'object' ? v : {};
+        } catch (e) { return {}; }
+    }
+    function writeStore(v) {
+        try { Lampa.Storage.set(storageKey(), v); } catch (e) {}
+    }
+    function getRecord(movie) {
+        var key = recordKey(movie);
+        if (!key) return null;
+        var all = store();
+        var r = all[key];
+        if (!r || r.card_key !== cardKey(movie)) return null;
+        return r;
+    }
+    function saveRecord(record) {
+        if (!record || !record.card_key) return false;
+        var all = store();
+        var key = recordKey(record.card_key);
+        var old = all[key];
+        if (old && num(old.activity_at) > num(record.activity_at)) return false;
+        compactRecord(record);
+        all[key] = record;
+        writeStore(all);
+        return true;
+    }
+    function compactRecord(r) {
+        if (!r) return r;
+        if (json(r).length <= SYNC_MAX) return r;
+        if (r.torrent && r.torrent.items) {
+            r.torrent.items.forEach(function (i) { delete i.img; });
+        }
+        delete r.poster;
+        if (json(r).length <= SYNC_MAX) return r;
+        if (r.torrent && r.torrent.items) {
+            r.torrent.items.forEach(function (i) {
+                if (i.title) i.title = str(i.title).slice(0, 60);
+                if (i.file_name) i.file_name = str(i.file_name).slice(0, 160);
+            });
+        }
+        return r;
+    }
 
-        setTimeout(init, 1200);
-        setTimeout(init, 4000);
+    function timelineView(hash) {
+        try { return hash && Lampa.Timeline && Lampa.Timeline.view ? Lampa.Timeline.view(hash) : null; } catch (e) { return null; }
+    }
+    function timelineHash(movie, season, episode) {
+        if (!movie) return '';
+        var title = movieTitle(movie);
+        if (!title) return '';
+        season = num(season); episode = num(episode);
+        if (season && episode) return str(Lampa.Utils.hash('' + season + (season > 10 ? ':' : '') + episode + title));
+        return str(Lampa.Utils.hash(title));
+    }
+    function exactHash(item, movie, season, episode) {
+        var h = item && item.timeline && item.timeline.hash;
+        return h && str(h) !== '0' ? str(h) : timelineHash(movie, season, episode);
+    }
+    function parseStream(url) {
+        url = cleanUrl(url);
+        var mFile = url.match(/\/stream\/([^?]+)/i);
+        var mLink = url.match(/[?&]link=([^&#]+)/i);
+        var mIndex = url.match(/[?&]index=(\d+)/i);
+        if (!mLink && !/\/gst\//i.test(url)) return null;
+        var gst = url.match(/\/gst\/([^/]+)\/master\.m3u8/i);
+        return {
+            file_name: mFile ? safeDecode(mFile[1]) : '',
+            hash: mLink ? safeDecode(mLink[1]) : (gst ? safeDecode(gst[1]) : ''),
+            file_id: mIndex ? parseInt(mIndex[1], 10) : 0
+        };
+    }
+    function safeDecode(v) { try { return decodeURIComponent(str(v)); } catch (e) { return str(v); } }
+    function itemSE(item, fallbackIndex) {
+        item = item || {};
+        var s = num(item.season || item.season_number || item.s);
+        var e = num(item.episode || item.episode_number || item.e);
+        if (s && e) return { season: s, episode: e };
+        var title = str(item.file_name || item.filename || item.title || item.name || '');
+        var m = title.match(/\bS(?:eason)?\s*0?(\d{1,2}).*?E(?:p(?:isode)?)?\s*0?(\d{1,3})\b/i) || title.match(/\b0?(\d{1,2})[xх×]0?(\d{1,3})\b/i);
+        if (m) return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10) };
+        return { season: s || 0, episode: e || 0, fallback: fallbackIndex };
+    }
+    function playlistIndex(data, playlist, currentUrl) {
+        data = data || {}; playlist = playlist || [];
+        var idx = data.playlist_index !== undefined ? num(data.playlist_index) : (data.start_index !== undefined ? num(data.start_index) : -1);
+        if (idx >= 0 && idx < playlist.length) return idx;
+        var dh = data.timeline && data.timeline.hash ? str(data.timeline.hash) : '';
+        for (var i = 0; i < playlist.length; i++) {
+            if (dh && playlist[i].timeline && str(playlist[i].timeline.hash) === dh) return i;
+            var u = cleanUrl(playlist[i].url || playlist[i].uri || playlist[i].src || '');
+            if (u && currentUrl && u === currentUrl) return i;
+        }
+        return 0;
+    }
+    function normalizePlaylist(list) {
+        if (!Array.isArray(list)) return [];
+        return list.filter(function (x) { return x && typeof x === 'object'; }).map(function (x) { return clone(x); });
+    }
+    function sourceOf(data) {
+        data = data || {};
+        if (data.torrent_hash || parseStream(data.url || data.uri || data.src || '')) return 'torrent';
+        if (data.isonline) return 'online';
+        return 'other';
+    }
+    function isJustExternal() {
+        try {
+            return Lampa.Platform && Lampa.Platform.is && Lampa.Platform.is('android') && str(Lampa.Storage.field('player_torrent')) === 'android';
+        } catch (e) { return false; }
+    }
+
+    function buildSession(data) {
+        data = data || {};
+        var movie = getMovieFromData(data);
+        if (!movie || !cardKey(movie)) return null;
+        var source = sourceOf(data);
+        if (source === 'other') return null;
+        var url = cleanUrl(data.url || data.uri || data.src || '');
+        var list = normalizePlaylist(data.playlist || []);
+
+        if (!list.length && state.session && state.session.card_key === cardKey(movie) && state.session.source === source) {
+            list = state.session.playlist.map(function (x) { return clone(x); });
+        }
+        var idx = playlistIndex(data, list, url);
+        var item = list[idx] || data.currentItem || data;
+        var se = itemSE(item, idx);
+        if ((!se.season || !se.episode) && data.season && data.episode) {
+            se.season = num(data.season); se.episode = num(data.episode);
+        }
+        var h = data.timeline && data.timeline.hash ? str(data.timeline.hash) : exactHash(item, movie, se.season, se.episode);
+
+        if (list.length) {
+            for (var i = 0; i < list.length; i++) {
+                var pse = itemSE(list[i], i);
+                list[i].season = num(list[i].season || pse.season);
+                list[i].episode = num(list[i].episode || pse.episode);
+                if (!list[i].timeline) list[i].timeline = {};
+                if (!list[i].timeline.hash) list[i].timeline.hash = exactHash(list[i], movie, list[i].season, list[i].episode);
+            }
+        }
+
+        var session = {
+            source: source,
+            card_key: cardKey(movie),
+            movie: movie,
+            url: url,
+            playlist: list,
+            index: idx,
+            season: num(se.season),
+            episode: num(se.episode),
+            hash: h,
+            torrent_hash: str(data.torrent_hash || (item && item.torrent_hash) || ''),
+            resolver: null,
+            created_at: now(),
+            last_road: null
+        };
+        if (source === 'torrent') {
+            var parsed = parseStream(url);
+            if (!session.torrent_hash && parsed) session.torrent_hash = parsed.hash;
+            var seed = state.torrentSeedByCard[session.card_key];
+            session.magnet = seed ? seed.magnet : '';
+        } else if (source === 'online') {
+            session.resolver = lookupResolver(url);
+            onlineNoty('PLAY S' + session.season + 'E' + session.episode + ' resolver=' + (session.resolver ? 'YES' : 'NO'));
+        }
+        return session;
+    }
+
+    function torrentDescriptor(session) {
+        if (!session || session.source !== 'torrent') return null;
+        var items = [];
+        var list = session.playlist.length ? session.playlist : [session.movie || {}];
+        for (var i = 0; i < list.length; i++) {
+            var item = list[i] || {};
+            var parsed = parseStream(item.url || item.uri || item.src || '');
+            var se = itemSE(item, i);
+            var h = exactHash(item, session.movie, se.season, se.episode);
+            items.push({
+                file_id: parsed ? num(parsed.file_id) : num(item.file_index !== undefined ? item.file_index : (item.id !== undefined ? item.id : i)),
+                file_name: parsed && parsed.file_name ? parsed.file_name : str(item.file_name || item.filename || item.path_human || item.path || item.title || ''),
+                title: str(item.title || item.name || ''),
+                season: num(se.season),
+                episode: num(se.episode),
+                hash: h,
+                img: str(item.img || item.thumbnail || '')
+            });
+        }
+        return {
+            hash: session.torrent_hash || (items[session.index] && parseStream(session.url) ? parseStream(session.url).hash : ''),
+            magnet: session.magnet || '',
+            index: session.index,
+            items: items
+        };
+    }
+
+    function recordFrom(session, itemIndex, road, activityAt) {
+        if (!session) return null;
+        var item = session.playlist[itemIndex] || {};
+        var se = itemSE(item, itemIndex);
+        if (!se.season && session.season) se.season = session.season;
+        if (!se.episode && session.episode) se.episode = session.episode;
+        var h = exactHash(item, session.movie, se.season, se.episode) || session.hash;
+        road = road || {};
+        var r = {
+            v: 6,
+            card_key: session.card_key,
+            media_type: mediaType(session.movie),
+            movie_id: session.movie.id || session.movie.tmdb_id || '',
+            title: movieTitle(session.movie),
+            source: session.source,
+            activity_at: num(activityAt || road.updated || now()),
+            season: num(se.season),
+            episode: num(se.episode),
+            timeline_hash: str(h),
+            time: num(road.time),
+            duration: num(road.duration),
+            percent: clamp(road.percent || (road.duration ? Math.round(num(road.time) / num(road.duration) * 100) : 0), 0, 100),
+            current_index: num(itemIndex),
+            poster: str(session.movie.poster_path || session.movie.img || session.movie.poster || '')
+        };
+        if (session.source === 'torrent') r.torrent = torrentDescriptor(session);
+        if (session.source === 'online') {
+            r.online = {
+                resolver_url: session.resolver ? portableResolver(session.resolver.url) : '',
+                resolver_headers: session.resolver ? clone(session.resolver.headers || {}) : {},
+                direct_url: isTransientOnline(session.url) ? '' : session.url
+            };
+        }
+        return r;
+    }
+
+    function meaningfulRoad(road) {
+        if (!road) return false;
+        return num(road.time) >= MIN_TIME || num(road.percent) > 0 || num(road.percent) >= 100;
+    }
+    function findSessionItem(hash) {
+        var s = state.session;
+        if (!s) return -1;
+        if (str(s.hash) === str(hash) && !s.playlist.length) return s.index || 0;
+        for (var i = 0; i < s.playlist.length; i++) {
+            var h = s.playlist[i].timeline && s.playlist[i].timeline.hash;
+            if (h && str(h) === str(hash)) return i;
+        }
+        return -1;
+    }
+
+    function writePending(session) {
+        if (!session || session.source !== 'torrent') return;
+        var d = torrentDescriptor(session);
+        if (!d) return;
+        var baselines = {};
+        d.items.forEach(function (it) {
+            var road = timelineView(it.hash) || {};
+            baselines[it.hash] = num(road.updated);
+        });
+        var p = {
+            v: 6,
+            card_key: session.card_key,
+            movie: {
+                id: session.movie.id || session.movie.tmdb_id || '',
+                original_name: session.movie.original_name || session.movie.name || '',
+                original_title: session.movie.original_title || '',
+                name: session.movie.name || session.movie.title || '',
+                title: session.movie.title || session.movie.name || '',
+                media_type: mediaType(session.movie)
+            },
+            torrent: d,
+            baselines: baselines,
+            events: [],
+            launched_at: now()
+        };
+        try { localStorage.setItem(pendingKey(), JSON.stringify(p)); } catch (e) {}
+    }
+    function readPending() {
+        try {
+            var s = localStorage.getItem(pendingKey());
+            if (!s) return null;
+            var p = JSON.parse(s);
+            if (!p || p.v !== 6) return null;
+            if (now() - num(p.launched_at) > 6 * 3600 * 1000) { localStorage.removeItem(pendingKey()); return null; }
+            return p;
+        } catch (e) { return null; }
+    }
+    function savePending(p) { try { localStorage.setItem(pendingKey(), JSON.stringify(p)); } catch (e) {} }
+    function clearPending() { try { localStorage.removeItem(pendingKey()); } catch (e) {} }
+    function pendingItem(p, hash) {
+        if (!p || !p.torrent || !p.torrent.items) return null;
+        for (var i = 0; i < p.torrent.items.length; i++) if (str(p.torrent.items[i].hash) === str(hash)) return { item: p.torrent.items[i], index: i };
+        return null;
+    }
+    function appendPendingEvent(hash, road) {
+        var p = readPending();
+        if (!p || !pendingItem(p, hash)) return false;
+        p.events = Array.isArray(p.events) ? p.events : [];
+        p.events.push({ hash: str(hash), seen: now(), updated: num(road.updated || now()), time: num(road.time), duration: num(road.duration), percent: num(road.percent) });
+        if (p.events.length > 30) p.events = p.events.slice(-30);
+        savePending(p);
+        scheduleReconcile();
+        return true;
+    }
+    function scheduleReconcile() {
+        if (state.settleTimer) clearTimeout(state.settleTimer);
+        state.settleTimer = setTimeout(reconcilePending, EXTERNAL_SETTLE);
+    }
+    function pendingSession(p) {
+        if (!p || !p.torrent) return null;
+        var movie = p.movie || {};
+        var list = p.torrent.items.map(function (it) {
+            return {
+                title: it.title,
+                season: it.season,
+                episode: it.episode,
+                timeline: { hash: it.hash },
+                file_index: it.file_id,
+                file_name: it.file_name,
+                img: it.img,
+                torrent_hash: p.torrent.hash
+            };
+        });
+        return {
+            source: 'torrent', card_key: p.card_key, movie: movie, url: '', playlist: list,
+            index: num(p.torrent.index), season: 0, episode: 0, hash: '', torrent_hash: p.torrent.hash,
+            magnet: p.torrent.magnet || '', resolver: null, created_at: p.launched_at, last_road: null
+        };
+    }
+    function reconcilePending() {
+        var p = readPending();
+        if (!p || !p.torrent || !p.torrent.items) return false;
+        var candidates = [];
+        p.torrent.items.forEach(function (it, idx) {
+            var road = timelineView(it.hash) || {};
+            var base = num(p.baselines && p.baselines[it.hash]);
+            if (num(road.updated) > base && num(road.updated) + 3000 >= num(p.launched_at)) {
+                candidates.push({ index: idx, item: it, road: road, updated: num(road.updated) });
+            }
+        });
+        (p.events || []).forEach(function (e) {
+            var pi = pendingItem(p, e.hash);
+            if (!pi) return;
+            candidates.push({ index: pi.index, item: pi.item, road: e, updated: num(e.updated || e.seen) });
+        });
+        if (!candidates.length) return false;
+        candidates.sort(function (a, b) { return b.updated - a.updated; });
+        var playable = candidates.filter(function (c) { return num(c.road.time) > 0 && num(c.road.duration) > 0 && num(c.road.percent) < 100; });
+        var chosen = playable.length ? playable[0] : null;
+        if (!chosen) {
+            var completed = candidates.filter(function (c) { return num(c.road.percent) >= 100; });
+            if (completed.length) {
+                completed.sort(function (a, b) { return b.updated - a.updated; });
+                var next = completed[0].index + 1;
+                if (next < p.torrent.items.length) {
+                    chosen = { index: next, item: p.torrent.items[next], road: { time: 0, duration: 0, percent: 0, updated: completed[0].updated }, updated: completed[0].updated };
+                } else chosen = completed[0];
+            } else chosen = candidates[0];
+        }
+        var s = pendingSession(p);
+        var rec = recordFrom(s, chosen.index, chosen.road, chosen.updated || now());
+        if (rec) saveRecord(rec);
+        clearPending();
+        refreshUI();
+        return !!rec;
+    }
+
+    function onTimeline(event) {
+        var d = event && event.data ? event.data : event;
+        if (!d || !d.hash || !d.road) return;
+        var hash = str(d.hash), road = d.road || {};
+
+        if (isJustExternal() && appendPendingEvent(hash, road)) return;
+
+        var idx = findSessionItem(hash);
+        if (idx < 0) {
+            if (appendPendingEvent(hash, road)) return;
+            return;
+        }
+        if (!meaningfulRoad(road)) return;
+        var saveIndex = idx;
+        var saveRoad = road;
+        if (state.session.source === 'torrent' && num(road.percent) >= 100 && idx + 1 < state.session.playlist.length) {
+            saveIndex = idx + 1;
+            saveRoad = { time: 0, duration: 0, percent: 0, updated: num(road.updated || now()) };
+        }
+        var rec = recordFrom(state.session, saveIndex, saveRoad, saveRoad.updated || now());
+        if (rec) {
+            state.session.index = saveIndex;
+            state.session.hash = rec.timeline_hash || hash;
+            state.session.season = rec.season || state.session.season;
+            state.session.episode = rec.episode || state.session.episode;
+            state.session.last_road = saveRoad;
+            saveRecord(rec);
+            refreshUI();
+        }
+    }
+
+    function normalizeMedia(url) {
+        url = cleanUrl(url);
+        if (url.indexOf(' or ') !== -1) url = url.split(' or ')[0].trim();
+        return url;
+    }
+    function isPlayable(url) { return /^https?:\/\//i.test(url) && (/\/proxy(?:-dash)?\//i.test(url) || /\.(m3u8?|mpd|mp4|mkv|webm|mov|ts)(?:$|[?#])/i.test(url)); }
+    function captureResolver(event) {
+        if (!event || !event.params || !event.params.url) return;
+        var data = event.data;
+        if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
+        if (!data || typeof data !== 'object' || !data.url) return;
+        var media = normalizeMedia(data.url);
+        if (!isPlayable(media)) return;
+        var resolver = { url: str(event.params.url), headers: clone(event.params.headers || {}), at: now() };
+        state.resolverByMedia[media] = resolver;
+        if (data.quality && typeof data.quality === 'object') {
+            Object.keys(data.quality).forEach(function (q) {
+                var u = data.quality[q];
+                if (typeof u === 'string') {
+                    u.split(' or ').forEach(function (x) { x = normalizeMedia(x); if (isPlayable(x)) state.resolverByMedia[x] = resolver; });
+                }
+            });
+        }
+    }
+    function lookupResolver(media) { return state.resolverByMedia[normalizeMedia(media)] || null; }
+    function isTransientOnline(url) { return /\/proxy(?:-dash)?\//i.test(str(url)); }
+    function portableResolver(url) {
+        url = str(url);
+        try {
+            var u = new URL(url, location.href);
+            u.searchParams.delete('account_email');
+            u.searchParams.delete('uid');
+            u.searchParams.delete('nws_id');
+            return u.toString();
+        } catch (e) { return url; }
+    }
+    function localizeResolver(url) {
+        url = str(url);
+        try {
+            var u = new URL(url, location.href);
+            var email = str(Lampa.Storage.get('account_email', ''));
+            var uid = str(Lampa.Storage.get('lampac_unic_id', ''));
+            var nws = str(Lampa.Storage.get('lampac_nws_id', ''));
+            if (email) u.searchParams.set('account_email', email);
+            if (uid) u.searchParams.set('uid', uid);
+            if (nws) u.searchParams.set('nws_id', nws);
+            return u.toString();
+        } catch (e) { return url; }
+    }
+    function onlineHeaders(saved) {
+        var h = clone(saved || {});
+        try { var aes = str(Lampa.Storage.get('aesgcmkey', '')); if (aes) h['X-Kit-AesGcm'] = aes; } catch (e) {}
+        return h;
+    }
+    function chooseOnlineUrl(d) {
+        var u = d && typeof d.url === 'string' ? d.url : '';
+        if (d && d.quality && typeof d.quality === 'object') {
+            var pref = 0; try { pref = parseInt(Lampa.Storage.field('video_quality_default') || 0, 10); } catch (e) {}
+            if (pref && d.quality[pref]) u = d.quality[pref];
+        }
+        if (typeof u === 'string' && u.indexOf(' or ') !== -1) u = u.split(' or ')[0];
+        return cleanUrl(u);
+    }
+    function resolveOnline(record, callback) {
+        var o = record && record.online;
+        if (!o || !o.resolver_url || !Lampa.Reguest) return callback(null);
+        onlineNoty('RESOLVE ' + shortUrl(o.resolver_url));
+        var n = new Lampa.Reguest();
+        try { n.timeout(12000); } catch (e) {}
+        n.native(localizeResolver(o.resolver_url), function (d) {
+            if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e2) { d = null; } }
+            var u = chooseOnlineUrl(d);
+            onlineNoty(u ? 'RESOLVE OK ' + shortUrl(u) : 'RESOLVE EMPTY');
+            callback(u ? { url: u, data: d || {} } : null);
+        }, function () { onlineNoty('RESOLVE FAIL'); callback(null); }, false, { headers: onlineHeaders(o.resolver_headers) });
+    }
+
+    function isPhone() {
+        try {
+            var touch = num(navigator.maxTouchPoints) > 0 || ('ontouchstart' in window);
+            return touch && Math.min(window.innerWidth || 9999, window.innerHeight || 9999) <= 900;
+        } catch (e) { return false; }
+    }
+    function shortUrl(url) {
+        try { var u = new URL(str(url), location.href); return (u.host + u.pathname).slice(0, 70); } catch (e) { return str(url).slice(0, 70); }
+    }
+    function onlineNoty(msg) {
+        if (!isPhone()) return;
+        try { if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show('[CW6 online] ' + str(msg).slice(0, 180)); } catch (e) {}
+    }
+
+    function getTorrserverUrl() {
+        try {
+            var one = Lampa.Storage.get('torrserver_url');
+            var two = Lampa.Storage.get('torrserver_url_two');
+            var useTwo = str(Lampa.Storage.field('torrserver_use_link')) === 'two';
+            var u = useTwo ? (two || one) : (one || two);
+            if (!u) return '';
+            u = str(u); if (!/^https?:\/\//i.test(u)) u = 'http://' + u;
+            return u.replace(/\/$/, '');
+        } catch (e) { return ''; }
+    }
+    function torrentUrl(fileName, hash, fileId) {
+        try {
+            if (Lampa.Torserver && Lampa.Torserver.stream) {
+                var u = Lampa.Torserver.stream(fileName, hash, fileId);
+                if (Lampa.Torserver.toPlayUrl) u = Lampa.Torserver.toPlayUrl(u);
+                return u;
+            }
+        } catch (e) {}
+        var srv = getTorrserverUrl();
+        if (!srv) return '';
+        return srv + '/stream/' + encodeURIComponent(str(fileName).split('/').pop().split('\\').pop()) + '?link=' + encodeURIComponent(hash) + '&index=' + num(fileId) + '&play';
+    }
+    function ensureTorrent(record, movie, callback) {
+        var t = record && record.torrent;
+        if (!t) return callback('');
+        if (!t.magnet || !Lampa.Torserver || !Lampa.Torserver.hash) return callback(t.hash || '');
+        try {
+            Lampa.Torserver.hash({
+                title: record.title || movieTitle(movie), link: t.magnet,
+                poster: record.poster || '', data: { lampa: true, movie: movie }
+            }, function (x) { callback(str(x && x.hash || t.hash || '')); }, function () { callback(t.hash || ''); });
+        } catch (e) { callback(t.hash || ''); }
+    }
+    function rebuildTorrent(record, movie, hash) {
+        var t = record.torrent || {}, list = [];
+        (t.items || []).forEach(function (it, idx) {
+            var h = it.hash || timelineHash(movie, it.season, it.episode);
+            var road = timelineView(h) || {};
+            var u = torrentUrl(it.file_name, hash || t.hash, it.file_id);
+            list.push({
+                url: u, uri: u, src: u,
+                title: it.title || ('Эпизод ' + (it.episode || idx + 1)),
+                name: it.title || '', file_name: it.file_name, filename: it.file_name,
+                file_index: num(it.file_id), id: num(it.file_id),
+                season: num(it.season), episode: num(it.episode),
+                torrent_hash: hash || t.hash,
+                timeline: (function(){
+                    var tline = timelineView(h) || { hash: h, time: 0, duration: 0, percent: 0 };
+                    tline.hash = h;
+                    tline.time = num(road.time);
+                    tline.duration = num(road.duration);
+                    tline.percent = num(road.percent);
+                    return tline;
+                })(),
+                img: it.img || '', thumbnail: it.img || ''
+            });
+        });
+        return list;
+    }
+    function launchTorrent(movie, record) {
+        ensureTorrent(record, movie, function (hash) {
+            var list = rebuildTorrent(record, movie, hash);
+            if (!list.length) return noty('Не удалось восстановить торрент-плейлист');
+            var idx = Math.max(0, Math.min(list.length - 1, num(record.current_index)));
+            for (var i = 0; i < list.length; i++) if (record.timeline_hash && list[i].timeline && str(list[i].timeline.hash) === str(record.timeline_hash)) idx = i;
+            var item = clone(list[idx]);
+            var live = timelineView(record.timeline_hash) || {};
+            var time = Math.max(num(record.time), num(live.time));
+            var dur = Math.max(num(record.duration), num(live.duration));
+            var per = Math.max(num(record.percent), num(live.percent));
+            item.card = movie; item.movie = movie;
+            var activeTimeline = timelineView(record.timeline_hash || (item.timeline && item.timeline.hash)) || item.timeline || {};
+            activeTimeline.hash = record.timeline_hash || activeTimeline.hash || '';
+            activeTimeline.time = time; activeTimeline.duration = dur; activeTimeline.percent = per;
+            item.timeline = activeTimeline;
+            item.position = time > 0 ? time : -1; item.time = time; item.duration = dur; item.percent = per;
+            item.playlist = list; item.playlist_index = idx; item.start_index = idx;
+            item.torrent_hash = hash || record.torrent.hash || 'continue_watch_v6';
+            item.continue_watch_v6 = true;
+            try {
+                Lampa.Player.play(item);
+                if (Lampa.Player.playlist) Lampa.Player.playlist(list);
+            } catch (e) { noty('Ошибка запуска торрента: ' + (e.message || e)); }
+        });
+    }
+    function launchOnline(movie, record) {
+        onlineNoty('CONTINUE S' + num(record.season) + 'E' + num(record.episode) + ' ' + formatTime(record.time));
+        resolveOnline(record, function (resolved) {
+            var u = resolved && resolved.url ? resolved.url : (record.online && record.online.direct_url || '');
+            if (!u) return noty('Не удалось получить свежую ссылку серии');
+            var live = timelineView(record.timeline_hash) || {};
+            var time = Math.max(num(record.time), num(live.time));
+            var dur = Math.max(num(record.duration), num(live.duration));
+            var per = Math.max(num(record.percent), num(live.percent));
+            var onlineTimeline = timelineView(record.timeline_hash) || { hash: record.timeline_hash, time: 0, duration: 0, percent: 0 };
+            onlineTimeline.hash = record.timeline_hash; onlineTimeline.time = time; onlineTimeline.duration = dur; onlineTimeline.percent = per;
+            var d = {
+                url: u, uri: u, src: u,
+                title: record.title || movieTitle(movie), card: movie, movie: movie,
+                season: num(record.season), episode: num(record.episode), isonline: true,
+                timeline: onlineTimeline,
+                time: time, position: time > 0 ? time : -1, duration: dur, percent: per,
+                continue_watch_v6: true
+            };
+            if (resolved && resolved.data) {
+                if (resolved.data.headers) d.headers = resolved.data.headers;
+                if (resolved.data.quality) d.quality = resolved.data.quality;
+                if (resolved.data.segments) d.segments = resolved.data.segments;
+                if (resolved.data.subtitles) d.subtitles = resolved.data.subtitles;
+                if (resolved.data.hls_manifest_timeout !== undefined) d.hls_manifest_timeout = resolved.data.hls_manifest_timeout;
+            }
+            onlineNoty('PLAYER ' + shortUrl(u));
+            try { Lampa.Player.play(d); if (Lampa.Player.playlist) Lampa.Player.playlist([d]); } catch (e) { noty('Ошибка запуска online'); }
+        });
+    }
+    function launch(movie) {
+        var r = getRecord(movie);
+        if (!r) return noty('Нет сохраненного просмотра');
+        if (r.source === 'torrent' && r.torrent) return launchTorrent(movie, r);
+        if (r.source === 'online' && r.online) return launchOnline(movie, r);
+        noty('Неизвестный источник продолжения');
+    }
+    function noty(s) { try { if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(s); } catch (e) {} }
+
+    function patchTorrent() {
+        if (state.torrentPatched || !Lampa.Torrent) return;
+        if (typeof Lampa.Torrent.start === 'function') {
+            var oldStart = Lampa.Torrent.start;
+            Lampa.Torrent.start = function (element, movie) {
+                try {
+                    var key = cardKey(movie || activeMovie());
+                    if (key && element) state.torrentSeedByCard[key] = { magnet: str(element.MagnetUri || element.Link || ''), at: now() };
+                } catch (e) {}
+                return oldStart.apply(this, arguments);
+            };
+        }
+        state.torrentPatched = true;
+    }
+    function patchPlayer() {
+        if (state.playerPatched || !Lampa.Player || typeof Lampa.Player.play !== 'function') return;
+        var old = Lampa.Player.play;
+        Lampa.Player.play = function (data) {
+            try {
+                var s = buildSession(data || {});
+                if (s) {
+                    state.session = s;
+                    if (s.source === 'torrent' && isJustExternal()) writePending(s);
+                }
+            } catch (e) { try { console.warn('[CW6] capture failed', e); } catch (ee) {} }
+            return old.apply(this, arguments);
+        };
+        Lampa.Player.__cw6_patched = VERSION;
+        state.playerPatched = true;
+    }
+
+    function injectStyle() {
+        if (document.getElementById('cw6-style')) return;
+        var st = document.createElement('style'); st.id = 'cw6-style';
+        st.textContent = '.cw6-button{pointer-events:auto!important;cursor:pointer!important;position:relative!important}.cw6-button svg,.cw6-button span{pointer-events:none!important}.cw6-button[data-sub]:after{content:attr(data-sub);display:none;margin-left:.45em;font-size:.72em;opacity:.65;white-space:nowrap}.cw6-button:hover:after,.cw6-button.focus:after{display:inline-block}';
+        document.head.appendChild(st);
+    }
+    function cardRoot() {
+        try { var x = $('.full-start-new').last(); return x && x.length ? x : null; } catch (e) { return null; }
+    }
+    function buttonContainer(root) {
+        var c = root.find('.full-start-new__buttons').first();
+        if (!c.length) c = root.find('.buttons--container').first();
+        return c;
+    }
+    function subtitle(r) {
+        var p = [];
+        if (r.media_type === 'tv' && r.season && r.episode) p.push('S' + r.season + 'E' + r.episode);
+        if (r.time) p.push(formatTime(r.time));
+        return p.join(' / ');
+    }
+    function makeButton(movie, r) {
+        var b = $('<div class="full-start__button selector view--continue-watch cw6-button" data-sub="' + $('<div>').text(subtitle(r)).html() + '"><svg viewBox="0 0 24 24" width="24" height="24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.6" opacity=".3"></circle><path d="M9 7.5v9l7-4.5z" fill="currentColor"></path></svg><span>Продолжить</span></div>');
+        var lock = 0;
+        function go(e) {
+            if (e) { try { e.preventDefault(); e.stopPropagation(); } catch (x) {} }
+            if (now() - lock < 800) return false; lock = now(); launch(movie); return false;
+        }
+        b.on('hover:enter.cw6', go).on('click.cw6', go);
+        if (!isPhone()) b.on('mousedown.cw6 pointerdown.cw6', function (e) { if (!e.pointerType || e.pointerType === 'mouse') { e.preventDefault(); e.stopPropagation(); } });
+        return b;
+    }
+    function refreshUI() {
+        if (state.uiTimer) clearTimeout(state.uiTimer);
+        state.uiTimer = setTimeout(function () {
+            var movie = activeMovie(), root = cardRoot();
+            if (!movie || !root) return;
+            var r = getRecord(movie), old = root.find('.cw6-button');
+            if (!r) { old.remove(); return; }
+            var key = str(r.activity_at) + '|' + r.source + '|' + r.timeline_hash + '|' + r.time;
+            if (old.length && old.attr('data-state') === key) return;
+            old.remove();
+            var c = buttonContainer(root); if (!c || !c.length) return;
+            var b = makeButton(movie, r).attr('data-state', key);
+            var before = c.find('> .view--torrent').first();
+            if (before.length) before.before(b); else c.prepend(b);
+            try {
+                var en = Lampa.Controller && Lampa.Controller.enabled ? Lampa.Controller.enabled() : null;
+                if (en && en.name === 'full_start' && Lampa.Controller.collectionAppend) Lampa.Controller.collectionAppend(b);
+            } catch (e) {}
+        }, 80);
+    }
+
+    function install() {
+        if (state.installed) return;
+        state.installed = true;
+        ensureSync(); injectStyle();
+        try { $('.button--continue-watch-native-just,.button--continue-watch-ddd,.continue-watch-ddd-source').remove(); } catch (eOld) {}
+        patchTorrent(); patchPlayer();
+        try { Lampa.Timeline.listener.follow('update', onTimeline); } catch (e) {}
+        try { Lampa.Listener.follow('request_secuses', captureResolver); } catch (e2) {}
+        try {
+            Lampa.Listener.follow('full', function (e) {
+                var m = e && e.data && e.data.movie; if (m) state.lastMovie = m;
+                setTimeout(refreshUI, 100); setTimeout(refreshUI, 500);
+            });
+        } catch (e3) {}
+        try { window.addEventListener('focus', function () { scheduleReconcile(); refreshUI(); }); } catch (e4) {}
+        try { document.addEventListener('visibilitychange', function () { if (document.visibilityState !== 'hidden') { scheduleReconcile(); refreshUI(); } }); } catch (e5) {}
+        setInterval(function () { patchTorrent(); patchPlayer(); refreshUI(); }, 1800);
+        setTimeout(reconcilePending, 1000);
+
+        window.ContinueWatchV6 = {
+            version: VERSION,
+            record: function () { var m = activeMovie(); return m ? getRecord(m) : null; },
+            session: function () { return state.session; },
+            pending: readPending,
+            reconcile: reconcilePending,
+            launch: function () { var m = activeMovie(); if (m) launch(m); },
+            source: function () { var r = activeMovie() ? getRecord(activeMovie()) : null; return r && r.source; }
+        };
+    }
+
+    if (window.appready) install();
+    else {
+        try { Lampa.Listener.follow('app', function (e) { if (e && e.type === 'ready') install(); }); } catch (e) {}
+        setTimeout(install, 1200);
+        setTimeout(install, 4000);
     }
 })();
