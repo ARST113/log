@@ -141,6 +141,10 @@ function harness() {
         androidLaunches,
         rch_nws: context.rch_nws,
         setRequestHandler(handler) { requestHandler = handler; },
+        setRchHook(handler) {
+            if (handler) context.window.Online2RchHandshake = handler;
+            else delete context.window.Online2RchHandshake;
+        },
         setActive(movie) { active = movie; },
         setClock(value) { clock = value; },
         fireTimeouts(delay) {
@@ -156,7 +160,7 @@ function harness() {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.1.5-online-next-window-20260902');
+assert.equal(h.api.version, 'v6.1.6-online-rch-retry-20260902');
 
 {
     const result = t.normalizeRoad(
@@ -474,7 +478,7 @@ assert.equal(h.api.version, 'v6.1.5-online-next-window-20260902');
 
     assert.equal(h.androidLaunches.length, before + 1, 'resolved window must launch current exactly once');
     assert.deepEqual(calls.map((entry) => entry.episode), [2, 3, 4, 1], 'current resolves once, then next two and previous resolve sequentially');
-    assert.deepEqual(calls.slice(1).map((entry) => entry.timeout), [5000, 5000, 5000]);
+    assert.deepEqual(calls.slice(1).map((entry) => entry.timeout), [9000, 9000, 9000]);
     assert.equal(calls[1].headers['X-Series'], 'e3', 'each neighbor must use its own saved resolver headers');
     const payload = h.androidLaunches[h.androidLaunches.length - 1].parsed;
     assert.deepEqual(payload.playlist.map((item) => item.episode), [1, 2, 3, 4]);
@@ -488,6 +492,63 @@ assert.equal(h.api.version, 'v6.1.5-online-next-window-20260902');
     assert.equal(payload.playlist[2].quality['1080'], 'https://media.example/quality/e3.m3u8');
     assert.deepEqual(payload.subtitles, nestedSubtitles, 'nested current metadata survives the real Android stringify/parse boundary');
     assert.deepEqual(payload.currentItem.subtitles, nestedSubtitles);
+}
+
+{
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 783, media_type: 'tv', title: 'RCH retry success', original_name: 'RCH retry success' };
+    const cardKey = t.cardKey(movie);
+    const recordKey = 'c_' + h.Lampa.Utils.hash(cardKey);
+    const resolver = (episode) => 'https://lampac.fun/lite/zetflix/video?id=783&s=1&e=' + episode + '&t=Original';
+    const calls = [];
+    const requestUrls = [];
+    const handshakes = [];
+    h.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 2_000_150,
+        season: 1, episode: 1, episode_title: 'E1', timeline_hash: 'r1',
+        time: 65, duration: 3000, percent: 2, current_index: 0,
+        online: {
+            index: 0, resolver_url: resolver(1), selection: { provider: 'zetflix', translation: 'original' },
+            items: [1, 2, 3].map((episode) => ({
+                title: 'E' + episode, season: 1, episode, hash: 'r' + episode,
+                resolver_url: resolver(episode), selection: { provider: 'zetflix', translation: 'original' }, meta: {}
+            }))
+        }
+    };
+    h.setRchHook((response, ready) => {
+        handshakes.push(response);
+        ready();
+        return true;
+    });
+    h.setRequestHandler(({ url, ok }) => {
+        const episode = Number(new URL(url).searchParams.get('e'));
+        calls.push(episode);
+        requestUrls.push(url);
+        if (episode === 2 && calls.filter((value) => value === 2).length === 1) {
+            ok({ rch: true, nws: 'wss://lampac.fun/rch', request_id: 'full-response-e2' });
+        } else {
+            ok({
+                url: 'https://media.example/r' + episode + '.m3u8',
+                headers: { Referer: 'https://metadata.example/e' + episode },
+                segments: [{ start: episode, end: episode + 4, type: 'intro' }]
+            });
+        }
+    });
+    h.setActive(movie);
+    const before = h.androidLaunches.length;
+    h.api.launch();
+
+    assert.equal(h.androidLaunches.length, before + 1, 'successful RCH retry launches current exactly once');
+    assert.deepEqual(calls, [1, 2, 2, 3], 'E2 retries the exact resolver once before contiguous E3');
+    assert.equal(requestUrls[1], requestUrls[2], 'RCH retry must use the exact same localized resolver URL');
+    assert.equal(handshakes.length, 1, 'only one handshake is attempted');
+    assert.equal(handshakes[0].request_id, 'full-response-e2', 'the full RCH response reaches the Online2 hook');
+    const payload = h.androidLaunches[h.androidLaunches.length - 1].parsed;
+    assert.deepEqual(payload.playlist.map((item) => item.episode), [1, 2, 3]);
+    assert.equal(payload.playlist[1].url, 'https://media.example/r2.m3u8');
+    assert.equal(payload.playlist[1].headers.Referer, 'https://metadata.example/e2');
+    assert.deepEqual(payload.playlist[1].segments, [{ start: 2, end: 6, type: 'intro' }]);
+    h.setRchHook(null);
 }
 
 {
@@ -509,11 +570,17 @@ assert.equal(h.api.version, 'v6.1.5-online-next-window-20260902');
             }))
         }
     };
+    let handshakeCount = 0;
+    h.setRchHook((_response, ready) => {
+        handshakeCount++;
+        ready();
+        return true;
+    });
     h.setRequestHandler(({ url, ok }) => {
         const episode = Number(new URL(url).searchParams.get('e'));
         calls.push(episode);
         if (episode === 1) ok({ url: 'https://media.example/f1.m3u8' });
-        else if (episode === 2) ok({ rch: { nested: { retry: true } } });
+        else if (episode === 2) ok({ rch: { nested: { retry: true } }, nws: 'wss://lampac.fun/rch' });
         else throw new Error('E3 must not be resolved after E2 failed');
     });
     h.setActive(movie);
@@ -521,10 +588,220 @@ assert.equal(h.api.version, 'v6.1.5-online-next-window-20260902');
     h.api.launch();
 
     assert.equal(h.androidLaunches.length, before + 1, 'RCH neighbor failure must still launch current exactly once');
-    assert.deepEqual(calls, [1, 2], 'failed E2 must prevent any E3 resolution attempt');
+    assert.deepEqual(calls, [1, 2, 2], 'a repeated RCH response fails after exactly one retry and prevents E3');
+    assert.equal(handshakeCount, 1, 'repeated RCH must not start a second handshake');
     const payload = h.androidLaunches[h.androidLaunches.length - 1].parsed;
     assert.deepEqual(payload.playlist.map((item) => item.episode), [1], 'failed E2 and every later item must be removed contiguously');
     assert.equal(payload.playlist_index, 0);
+    h.timelineListeners.forEach((listener) => listener({ hash: 'f1', road: { time: 95, duration: 3000, percent: 3, updated: 2_000_500 } }));
+    assert.equal(h.storage[storageKey][recordKey].online.items.length, 3, 'temporary fail-closed window must not overwrite full online definitions');
+    assert.equal(h.storage[storageKey][recordKey].online.items[1].resolver_url, resolver(2), 'unresolved E2 definition survives the fail-closed save');
+    assert.equal(h.storage[storageKey][recordKey].current_index, 0, 'runtime window index maps back to the full definition index');
+    h.setRchHook(null);
+}
+
+{
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 785, media_type: 'tv', title: 'Fresh full definitions', original_name: 'Fresh full definitions' };
+    const cardKey = t.cardKey(movie);
+    const recordKey = 'c_' + h.Lampa.Utils.hash(cardKey);
+    const resolver = (episode) => 'https://lampac.fun/lite/zetflix/video?id=785&s=1&e=' + episode + '&t=Original';
+    const makeDefs = (count) => Array.from({ length: count }, (_value, index) => {
+        const episode = index + 1;
+        return {
+            title: 'E' + episode, season: 1, episode, hash: 'z' + episode,
+            resolver_url: resolver(episode), selection: { provider: 'zetflix', translation: 'original' }, meta: {}
+        };
+    });
+    h.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 2_000_600,
+        season: 1, episode: 2, episode_title: 'E2', timeline_hash: 'z2',
+        time: 70, duration: 3000, percent: 2, current_index: 1,
+        online: {
+            index: 1, resolver_url: resolver(2), selection: { provider: 'zetflix', translation: 'original' },
+            items: makeDefs(5)
+        }
+    };
+    h.setRchHook((_response, ready) => { ready(); return true; });
+    h.setRequestHandler(({ url, ok }) => {
+        const episode = Number(new URL(url).searchParams.get('e'));
+        if (episode === 2) ok({ url: 'https://media.example/z2.m3u8' });
+        else if (episode === 3) ok({ rch: true, nws: 'wss://lampac.fun/rch' });
+        else if (episode === 1) ok({ url: 'https://media.example/z1.m3u8' });
+        else throw new Error('fail-closed E3 must prevent later resolution');
+    });
+    h.setActive(movie);
+    const before = h.androidLaunches.length;
+    h.api.launch();
+    assert.equal(h.androidLaunches.length, before + 1);
+    assert.deepEqual(h.androidLaunches[h.androidLaunches.length - 1].parsed.playlist.map((item) => item.episode), [1, 2]);
+
+    const freshDefs = [{
+        title: 'E0', season: 1, episode: 0, hash: 'z0', resolver_url: resolver(0),
+        selection: { provider: 'zetflix', translation: 'original' }, meta: {}
+    }].concat(makeDefs(5));
+    freshDefs[5].meta = { segments: [{ start: 1, end: 5, type: 'intro' }] };
+    h.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 2_001_000,
+        season: 1, episode: 5, episode_title: 'Fresh E5', timeline_hash: 'z5',
+        time: 20, duration: 3000, percent: 1, current_index: 5,
+        online: {
+            index: 5, resolver_url: resolver(5), selection: { provider: 'zetflix', translation: 'original' },
+            items: freshDefs
+        }
+    };
+    h.timelineListeners.forEach((listener) => listener({ hash: 'z2', road: { time: 115, duration: 3000, percent: 4, updated: 2_002_000 } }));
+    const saved = h.storage[storageKey][recordKey];
+    assert.equal(saved.online.items.length, 6, 'newer richer same-provider store definitions must survive a stale launch snapshot save');
+    assert.equal(saved.online.items[5].resolver_url, resolver(5), 'fresh E5 must not be dropped by the bounded runtime window');
+    assert.deepEqual(saved.online.items[5].meta.segments, [{ start: 1, end: 5, type: 'intro' }]);
+    assert.equal(saved.current_index, 2, 'prepended E0 must shift runtime E2 to its mapped full-list index');
+    assert.equal(saved.online.index, 2);
+    assert.equal(saved.online.items[2].hash, 'z2');
+    assert.equal(saved.episode, 2);
+    assert.equal(saved.time, 115);
+
+    const reordered = [freshDefs[0], freshDefs[3], freshDefs[1], freshDefs[2], freshDefs[4], freshDefs[5]];
+    h.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 2_002_200,
+        season: 1, episode: 3, episode_title: 'Reordered E3', timeline_hash: 'z3',
+        time: 30, duration: 3000, percent: 1, current_index: 1,
+        online: {
+            index: 1, resolver_url: resolver(3), selection: { provider: 'zetflix', translation: 'original' },
+            items: reordered
+        }
+    };
+    h.timelineListeners.forEach((listener) => listener({ hash: 'z2', road: { time: 130, duration: 3000, percent: 4, updated: 2_002_500 } }));
+    const reorderedSaved = h.storage[storageKey][recordKey];
+    assert.equal(reorderedSaved.current_index, 3, 'hash identity must locate E2 after a fresh-list reorder');
+    assert.equal(reorderedSaved.online.index, 3);
+    assert.equal(reorderedSaved.online.items[3].hash, 'z2');
+    assert.equal(reorderedSaved.episode, 2);
+    assert.equal(reorderedSaved.time, 130);
+    h.setRequestHandler(null);
+    h.setRchHook(null);
+}
+
+{
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 786, media_type: 'tv', title: 'Provider conflict', original_name: 'Provider conflict' };
+    const cardKey = t.cardKey(movie);
+    const recordKey = 'c_' + h.Lampa.Utils.hash(cardKey);
+    const zetflix = (episode) => 'https://lampac.fun/lite/zetflix/video?id=786&s=1&e=' + episode;
+    const pidtor = (episode) => 'https://lampac.fun/lite/pidtor/video?id=786&s=1&e=' + episode;
+    const defs = [1, 2, 3, 4].map((episode) => ({
+        title: 'E' + episode, season: 1, episode, hash: 'p' + episode,
+        resolver_url: zetflix(episode), selection: { provider: 'zetflix', translation: '' }, meta: {}
+    }));
+    h.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 2_002_100,
+        season: 1, episode: 1, episode_title: 'E1', timeline_hash: 'p1',
+        time: 60, duration: 3000, percent: 2, current_index: 0,
+        online: { index: 0, direct_url: 'https://media.example/p1.m3u8', selection: { provider: 'zetflix', translation: '' }, items: defs }
+    };
+    h.setRchHook(null);
+    h.setRequestHandler(({ ok }) => ok({ rch: true, nws: 'wss://lampac.fun/rch' }));
+    h.setActive(movie);
+    h.api.launch();
+
+    const foreignDefs = [1, 2, 3, 4, 5, 6].map((episode) => ({
+        title: 'Foreign E' + episode, season: 1, episode, hash: 'foreign-' + episode,
+        resolver_url: pidtor(episode), selection: { provider: 'pidtor', translation: '' }, meta: {}
+    }));
+    h.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 2_003_000,
+        season: 1, episode: 6, timeline_hash: 'foreign-6', current_index: 5,
+        online: { index: 5, resolver_url: pidtor(6), selection: { provider: 'pidtor', translation: '' }, items: foreignDefs }
+    };
+    h.timelineListeners.forEach((listener) => listener({ hash: 'p1', road: { time: 125, duration: 3000, percent: 4, updated: 2_004_000 } }));
+    const saved = h.storage[storageKey][recordKey];
+    assert.equal(saved.online.items.length, 4, 'richer definitions from a mismatched provider must not be merged');
+    assert.equal(saved.online.selection.provider, 'zetflix');
+    assert(saved.online.items.every((item) => String(item.resolver_url || '').indexOf('/pidtor/') === -1));
+    h.setRequestHandler(null);
+}
+
+{
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 787, media_type: 'tv', title: 'Translation conflict', original_name: 'Translation conflict' };
+    const cardKey = t.cardKey(movie);
+    const recordKey = 'c_' + h.Lampa.Utils.hash(cardKey);
+    const resolver = (episode, voice) => 'https://lampac.fun/lite/zetflix/video?id=787&s=1&e=' + episode + '&t=' + encodeURIComponent(voice);
+    const makeDefs = (count, voice) => Array.from({ length: count }, (_value, index) => {
+        const episode = index + 1;
+        return {
+            title: voice + ' E' + episode, season: 1, episode, hash: 'v' + episode,
+            resolver_url: resolver(episode, voice), selection: { provider: 'zetflix', translation: voice.toLowerCase() }, meta: {}
+        };
+    });
+    const originalDefs = makeDefs(4, 'Original');
+    h.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 2_004_100,
+        season: 1, episode: 1, episode_title: 'Original E1', timeline_hash: 'v1',
+        time: 60, duration: 3000, percent: 2, current_index: 0,
+        online: {
+            index: 0, direct_url: 'https://media.example/v1.m3u8',
+            selection: { provider: 'zetflix', translation: 'original' }, items: originalDefs
+        }
+    };
+    h.setRchHook(null);
+    h.setRequestHandler(({ ok }) => ok({ rch: true, nws: 'wss://lampac.fun/rch' }));
+    h.setActive(movie);
+    h.api.launch();
+
+    const foxDefs = makeDefs(6, 'Fox Life');
+    h.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 2_005_000,
+        season: 1, episode: 6, timeline_hash: 'v6', current_index: 5,
+        online: {
+            index: 5, resolver_url: resolver(6, 'Fox Life'),
+            selection: { provider: 'zetflix', translation: 'fox life' }, items: foxDefs
+        }
+    };
+    h.timelineListeners.forEach((listener) => listener({ hash: 'v1', road: { time: 140, duration: 3000, percent: 5, updated: 2_006_000 } }));
+    const saved = h.storage[storageKey][recordKey];
+    assert.equal(saved.online.items.length, 4, 'same-provider definitions from another translation must not be merged');
+    assert.equal(saved.online.selection.provider, 'zetflix');
+    assert.equal(saved.online.selection.translation, 'original');
+    assert(saved.online.items.every((item) => String(item.resolver_url || '').indexOf('Fox%20Life') === -1));
+    assert(saved.online.items.every((item) => item.selection.translation === 'original'));
+    h.setRequestHandler(null);
+}
+
+{
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 784, media_type: 'tv', title: 'RCH hook absent', original_name: 'RCH hook absent' };
+    const cardKey = t.cardKey(movie);
+    const recordKey = 'c_' + h.Lampa.Utils.hash(cardKey);
+    const resolver = (episode) => 'https://lampac.fun/lite/zetflix/video?id=784&s=1&e=' + episode;
+    const calls = [];
+    h.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 2_000_250,
+        season: 1, episode: 1, episode_title: 'E1', timeline_hash: 'a1',
+        time: 70, duration: 3000, percent: 2, current_index: 0,
+        online: {
+            index: 0, direct_url: 'https://media.example/a1.m3u8', selection: {},
+            items: [
+                { title: 'E1', season: 1, episode: 1, hash: 'a1', direct_url: 'https://media.example/a1.m3u8', meta: {} },
+                { title: 'E2', season: 1, episode: 2, hash: 'a2', resolver_url: resolver(2), meta: {} },
+                { title: 'E3', season: 1, episode: 3, hash: 'a3', resolver_url: resolver(3), meta: {} }
+            ]
+        }
+    };
+    h.setRchHook(null);
+    h.setRequestHandler(({ url, ok }) => {
+        const episode = Number(new URL(url).searchParams.get('e'));
+        calls.push(episode);
+        if (episode === 2) ok({ rch: true, nws: 'wss://lampac.fun/rch' });
+        else throw new Error('E3 must not run without an RCH hook');
+    });
+    h.setActive(movie);
+    const before = h.androidLaunches.length;
+    h.api.launch();
+
+    assert.equal(h.androidLaunches.length, before + 1, 'missing hook stays fail-closed and launches current once');
+    assert.deepEqual(calls, [2], 'missing hook does not retry RCH or skip to E3');
+    assert.deepEqual(h.androidLaunches[h.androidLaunches.length - 1].parsed.playlist.map((item) => item.episode), [1]);
 }
 
 {
@@ -544,19 +821,30 @@ assert.equal(h.api.version, 'v6.1.5-online-next-window-20260902');
             ]
         }
     };
-    let lateOk;
-    h.setRequestHandler(({ ok }) => { lateOk = ok; });
+    let lateReady;
+    let requests = 0;
+    h.setRchHook((_response, ready) => {
+        lateReady = ready;
+        return true;
+    });
+    h.setRequestHandler(({ ok }) => {
+        requests++;
+        ok({ rch: true, nws: 'wss://lampac.fun/rch' });
+    });
     h.setActive(movie);
     const before = h.androidLaunches.length;
     h.api.launch();
     assert.equal(h.androidLaunches.length, before, 'current waits only while the bounded neighbor request is pending');
-    h.fireTimeouts(14000);
-    assert.equal(h.androidLaunches.length, before + 1, 'global 14 s deadline must release current exactly once');
-    lateOk({ url: 'https://media.example/too-late-e2.m3u8' });
-    h.fireTimeouts(5000);
-    assert.equal(h.androidLaunches.length, before + 1, 'a late neighbor callback after the global deadline must not duplicate or extend the launch');
+    h.fireTimeouts(9000);
+    assert.equal(h.androidLaunches.length, before + 1, 'hard 9 s neighbor deadline must release current exactly once');
+    lateReady();
+    assert.equal(requests, 1, 'a late handshake callback must not retry after the hard deadline');
+    assert.equal(h.androidLaunches.length, before + 1, 'a late handshake callback must not duplicate or extend the launch');
+    h.fireTimeouts(18000);
+    assert.equal(h.androidLaunches.length, before + 1, 'cleared global deadline must not duplicate the launch');
     assert.deepEqual(h.androidLaunches[h.androidLaunches.length - 1].parsed.playlist.map((item) => item.episode), [1]);
     h.setRequestHandler(null);
+    h.setRchHook(null);
 }
 
 {
@@ -597,4 +885,4 @@ assert.equal(h.api.version, 'v6.1.5-online-next-window-20260902');
     h.setRequestHandler(null);
 }
 
-console.log('ContinueWatching v6.1.5: 25 fixtures passed');
+console.log('ContinueWatching v6.1.6: 30 fixtures passed');

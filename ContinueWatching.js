@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.1.5-online-next-window-20260902';
+    var VERSION = 'v6.1.6-online-rch-retry-20260902';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -12,8 +12,8 @@
     var COMPLETION_PERCENT_TOLERANCE = 8;
     var COMPLETION_JUMP_TOLERANCE = 45;
     var TORRENT_HASH_FALLBACK = 2000;
-    var ONLINE_NEIGHBOR_TIMEOUT = 5000;
-    var ONLINE_WINDOW_DEADLINE = 14000;
+    var ONLINE_NEIGHBOR_TIMEOUT = 9000;
+    var ONLINE_WINDOW_DEADLINE = 18000;
 
     if (!window.Lampa) return;
     if (window.__CW_V6_VERSION__ === VERSION) return;
@@ -32,7 +32,8 @@
         syncKeys: {},
         syncFlushTimer: null,
         controllerNode: null,
-        controllerState: ''
+        controllerState: '',
+        onlineLaunchSeed: null
     };
 
     function now() { return Date.now ? Date.now() : new Date().getTime(); }
@@ -130,6 +131,19 @@
         if (et && at && et !== at) return false;
         if (et && !at) return false;
         return true;
+    }
+    function onlineSelection(online) {
+        online = online || {};
+        var candidates = [{ url: online.resolver_url || '', selection: online.selection || {} }];
+        (online.items || []).forEach(function (item) {
+            item = item || {};
+            candidates.push({ url: item.resolver_url || '', selection: item.selection || {} });
+        });
+        for (var i = 0; i < candidates.length; i++) {
+            var selection = resolverSelection(candidates[i].url, candidates[i].selection);
+            if (selectionKey(selection)) return selection;
+        }
+        return {};
     }
     function movieTitle(movie) {
         movie = movie || {};
@@ -514,6 +528,15 @@
             session.magnet = seed ? seed.magnet : '';
         } else if (source === 'online') {
             session.resolver = lookupResolver(url);
+            var onlineSeed = state.onlineLaunchSeed;
+            if (onlineSeed && onlineSeed.card_key === session.card_key) {
+                session.online_full_defs = deepCopy(onlineSeed.defs) || [];
+                session.online_full_index = num(onlineSeed.index);
+                session.online_window_index = num(onlineSeed.window_index);
+                session.online_seed_activity = num(onlineSeed.activity_at);
+                session.online_seed_descriptor = deepCopy(onlineSeed.online) || {};
+                session.online_selection = onlineSelection(onlineSeed.online);
+            }
             onlineNoty('PLAY S' + session.season + 'E' + session.episode + ' resolver=' + (session.resolver ? 'YES' : 'NO'));
         }
         return session;
@@ -572,12 +595,63 @@
                 meta: meta
             };
         });
+        var descriptorIndex = num(session.index);
+        var fullDefs = Array.isArray(session.online_full_defs) ? session.online_full_defs : [];
+        var baseOnline = session.online_seed_descriptor || {};
+        var currentStore = store();
+        var currentRecord = currentStore[recordKey(session.card_key)];
+        if (currentRecord && currentRecord.card_key === session.card_key && currentRecord.source === 'online' &&
+            currentRecord.online && Array.isArray(currentRecord.online.items)) {
+            var expectedSelection = selectionKey(session.online_selection) ? session.online_selection : onlineSelection(baseOnline);
+            var storedSelection = onlineSelection(currentRecord.online);
+            var expectedKey = selectionKey(expectedSelection);
+            var storedKey = selectionKey(storedSelection);
+            var selectionMatchesStore = !expectedKey || !storedKey || expectedKey === storedKey;
+            var storedDefs = currentRecord.online.items;
+            var richer = storedDefs.length > fullDefs.length;
+            var freshEnough = num(currentRecord.activity_at) > num(session.online_seed_activity) && storedDefs.length >= fullDefs.length;
+            if (selectionMatchesStore && (richer || freshEnough)) {
+                fullDefs = storedDefs;
+                baseOnline = currentRecord.online;
+            }
+        }
+        if (fullDefs.length >= items.length && fullDefs.length) {
+            var offset = num(session.online_full_index) - num(session.online_window_index);
+            var merged = fullDefs.map(function (def) { return deepCopy(def) || clone(def || {}); });
+            items.forEach(function (live, runtimeIndex) {
+                var fullIndex = -1;
+                for (var i = 0; i < merged.length; i++) {
+                    if (live.hash && merged[i] && str(merged[i].hash) === str(live.hash)) { fullIndex = i; break; }
+                }
+                if (fullIndex < 0 && (num(live.season) || num(live.episode))) {
+                    for (var j = 0; j < merged.length; j++) {
+                        if (merged[j] && num(merged[j].season) === num(live.season) && num(merged[j].episode) === num(live.episode)) { fullIndex = j; break; }
+                    }
+                }
+                if (fullIndex < 0 && offset + runtimeIndex >= 0 && offset + runtimeIndex < merged.length) fullIndex = offset + runtimeIndex;
+                if (fullIndex < 0 || fullIndex >= merged.length) return;
+                var saved = merged[fullIndex] || {};
+                Object.keys(live || {}).forEach(function (key) {
+                    var value = live[key];
+                    if ((key === 'resolver_url' || key === 'direct_url') && !value) return;
+                    if (key === 'selection' && !selectionKey(value)) return;
+                    if (key === 'meta') saved.meta = mergeMeta(saved.meta || {}, value || {});
+                    else saved[key] = value;
+                });
+                merged[fullIndex] = saved;
+                if (runtimeIndex === num(session.index)) descriptorIndex = fullIndex;
+            });
+            items = merged;
+        }
+        var sessionResolver = session.resolver ? portableResolver(session.resolver.url) : '';
+        var sessionSelection = session.resolver ? resolverSelection(session.resolver.url, {}) : {};
+        var sessionDirect = isTransientOnline(session.url) ? '' : session.url;
         return {
-            resolver_url: session.resolver ? portableResolver(session.resolver.url) : '',
-            resolver_headers: session.resolver ? clone(session.resolver.headers || {}) : {},
-            selection: resolverSelection(session.resolver ? session.resolver.url : '', {}),
-            direct_url: isTransientOnline(session.url) ? '' : session.url,
-            index: num(session.index),
+            resolver_url: sessionResolver || str(baseOnline.resolver_url || ''),
+            resolver_headers: session.resolver ? clone(session.resolver.headers || {}) : clone(baseOnline.resolver_headers || {}),
+            selection: selectionKey(sessionSelection) ? sessionSelection : clone(baseOnline.selection || {}),
+            direct_url: sessionDirect || str(baseOnline.direct_url || ''),
+            index: descriptorIndex,
             items: items
         };
     }
@@ -606,11 +680,16 @@
             duration: num(road.duration),
             percent: clamp(road.percent || (road.duration ? Math.round(num(road.time) / num(road.duration) * 100) : 0), 0, 100),
             completion_guard: str(road.completion_guard || ''),
-            current_index: num(itemIndex),
+            current_index: session.source === 'online' && Array.isArray(session.online_full_defs) && session.online_full_defs.length
+                ? num(session.online_full_index) - num(session.online_window_index) + num(itemIndex)
+                : num(itemIndex),
             poster: str(session.movie.poster_path || session.movie.img || session.movie.poster || '')
         };
         if (session.source === 'torrent') r.torrent = torrentDescriptor(session);
-        if (session.source === 'online') r.online = onlineDescriptor(session);
+        if (session.source === 'online') {
+            r.online = onlineDescriptor(session);
+            if (r.online) r.current_index = num(r.online.index);
+        }
         return r;
     }
 
@@ -897,24 +976,47 @@
     }
     function resolveOnlineCandidate(resolver, callback, timeout) {
         if (!resolver || !resolver.url || !Lampa.Reguest) return callback(null);
+        var limit = timeout || 12000;
+        var deadline = now() + limit;
         var settled = false;
-        var timer = setTimeout(function () { finish(null); }, timeout || 12000);
+        var retried = false;
+        var timer = setTimeout(function () { finish(null); }, limit);
         function finish(result) {
             if (settled) return;
             settled = true;
             if (timer) clearTimeout(timer);
             callback(result);
         }
-        var n = new Lampa.Reguest();
-        try { n.timeout(timeout || 12000); } catch (e) {}
-        try {
-            n.native(localizeResolver(resolver.url), function (d) {
-                if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e2) { d = null; } }
-                if (d && d.rch) return finish(null);
-                var u = chooseOnlineUrl(d);
-                finish(u && !looksOnlineResolver(u) ? { url: u, data: d || {}, selection: resolver.selection || {} } : null);
-            }, function () { finish(null); }, false, { headers: onlineHeaders(resolver.headers) });
-        } catch (e3) { finish(null); }
+        function request() {
+            if (settled || now() >= deadline) return finish(null);
+            var n = new Lampa.Reguest();
+            try { n.timeout(Math.max(1, deadline - now())); } catch (e) {}
+            try {
+                n.native(localizeResolver(resolver.url), function (d) {
+                    if (settled) return;
+                    if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e2) { d = null; } }
+                    if (d && d.rch) {
+                        if (retried) return finish(null);
+                        var handshake = window.Online2RchHandshake;
+                        if (typeof handshake !== 'function') return finish(null);
+                        retried = true;
+                        var ready = false;
+                        try {
+                            var accepted = handshake(d, function () {
+                                if (ready || settled) return;
+                                ready = true;
+                                request();
+                            });
+                            if (accepted === false && !ready) finish(null);
+                        } catch (e3) { finish(null); }
+                        return;
+                    }
+                    var u = chooseOnlineUrl(d);
+                    finish(u && !looksOnlineResolver(u) ? { url: u, data: d || {}, selection: resolver.selection || {} } : null);
+                }, function () { finish(null); }, false, { headers: onlineHeaders(resolver.headers) });
+            } catch (e4) { finish(null); }
+        }
+        request();
     }
     function resolveOnline(record, callback) {
         var resolver = onlineResolverForRecord(record);
@@ -1167,9 +1269,18 @@
                 d.playlist = prepared.list;
                 onlineNoty('PLAYER ' + shortUrl(u) + ' playlist=' + prepared.list.length + ' title=' + str(d.title).slice(0, 35));
                 try {
+                    state.onlineLaunchSeed = {
+                        card_key: cardKey(movie),
+                        defs: deepCopy(defs) || [],
+                        index: idx,
+                        window_index: prepared.index,
+                        activity_at: num(record.activity_at),
+                        online: deepCopy(online) || {}
+                    };
                     Lampa.Player.play(d);
                     if (Lampa.Player.playlist) Lampa.Player.playlist(prepared.list);
                 } catch (e) { noty('Ошибка запуска online'); }
+                finally { state.onlineLaunchSeed = null; }
             });
         });
     }
