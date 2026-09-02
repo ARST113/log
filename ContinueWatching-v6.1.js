@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.1.4-online-launch-payload-20260902';
+    var VERSION = 'v6.1.5-online-next-window-20260902';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -12,6 +12,8 @@
     var COMPLETION_PERCENT_TOLERANCE = 8;
     var COMPLETION_JUMP_TOLERANCE = 45;
     var TORRENT_HASH_FALLBACK = 2000;
+    var ONLINE_NEIGHBOR_TIMEOUT = 5000;
+    var ONLINE_WINDOW_DEADLINE = 14000;
 
     if (!window.Lampa) return;
     if (window.__CW_V6_VERSION__ === VERSION) return;
@@ -893,18 +895,109 @@
         }
         return null;
     }
+    function resolveOnlineCandidate(resolver, callback, timeout) {
+        if (!resolver || !resolver.url || !Lampa.Reguest) return callback(null);
+        var settled = false;
+        var timer = setTimeout(function () { finish(null); }, timeout || 12000);
+        function finish(result) {
+            if (settled) return;
+            settled = true;
+            if (timer) clearTimeout(timer);
+            callback(result);
+        }
+        var n = new Lampa.Reguest();
+        try { n.timeout(timeout || 12000); } catch (e) {}
+        try {
+            n.native(localizeResolver(resolver.url), function (d) {
+                if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e2) { d = null; } }
+                if (d && d.rch) return finish(null);
+                var u = chooseOnlineUrl(d);
+                finish(u && !looksOnlineResolver(u) ? { url: u, data: d || {}, selection: resolver.selection || {} } : null);
+            }, function () { finish(null); }, false, { headers: onlineHeaders(resolver.headers) });
+        } catch (e3) { finish(null); }
+    }
     function resolveOnline(record, callback) {
         var resolver = onlineResolverForRecord(record);
-        if (!resolver || !resolver.url || !Lampa.Reguest) return callback(null);
+        if (!resolver) return callback(null);
         onlineNoty('RESOLVE ' + shortUrl(resolver.url));
-        var n = new Lampa.Reguest();
-        try { n.timeout(12000); } catch (e) {}
-        n.native(localizeResolver(resolver.url), function (d) {
-            if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e2) { d = null; } }
-            var u = chooseOnlineUrl(d);
-            onlineNoty(u ? 'RESOLVE OK ' + shortUrl(u) : 'RESOLVE EMPTY');
-            callback(u ? { url: u, data: d || {}, selection: resolver.selection || {} } : null);
-        }, function () { onlineNoty('RESOLVE FAIL'); callback(null); }, false, { headers: onlineHeaders(resolver.headers) });
+        resolveOnlineCandidate(resolver, function (resolved) {
+            onlineNoty(resolved ? 'RESOLVE OK ' + shortUrl(resolved.url) : 'RESOLVE FAIL');
+            callback(resolved);
+        }, 12000);
+    }
+    function looksOnlineResolver(url) {
+        try {
+            var u = new URL(str(url), location.href);
+            return /^\/lite\/[^/]+\/(?:video|serial|movie|episodes?)(?:\/|$)/i.test(u.pathname);
+        } catch (e) { return false; }
+    }
+    function directOnlineUrl(def) {
+        var url = cleanUrl(def && def.direct_url || '');
+        return url && !looksOnlineResolver(url) ? url : '';
+    }
+    function onlineResolverForItem(def, fallbackSelection) {
+        def = def || {};
+        var url = str(def.resolver_url || '');
+        if (!url && looksOnlineResolver(def.direct_url)) url = str(def.direct_url);
+        if (!url) return null;
+        var expected = def.selection || fallbackSelection || resolverSelection(url, {});
+        var actual = resolverSelection(url, expected || {});
+        if (selectionKey(expected) && !selectionMatches(expected, actual)) return null;
+        return { url: url, headers: def.resolver_headers || {}, selection: actual };
+    }
+    function applyResolvedOnlineItem(item, resolved) {
+        if (!item || !resolved || !resolved.url || looksOnlineResolver(resolved.url)) return false;
+        item.url = resolved.url; item.uri = resolved.url; item.src = resolved.url;
+        if (resolved.data) applyMeta(item, playbackMeta(resolved.data));
+        item.online_selection = clone(resolved.selection || {});
+        return true;
+    }
+    function prepareOnlineWindow(defs, list, idx, fallbackSelection, callback) {
+        var last = Math.min(defs.length - 1, idx + 2);
+        var first = idx;
+        var forward = idx;
+        var stoppedForward = false;
+        var done = false;
+        var tasks = [];
+        for (var i = idx + 1; i <= last; i++) tasks.push(i);
+        if (idx > 0) tasks.push(idx - 1);
+        var globalTimer = setTimeout(finish, ONLINE_WINDOW_DEADLINE);
+
+        function finish() {
+            if (done) return;
+            done = true;
+            if (globalTimer) clearTimeout(globalTimer);
+            var windowList = list.slice(first, forward + 1);
+            var current = idx - first;
+            windowList.forEach(function (item, index) { item.playlist_index = index; });
+            callback({ list: windowList, index: current });
+        }
+        function resolvedAt(index, resolved) {
+            if (done) return;
+            if (!applyResolvedOnlineItem(list[index], resolved)) {
+                if (index > idx) stoppedForward = true;
+            } else if (index > idx) {
+                forward = index;
+            } else {
+                first = index;
+            }
+            next();
+        }
+        function next() {
+            if (done) return;
+            if (!tasks.length) return finish();
+            var index = tasks.shift();
+            if (index > idx && stoppedForward) return next();
+            var def = defs[index] || {};
+            var resolver = onlineResolverForItem(def, fallbackSelection);
+            if (resolver) {
+                resolveOnlineCandidate(resolver, function (resolved) { resolvedAt(index, resolved); }, ONLINE_NEIGHBOR_TIMEOUT);
+                return;
+            }
+            var direct = directOnlineUrl(def);
+            resolvedAt(index, direct ? { url: direct, data: {}, selection: def.selection || fallbackSelection || {} } : null);
+        }
+        next();
     }
 
     function isPhone() {
@@ -1039,10 +1132,14 @@
                     timeline: timelineView(h) || { hash: h, time: num(road.time), duration: num(road.duration), percent: num(road.percent) }
                 };
                 applyMeta(item, it.meta || {});
+                item.time = num(road.time);
+                item.position = item.time > 0 ? item.time : -1;
+                item.duration = num(road.duration);
+                item.percent = num(road.percent);
                 return item;
             });
             var activeDef = defs[idx] || {};
-            var u = resolved && resolved.url ? resolved.url : (activeDef.direct_url || online.direct_url || '');
+            var u = resolved && resolved.url ? resolved.url : (directOnlineUrl(activeDef) || directOnlineUrl({ direct_url: online.direct_url }));
             if (!u) return noty('Не удалось получить свежую ссылку серии');
             var live = timelineView(record.timeline_hash) || {};
             var resumeRoad = mergeRecordRoad(record, live);
@@ -1063,13 +1160,17 @@
             d.continue_watch_v6 = true;
             if (resolved && resolved.data) applyMeta(d, playbackMeta(resolved.data));
             list[idx] = deepCopy(d) || clone(d);
-            d.currentItem = deepCopy(list[idx]) || clone(list[idx]);
-            d.playlist = list;
-            onlineNoty('PLAYER ' + shortUrl(u) + ' playlist=' + list.length + ' title=' + str(d.title).slice(0, 35));
-            try {
-                Lampa.Player.play(d);
-                if (Lampa.Player.playlist) Lampa.Player.playlist(list);
-            } catch (e) { noty('Ошибка запуска online'); }
+            prepareOnlineWindow(defs, list, idx, d.online_selection, function (prepared) {
+                d.playlist_index = prepared.index; d.start_index = prepared.index;
+                if (prepared.list[prepared.index]) prepared.list[prepared.index].start_index = prepared.index;
+                d.currentItem = deepCopy(prepared.list[prepared.index]) || clone(prepared.list[prepared.index]);
+                d.playlist = prepared.list;
+                onlineNoty('PLAYER ' + shortUrl(u) + ' playlist=' + prepared.list.length + ' title=' + str(d.title).slice(0, 35));
+                try {
+                    Lampa.Player.play(d);
+                    if (Lampa.Player.playlist) Lampa.Player.playlist(prepared.list);
+                } catch (e) { noty('Ошибка запуска online'); }
+            });
         });
     }
     function launch(movie) {
