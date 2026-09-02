@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.1.3-torrent-hash-fallback-20260902';
+    var VERSION = 'v6.1.4-online-launch-payload-20260902';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -1049,7 +1049,7 @@
             var time = resumeRoad.time;
             var dur = resumeRoad.duration;
             var per = resumeRoad.percent;
-            var d = list[idx] || {};
+            var d = clone(list[idx] || {});
             d.url = u; d.uri = u; d.src = u;
             d.title = activeDef.title || record.episode_title || record.title || movieTitle(movie);
             d.card = movie; d.movie = movie;
@@ -1058,11 +1058,13 @@
             onlineTimeline.hash = record.timeline_hash; onlineTimeline.time = time; onlineTimeline.duration = dur; onlineTimeline.percent = per;
             d.timeline = onlineTimeline;
             d.time = time; d.position = time > 0 ? time : -1; d.duration = dur; d.percent = per;
-            d.playlist = list; d.playlist_index = idx; d.start_index = idx; d.currentItem = d;
+            d.playlist_index = idx; d.start_index = idx;
             d.online_selection = clone(resolved && resolved.selection || online.selection || activeDef.selection || {});
             d.continue_watch_v6 = true;
             if (resolved && resolved.data) applyMeta(d, playbackMeta(resolved.data));
-            list[idx] = d;
+            list[idx] = deepCopy(d) || clone(d);
+            d.currentItem = deepCopy(list[idx]) || clone(list[idx]);
+            d.playlist = list;
             onlineNoty('PLAYER ' + shortUrl(u) + ' playlist=' + list.length + ' title=' + str(d.title).slice(0, 35));
             try {
                 Lampa.Player.play(d);

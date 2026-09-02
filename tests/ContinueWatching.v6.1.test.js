@@ -39,6 +39,15 @@ function harness() {
     const listeners = {};
     const timelineListeners = [];
     const timers = new Map();
+    const androidLaunches = [];
+
+    const Android = {
+        openPlayer(link, data) {
+            const serialized = JSON.stringify(data);
+            androidLaunches.push({ link, data, serialized, parsed: JSON.parse(serialized) });
+            return serialized;
+        }
+    };
 
     const document = {
         head: { appendChild() {} },
@@ -55,7 +64,8 @@ function harness() {
         Listener: { follow(name, callback) { (listeners[name] ||= []).push(callback); } },
         Noty: { show() {} },
         Platform: { is() { return false; } },
-        Player: { play(data) { return data; }, playlist() {} },
+        Android,
+        Player: { play(data) { return Android.openPlayer(data.url, data); }, playlist() {} },
         Storage: {
             listener: { follow() {} },
             field() { return ''; },
@@ -123,6 +133,7 @@ function harness() {
         roads,
         listeners,
         timelineListeners,
+        androidLaunches,
         rch_nws: context.rch_nws,
         setActive(movie) { active = movie; },
         setClock(value) { clock = value; },
@@ -139,7 +150,7 @@ function harness() {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.1.3-torrent-hash-fallback-20260902');
+assert.equal(h.api.version, 'v6.1.4-online-launch-payload-20260902');
 
 {
     const result = t.normalizeRoad(
@@ -346,4 +357,71 @@ assert.equal(h.api.version, 'v6.1.3-torrent-hash-fallback-20260902');
     assert.equal(saved.online.selection.translation, 'dvo');
 }
 
-console.log('ContinueWatching v6.1.3: 20 fixtures passed');
+{
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 778, media_type: 'tv', title: 'Playlist serialization', original_name: 'Playlist serialization' };
+    const cardKey = t.cardKey(movie);
+    const recordKey = 'c_' + h.Lampa.Utils.hash(cardKey);
+    const segments = [{ start: 0, end: 75, type: 'intro' }, { start: 3480, end: 3697, type: 'credits' }];
+    h.storage[storageKey] ||= {};
+    h.storage[storageKey][recordKey] = {
+        v: 6,
+        card_key: cardKey,
+        source: 'online',
+        activity_at: 2_000_000,
+        season: 1,
+        episode: 2,
+        episode_title: 'The Kingsroad',
+        timeline_hash: 'got-s01e02',
+        time: 320,
+        duration: 3697,
+        percent: 9,
+        current_index: 1,
+        online: {
+            index: 1,
+            direct_url: 'https://media.example/got-s01e02.m3u8',
+            selection: { provider: 'zetflix', translation: 'fox life' },
+            items: [
+                {
+                    title: 'Winter Is Coming', season: 1, episode: 1, hash: 'got-s01e01',
+                    direct_url: 'https://media.example/got-s01e01.m3u8', meta: {}
+                },
+                {
+                    title: 'The Kingsroad', season: 1, episode: 2, hash: 'got-s01e02',
+                    direct_url: 'https://media.example/got-s01e02.m3u8', meta: { segments }
+                }
+            ]
+        }
+    };
+    h.setActive(movie);
+    const before = h.androidLaunches.length;
+    h.api.launch();
+
+    assert.equal(h.androidLaunches.length, before + 1, 'Continue must reach the mocked Android player');
+    const launch = h.androidLaunches[h.androidLaunches.length - 1];
+    assert.doesNotThrow(() => JSON.stringify(launch.data), 'Android launch data must stay JSON-serializable');
+    assert.notStrictEqual(launch.data, launch.data.playlist[1], 'root launch data must not be its playlist item');
+    assert.notStrictEqual(launch.data.currentItem, launch.data, 'currentItem must not reference the root launch data');
+    assert.notStrictEqual(launch.data.currentItem, launch.data.playlist[1], 'currentItem and playlist item must be independent snapshots');
+
+    const payload = launch.parsed;
+    assert.equal(payload.playlist.length, 2);
+    assert.equal(payload.playlist_index, 1);
+    assert.equal(payload.start_index, 1);
+    assert.equal(payload.url, 'https://media.example/got-s01e02.m3u8');
+    assert.equal(payload.title, 'The Kingsroad');
+    assert.equal(payload.position, 320);
+    assert.equal(payload.time, 320);
+    assert.equal(payload.duration, 3697);
+    assert.equal(payload.currentItem.title, 'The Kingsroad');
+    assert.equal(payload.currentItem.position, 320);
+    assert.equal(payload.playlist[1].title, 'The Kingsroad');
+    assert.equal(payload.playlist[1].position, 320);
+    assert.deepEqual(payload.segments, segments);
+    assert.deepEqual(payload.currentItem.segments, segments);
+    assert.deepEqual(payload.playlist[1].segments, segments);
+    assert.equal(payload.currentItem.playlist, undefined);
+    assert.equal(payload.playlist[1].playlist, undefined);
+}
+
+console.log('ContinueWatching v6.1.4: 21 fixtures passed');
