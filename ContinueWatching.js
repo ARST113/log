@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.1.0-sync-metadata-ux-20260831';
+    var VERSION = 'v6.1.1-technical-resume-fix-20260902';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -9,6 +9,8 @@
     var SYNC_MAX = 9000;
     var EXTERNAL_SETTLE = 1500;
     var EXTERNAL_WINDOW = 5000;
+    var COMPLETION_PERCENT_TOLERANCE = 8;
+    var COMPLETION_JUMP_TOLERANCE = 45;
 
     if (!window.Lampa) return;
     if (window.__CW_V6_VERSION__ === VERSION) return;
@@ -93,6 +95,39 @@
         var i = url.indexOf('#');
         return i >= 0 ? url.slice(0, i) : url;
     }
+    function resolverSelection(url, fallback) {
+        fallback = fallback || {};
+        var out = {
+            provider: str(fallback.provider || fallback.balanser || '').trim().toLowerCase(),
+            translation: str(fallback.translation || fallback.voice || '').trim().toLowerCase()
+        };
+        try {
+            var u = new URL(str(url), location.href);
+            var provider = u.pathname.match(/\/(?:lite\/)?([^/]+)\/(?:video|serial|movie|episodes?)(?:\/|$)/i);
+            if (provider) out.provider = str(provider[1]).trim().toLowerCase();
+            var keys = ['t', 'translation', 'voice', 'voiceover', 'dub'];
+            for (var i = 0; i < keys.length; i++) {
+                var value = u.searchParams.get(keys[i]);
+                if (value !== null && value !== '') { out.translation = str(value).trim().toLowerCase(); break; }
+            }
+        } catch (e) {}
+        return out;
+    }
+    function selectionKey(selection) {
+        selection = selection || {};
+        var provider = str(selection.provider).trim().toLowerCase();
+        var translation = str(selection.translation).trim().toLowerCase();
+        return provider || translation ? provider + '|' + translation : '';
+    }
+    function selectionMatches(expected, actual) {
+        expected = expected || {}; actual = actual || {};
+        var ep = str(expected.provider).trim().toLowerCase(), ap = str(actual.provider).trim().toLowerCase();
+        var et = str(expected.translation).trim().toLowerCase(), at = str(actual.translation).trim().toLowerCase();
+        if (ep && ap && ep !== ap) return false;
+        if (et && at && et !== at) return false;
+        if (et && !at) return false;
+        return true;
+    }
     function movieTitle(movie) {
         movie = movie || {};
         return str(movie.original_name || movie.original_title || movie.name || movie.title || '');
@@ -116,17 +151,20 @@
         var key = typeof movie === 'string' ? movie : cardKey(movie);
         return key ? 'c_' + Lampa.Utils.hash(key) : '';
     }
-    function getMovieFromData(data) {
-        data = data || {};
-        return data.card || data.movie || (data.currentItem && data.currentItem.card) || state.lastMovie || activeMovie() || {};
-    }
-    function activeMovie() {
+    function currentActivityMovie() {
         try {
             var a = Lampa.Activity && Lampa.Activity.active ? Lampa.Activity.active() : null;
-            var m = a && (a.movie || a.card || (a.params && a.params.movie));
-            if (m) state.lastMovie = m;
-            return m || state.lastMovie;
-        } catch (e) { return state.lastMovie; }
+            return a && (a.movie || a.card || (a.params && a.params.movie)) || null;
+        } catch (e) { return null; }
+    }
+    function getMovieFromData(data) {
+        data = data || {};
+        return data.card || data.movie || (data.currentItem && data.currentItem.card) || currentActivityMovie() || state.lastMovie || {};
+    }
+    function activeMovie() {
+        var m = currentActivityMovie();
+        if (m) state.lastMovie = m;
+        return m || state.lastMovie;
     }
     function profileId() {
         var a = null;
@@ -272,6 +310,54 @@
     function timelineView(hash) {
         try { return hash && Lampa.Timeline && Lampa.Timeline.view ? Lampa.Timeline.view(hash) : null; } catch (e) { return null; }
     }
+    function normalizeRoad(road, session) {
+        road = road || {}; session = session || {};
+        var out = clone(road);
+        var time = num(road.time), duration = num(road.duration), percent = num(road.percent);
+        var derived = duration > 0 ? Math.round(time / duration * 100) : 0;
+        var claimsCompletion = percent >= 100;
+        var mismatch = claimsCompletion && duration >= 60 && derived + COMPLETION_PERCENT_TOLERANCE < 100;
+        var elapsed = session.created_at ? Math.max(0, (now() - num(session.created_at)) / 1000) : 0;
+        var initial = num(session.initial_time);
+        var external = session.external !== undefined ? !!session.external : isJustExternal();
+        var impossible = external && claimsCompletion && duration >= 60 && elapsed <= 180 &&
+            initial <= duration * 0.1 && time >= duration * 0.98 &&
+            time > initial + elapsed + COMPLETION_JUMP_TOLERANCE;
+
+        if (impossible) {
+            var previous = session.last_road || {};
+            time = Math.max(num(previous.time || initial), Math.min(time, initial + elapsed));
+        }
+        if (mismatch || impossible) {
+            percent = duration > 0 ? Math.round(time / duration * 100) : 0;
+            out.time = time;
+            out.duration = duration;
+            out.percent = clamp(percent, 0, 100);
+            out.completion_guard = mismatch ? 'percent_time_mismatch' : 'impossible_position_jump';
+        }
+        return out;
+    }
+    function guardRoadInPlace(road, session) {
+        var corrected = normalizeRoad(road, session);
+        if (!corrected.completion_guard) return '';
+        road.time = corrected.time;
+        road.duration = corrected.duration;
+        road.percent = corrected.percent;
+        road.completion_guard = corrected.completion_guard;
+        return corrected.completion_guard;
+    }
+    function mergeRecordRoad(record, live) {
+        record = record || {}; live = live || {};
+        var out = { time: num(record.time), duration: num(record.duration), percent: num(record.percent) };
+        if (!record.completion_guard) {
+            out.time = Math.max(out.time, num(live.time));
+            out.duration = Math.max(out.duration, num(live.duration));
+            out.percent = Math.max(out.percent, num(live.percent));
+        }
+        if (!out.percent && out.time && out.duration) out.percent = Math.round(out.time / out.duration * 100);
+        out.percent = clamp(out.percent, 0, 100);
+        return out;
+    }
     function reconcileRecordTimeline(record) {
         if (!record) return record;
         var out = deepCopy(record) || clone(record);
@@ -288,6 +374,7 @@
             if (!best || updated > best.updated) best = { idx: idx, it: it, road: road, updated: updated };
         });
         if (!best || best.updated <= num(out.activity_at)) return out;
+        if (out.completion_guard && num(best.road.percent) >= 100) return out;
         if (out.source === 'torrent' && num(best.road.percent) >= 100 && best.idx + 1 < items.length) {
             best = { idx: best.idx + 1, it: items[best.idx + 1], road: { time: 0, duration: 0, percent: 0, updated: best.updated }, updated: best.updated };
         }
@@ -298,6 +385,7 @@
         out.time = num(best.road.time);
         out.duration = num(best.road.duration);
         out.percent = clamp(best.road.percent || (best.road.duration ? Math.round(num(best.road.time) / num(best.road.duration) * 100) : 0), 0, 100);
+        out.completion_guard = '';
         out.activity_at = best.updated;
         if (out.torrent) out.torrent.index = best.idx;
         if (out.online) out.online.index = best.idx;
@@ -412,6 +500,8 @@
             resolver: null,
             active_meta: playbackMeta(data),
             created_at: now(),
+            initial_time: num(data.time || data.position || (data.timeline && data.timeline.time)),
+            external: isJustExternal(),
             last_road: null
         };
         if (source === 'torrent') {
@@ -475,12 +565,14 @@
                 direct_url: raw && !isTransientOnline(raw) ? raw : '',
                 resolver_url: resolver ? portableResolver(resolver.url) : '',
                 resolver_headers: resolver ? clone(resolver.headers || {}) : {},
+                selection: resolverSelection(resolver ? resolver.url : '', {}),
                 meta: meta
             };
         });
         return {
             resolver_url: session.resolver ? portableResolver(session.resolver.url) : '',
             resolver_headers: session.resolver ? clone(session.resolver.headers || {}) : {},
+            selection: resolverSelection(session.resolver ? session.resolver.url : '', {}),
             direct_url: isTransientOnline(session.url) ? '' : session.url,
             index: num(session.index),
             items: items
@@ -510,6 +602,7 @@
             time: num(road.time),
             duration: num(road.duration),
             percent: clamp(road.percent || (road.duration ? Math.round(num(road.time) / num(road.duration) * 100) : 0), 0, 100),
+            completion_guard: str(road.completion_guard || ''),
             current_index: num(itemIndex),
             poster: str(session.movie.poster_path || session.movie.img || session.movie.poster || '')
         };
@@ -538,9 +631,11 @@
         var d = torrentDescriptor(session);
         if (!d) return;
         var baselines = {};
+        var baselineRoads = {};
         d.items.forEach(function (it) {
             var road = timelineView(it.hash) || {};
             baselines[it.hash] = num(road.updated);
+            baselineRoads[it.hash] = { time: num(road.time), duration: num(road.duration), percent: num(road.percent), updated: num(road.updated) };
         });
         var p = {
             v: 6,
@@ -555,6 +650,7 @@
             },
             torrent: d,
             baselines: baselines,
+            baseline_roads: baselineRoads,
             events: [],
             launched_at: now()
         };
@@ -581,7 +677,7 @@
         var p = readPending();
         if (!p || !pendingItem(p, hash)) return false;
         p.events = Array.isArray(p.events) ? p.events : [];
-        p.events.push({ hash: str(hash), seen: now(), updated: num(road.updated || now()), time: num(road.time), duration: num(road.duration), percent: num(road.percent) });
+        p.events.push({ hash: str(hash), seen: now(), updated: num(road.updated || now()), time: num(road.time), duration: num(road.duration), percent: num(road.percent), completion_guard: str(road.completion_guard || '') });
         if (p.events.length > 30) p.events = p.events.slice(-30);
         savePending(p);
         scheduleReconcile();
@@ -611,7 +707,9 @@
         return {
             source: 'torrent', card_key: p.card_key, movie: movie, url: '', playlist: list,
             index: num(p.torrent.index), season: 0, episode: 0, hash: '', torrent_hash: p.torrent.hash,
-            magnet: p.torrent.magnet || '', resolver: null, created_at: p.launched_at, last_road: null
+            magnet: p.torrent.magnet || '', resolver: null, created_at: p.launched_at,
+            initial_time: num(p.baseline_roads && p.torrent.items[p.torrent.index] && p.baseline_roads[p.torrent.items[p.torrent.index].hash] && p.baseline_roads[p.torrent.items[p.torrent.index].hash].time),
+            external: true, last_road: null
         };
     }
     function reconcilePending() {
@@ -631,6 +729,15 @@
             candidates.push({ index: pi.index, item: pi.item, road: e, updated: num(e.updated || e.seen) });
         });
         if (!candidates.length) return false;
+        candidates.forEach(function (candidate) {
+            var baseline = p.baseline_roads && p.baseline_roads[candidate.item.hash] || {};
+            candidate.road = normalizeRoad(candidate.road, {
+                created_at: p.launched_at,
+                initial_time: num(baseline.time),
+                external: true,
+                last_road: baseline
+            });
+        });
         candidates.sort(function (a, b) { return b.updated - a.updated; });
         var playable = candidates.filter(function (c) { return num(c.road.time) > 0 && num(c.road.duration) > 0 && num(c.road.percent) < 100; });
         var chosen = playable.length ? playable[0] : null;
@@ -656,10 +763,24 @@
         var d = event && event.data ? event.data : event;
         if (!d || !d.hash || !d.road) return;
         var hash = str(d.hash), road = d.road || {};
+        var idx = findSessionItem(hash);
+        var pending = readPending();
+        var pendingMatch = pendingItem(pending, hash);
+
+        if (idx >= 0 && state.session) {
+            guardRoadInPlace(road, state.session);
+        } else if (pendingMatch) {
+            var baseline = pending.baseline_roads && pending.baseline_roads[hash] || {};
+            guardRoadInPlace(road, {
+                created_at: pending.launched_at,
+                initial_time: num(baseline.time),
+                external: true,
+                last_road: baseline
+            });
+        }
 
         if (isJustExternal() && appendPendingEvent(hash, road)) return;
 
-        var idx = findSessionItem(hash);
         if (idx < 0) {
             if (appendPendingEvent(hash, road)) return;
             return;
@@ -746,18 +867,36 @@
         if (typeof u === 'string' && u.indexOf(' or ') !== -1) u = u.split(' or ')[0];
         return cleanUrl(u);
     }
+    function onlineResolverForRecord(record) {
+        var o = record && record.online || {};
+        var idx = Math.max(0, num(record && record.current_index !== undefined ? record.current_index : o.index));
+        var item = o.items && o.items[idx] || {};
+        var expected = o.selection || item.selection || resolverSelection(o.resolver_url || item.resolver_url || '', {});
+        var candidates = [
+            { url: o.resolver_url || '', headers: o.resolver_headers || {} },
+            { url: item.resolver_url || '', headers: item.resolver_headers || {} }
+        ];
+        for (var i = 0; i < candidates.length; i++) {
+            if (!candidates[i].url) continue;
+            var actual = resolverSelection(candidates[i].url, {});
+            if (selectionKey(expected) && !selectionMatches(expected, actual)) continue;
+            candidates[i].selection = actual;
+            return candidates[i];
+        }
+        return null;
+    }
     function resolveOnline(record, callback) {
-        var o = record && record.online;
-        if (!o || !o.resolver_url || !Lampa.Reguest) return callback(null);
-        onlineNoty('RESOLVE ' + shortUrl(o.resolver_url));
+        var resolver = onlineResolverForRecord(record);
+        if (!resolver || !resolver.url || !Lampa.Reguest) return callback(null);
+        onlineNoty('RESOLVE ' + shortUrl(resolver.url));
         var n = new Lampa.Reguest();
         try { n.timeout(12000); } catch (e) {}
-        n.native(localizeResolver(o.resolver_url), function (d) {
+        n.native(localizeResolver(resolver.url), function (d) {
             if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e2) { d = null; } }
             var u = chooseOnlineUrl(d);
             onlineNoty(u ? 'RESOLVE OK ' + shortUrl(u) : 'RESOLVE EMPTY');
-            callback(u ? { url: u, data: d || {} } : null);
-        }, function () { onlineNoty('RESOLVE FAIL'); callback(null); }, false, { headers: onlineHeaders(o.resolver_headers) });
+            callback(u ? { url: u, data: d || {}, selection: resolver.selection || {} } : null);
+        }, function () { onlineNoty('RESOLVE FAIL'); callback(null); }, false, { headers: onlineHeaders(resolver.headers) });
     }
 
     function isPhone() {
@@ -844,9 +983,10 @@
             for (var i = 0; i < list.length; i++) if (record.timeline_hash && list[i].timeline && str(list[i].timeline.hash) === str(record.timeline_hash)) idx = i;
             var item = clone(list[idx]);
             var live = timelineView(record.timeline_hash) || {};
-            var time = Math.max(num(record.time), num(live.time));
-            var dur = Math.max(num(record.duration), num(live.duration));
-            var per = Math.max(num(record.percent), num(live.percent));
+            var resumeRoad = mergeRecordRoad(record, live);
+            var time = resumeRoad.time;
+            var dur = resumeRoad.duration;
+            var per = resumeRoad.percent;
             item.card = movie; item.movie = movie;
             var activeTimeline = timelineView(record.timeline_hash || (item.timeline && item.timeline.hash)) || item.timeline || {};
             activeTimeline.hash = record.timeline_hash || activeTimeline.hash || '';
@@ -888,9 +1028,10 @@
             var u = resolved && resolved.url ? resolved.url : (activeDef.direct_url || online.direct_url || '');
             if (!u) return noty('Не удалось получить свежую ссылку серии');
             var live = timelineView(record.timeline_hash) || {};
-            var time = Math.max(num(record.time), num(live.time));
-            var dur = Math.max(num(record.duration), num(live.duration));
-            var per = Math.max(num(record.percent), num(live.percent));
+            var resumeRoad = mergeRecordRoad(record, live);
+            var time = resumeRoad.time;
+            var dur = resumeRoad.duration;
+            var per = resumeRoad.percent;
             var d = list[idx] || {};
             d.url = u; d.uri = u; d.src = u;
             d.title = activeDef.title || record.episode_title || record.title || movieTitle(movie);
@@ -901,6 +1042,7 @@
             d.timeline = onlineTimeline;
             d.time = time; d.position = time > 0 ? time : -1; d.duration = dur; d.percent = per;
             d.playlist = list; d.playlist_index = idx; d.start_index = idx; d.currentItem = d;
+            d.online_selection = clone(resolved && resolved.selection || online.selection || activeDef.selection || {});
             d.continue_watch_v6 = true;
             if (resolved && resolved.data) applyMeta(d, playbackMeta(resolved.data));
             list[idx] = d;
@@ -962,25 +1104,35 @@
             '.button--continue-watch-native-just[data-cwu-subtitle]:after{content:attr(data-cwu-subtitle);display:none!important;margin-left:.45em;font-size:.72em;line-height:1;opacity:.65;white-space:nowrap;transform:translateY(.06em)}' +
             '.button--continue-watch-native-just:hover:after,.button--continue-watch-native-just.focus:after{display:inline-block!important}';
     }
-    function cardRoot() {
-        try { var x = $('.full-start-new').last(); return x && x.length ? x : null; } catch (e) { return null; }
+    function eventMovie(event) {
+        var activity = event && event.object && event.object.activity;
+        return event && event.data && (event.data.movie || event.data.card) ||
+            event && event.object && (event.object.movie || event.object.card) ||
+            event && event.object && event.object.data && (event.object.data.movie || event.object.data.card) ||
+            activity && (activity.movie || activity.card || (activity.params && activity.params.movie)) || null;
+    }
+    function cardRoot(candidate) {
+        try {
+            if (candidate && candidate.find) {
+                if (candidate.is && candidate.is('.full-start-new,.full-start')) return candidate.first();
+                var closest = candidate.closest && candidate.closest('.full-start-new,.full-start').first();
+                if (closest && closest.length) return closest;
+                var nested = candidate.find('.full-start-new,.full-start').last();
+                if (nested && nested.length) return nested;
+            }
+            var x = $('.full-start-new,.full-start').last();
+            return x && x.length ? x : null;
+        } catch (e) { return null; }
     }
     function buttonContainer(root) {
+        if (root.is && root.is('.full-start-new__buttons,.buttons--container')) return root.first();
         var c = root.find('.full-start-new__buttons').first();
         if (!c.length) c = root.find('.buttons--container').first();
         return c;
     }
     function recordRoad(r) {
-        var road = { time: num(r && r.time), duration: num(r && r.duration), percent: num(r && r.percent) };
         var live = r && r.timeline_hash ? timelineView(r.timeline_hash) : null;
-        if (live) {
-            road.time = Math.max(road.time, num(live.time));
-            road.duration = Math.max(road.duration, num(live.duration));
-            road.percent = Math.max(road.percent, num(live.percent));
-        }
-        if (!road.percent && road.time && road.duration) road.percent = Math.round(road.time / road.duration * 100);
-        road.percent = clamp(road.percent, 0, 100);
-        return road;
+        return mergeRecordRoad(r, live);
     }
     function subtitle(r, road) {
         var p = [];
@@ -1006,19 +1158,25 @@
         if (!isPhone()) b.on('mousedown.cw6 pointerdown.cw6', function (e) { if (!e.pointerType || e.pointerType === 'mouse') { e.preventDefault(); e.stopPropagation(); } });
         return b;
     }
-    function refreshUI() {
+    function buttonStateKey(movie, r, road) {
+        return cardKey(movie) + '|' + str(r.activity_at) + '|' + r.source + '|' + r.timeline_hash + '|' + road.time + '|' + road.percent;
+    }
+    function refreshUI(exactMovie, exactRoot) {
+        var queuedMovie = exactMovie || null;
+        var queuedRoot = exactRoot || null;
         if (state.uiTimer) clearTimeout(state.uiTimer);
         state.uiTimer = setTimeout(function () {
-            var movie = activeMovie(), root = cardRoot();
+            var movie = queuedMovie || currentActivityMovie(), root = cardRoot(queuedRoot);
             if (!movie || !root) return;
             var r = getRecord(movie), old = root.find('.cw6-button,.button--continue-watch-native-just');
             if (!r) { old.remove(); return; }
             var road = recordRoad(r);
-            var key = str(r.activity_at) + '|' + r.source + '|' + r.timeline_hash + '|' + road.time + '|' + road.percent;
-            if (old.length && old.attr('data-state') === key) return;
+            var movieKey = cardKey(movie);
+            var key = buttonStateKey(movie, r, road);
+            if (old.length && old.attr('data-card-key') === movieKey && old.attr('data-state') === key) return;
             old.remove();
             var c = buttonContainer(root); if (!c || !c.length) return;
-            var b = makeButton(movie, r).attr('data-state', key);
+            var b = makeButton(movie, r).attr('data-card-key', movieKey).attr('data-state', key);
             var before = c.find('> .view--torrent').first();
             var trailer = c.find('> .view--trailer').first();
             if (before.length) before.before(b); else if (trailer.length) trailer.before(b); else c.prepend(b);
@@ -1059,8 +1217,11 @@
         } catch (eStorage) {}
         try {
             Lampa.Listener.follow('full', function (e) {
-                var m = e && e.data && e.data.movie; if (m) state.lastMovie = m;
-                setTimeout(refreshUI, 100); setTimeout(refreshUI, 500);
+                var m = eventMovie(e) || currentActivityMovie();
+                var root = cardRoot(e && e.body);
+                if (m) state.lastMovie = m;
+                setTimeout(function () { refreshUI(m, root); }, 100);
+                setTimeout(function () { refreshUI(m, root); }, 500);
             });
         } catch (e3) {}
         try { window.addEventListener('focus', function () { scheduleReconcile(); refreshUI(); }); } catch (e4) {}
@@ -1080,6 +1241,19 @@
             source: function () { var r = activeMovie() ? getRecord(activeMovie()) : null; return r && r.source; },
             sync: function () { return { key: storageKey(), outbox: readOutbox(), store: store() }; }
         };
+        if (window.__CONTINUE_WATCH_TEST_MODE__) {
+            window.ContinueWatchV6.testing = {
+                normalizeRoad: normalizeRoad,
+                guardRoadInPlace: guardRoadInPlace,
+                mergeRecordRoad: mergeRecordRoad,
+                resolverSelection: resolverSelection,
+                selectionMatches: selectionMatches,
+                onlineResolverForRecord: onlineResolverForRecord,
+                buttonStateKey: buttonStateKey,
+                cardKey: cardKey,
+                getMovieFromData: getMovieFromData
+            };
+        }
     }
 
     if (window.appready) install();
