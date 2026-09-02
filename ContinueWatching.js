@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.1.1-technical-resume-fix-20260902';
+    var VERSION = 'v6.1.2-online-resolver-session-fix-20260902';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -840,13 +840,20 @@
             return u.toString();
         } catch (e) { return url; }
     }
+    function activeRchConnectionId(host) {
+        try {
+            var registry = window.rch_nws || {};
+            var entry = registry[str(host)] || registry[str(host).split(':')[0]];
+            return str(entry && entry.connectionId || '');
+        } catch (e) { return ''; }
+    }
     function localizeResolver(url) {
         url = str(url);
         try {
             var u = new URL(url, location.href);
             var email = str(Lampa.Storage.get('account_email', ''));
             var uid = str(Lampa.Storage.get('lampac_unic_id', ''));
-            var nws = str(Lampa.Storage.get('lampac_nws_id', ''));
+            var nws = activeRchConnectionId(u.host) || str(Lampa.Storage.get('lampac_nws_id', ''));
             if (email) u.searchParams.set('account_email', email);
             if (uid) u.searchParams.set('uid', uid);
             if (nws) u.searchParams.set('nws_id', nws);
@@ -1249,6 +1256,7 @@
                 resolverSelection: resolverSelection,
                 selectionMatches: selectionMatches,
                 onlineResolverForRecord: onlineResolverForRecord,
+                localizeResolver: localizeResolver,
                 buttonStateKey: buttonStateKey,
                 cardKey: cardKey,
                 getMovieFromData: getMovieFromData
