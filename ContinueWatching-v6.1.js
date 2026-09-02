@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.1.8-online-lazy-resolvers-20260902';
+    var VERSION = 'v6.1.9-builtin-lazy-resolvers-20260902';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -14,6 +14,7 @@
     var TORRENT_HASH_FALLBACK = 2000;
     var ONLINE_CANDIDATE_TIMEOUT = 15000;
     var ONLINE_LAUNCH_DEADLINE = 30000;
+    var ONLINE_RESOLVER_CAPTURE_MAX_AGE = 5 * 60 * 1000;
 
     if (!window.Lampa) return;
     if (window.__CW_V6_VERSION__ === VERSION) return;
@@ -231,10 +232,15 @@
     }
     function queueOutbox(record) {
         if (!record || !record.card_key || profileId() === 'guest') return;
+        var portableRecord = deepCopy(record) || clone(record);
+        sanitizeRecordResolvers(portableRecord);
         var out = readOutbox();
-        var key = recordKey(record.card_key);
+        var key = recordKey(portableRecord.card_key);
         var old = out[key];
-        if (!old || num(record.activity_at) >= num(old.activity_at)) out[key] = deepCopy(record) || clone(record);
+        if (old) sanitizeRecordResolvers(old);
+        if (!old || (num(portableRecord.activity_at) >= num(old.activity_at) && !rejectEqualTimeDowngrade(old, portableRecord))) {
+            out[key] = portableRecord;
+        }
         writeOutbox(out);
     }
     function writeStore(v) {
@@ -247,15 +253,26 @@
         if (!Object.keys(out).length) { refreshUI(); return false; }
         var all = store();
         var changed = false;
+        var outboxChanged = false;
         Object.keys(out).forEach(function (key) {
             var local = out[key];
             var remote = all[key];
             if (!local || !local.card_key) return;
-            if (!remote || num(local.activity_at) > num(remote.activity_at)) {
+            if (sanitizeRecordResolvers(local)) { out[key] = local; outboxChanged = true; }
+            if (remote && sanitizeRecordResolvers(remote)) changed = true;
+            var localNewer = !remote || num(local.activity_at) > num(remote.activity_at);
+            var localRicherAtTie = remote && num(local.activity_at) === num(remote.activity_at) &&
+                richnessCompatible(remote, local) && recordItemCount(local) > recordItemCount(remote);
+            if (localNewer || localRicherAtTie) {
                 all[key] = deepCopy(local) || clone(local);
                 changed = true;
+            } else if (remote && num(local.activity_at) === num(remote.activity_at) &&
+                richnessCompatible(remote, local) && recordItemCount(remote) > recordItemCount(local)) {
+                out[key] = deepCopy(remote) || clone(remote);
+                outboxChanged = true;
             }
         });
+        if (outboxChanged) writeOutbox(out);
         if (changed || forceWrite) writeStore(all);
         refreshUI();
         return changed;
@@ -284,13 +301,48 @@
         }
         return effective || r;
     }
+    function recordItemCount(record) {
+        if (!record) return 0;
+        if (record.source === 'online' && record.online && Array.isArray(record.online.items)) return record.online.items.length;
+        if (record.source === 'torrent' && record.torrent && Array.isArray(record.torrent.items)) return record.torrent.items.length;
+        return 0;
+    }
+    function sameRecordPosition(a, b) {
+        var ah = str(a && a.timeline_hash), bh = str(b && b.timeline_hash);
+        if (ah || bh) return !!(ah && bh && ah === bh);
+        return num(a && a.season) === num(b && b.season) && num(a && a.episode) === num(b && b.episode) &&
+            num(a && a.current_index) === num(b && b.current_index);
+    }
+    function richnessCompatible(a, b) {
+        if (!a || !b || a.card_key !== b.card_key || a.source !== b.source || !sameRecordPosition(a, b)) return false;
+        if (a.source === 'online') {
+            var aKey = selectionKey(onlineSelection(a.online || {}));
+            var bKey = selectionKey(onlineSelection(b.online || {}));
+            return aKey === bKey;
+        }
+        if (a.source === 'torrent') {
+            var at = a.torrent || {}, bt = b.torrent || {};
+            var ah = str(at.hash), bh = str(bt.hash);
+            var am = str(at.magnet), bm = str(bt.magnet);
+            if (ah && bh && ah !== bh) return false;
+            if (am && bm && am !== bm) return false;
+            return true;
+        }
+        return false;
+    }
+    function rejectEqualTimeDowngrade(old, record) {
+        return !!(old && record && num(old.activity_at) === num(record.activity_at) && richnessCompatible(old, record) &&
+            recordItemCount(record) < recordItemCount(old));
+    }
     function saveRecord(record) {
         if (!record || !record.card_key) return false;
+        sanitizeRecordResolvers(record);
         compactRecord(record);
         var all = store();
         var key = recordKey(record.card_key);
         var old = all[key];
         if (old && num(old.activity_at) > num(record.activity_at)) return false;
+        if (rejectEqualTimeDowngrade(old, record)) return false;
         queueOutbox(record);
         all[key] = deepCopy(record) || record;
         writeStore(all);
@@ -528,7 +580,7 @@
             var seed = state.torrentSeedByCard[session.card_key];
             session.magnet = seed ? seed.magnet : '';
         } else if (source === 'online') {
-            session.resolver = lookupResolver(url);
+            session.resolver = lookupResolver(url, session.card_key);
             var onlineSeed = state.onlineLaunchSeed;
             if (onlineSeed && onlineSeed.card_key === session.card_key) {
                 session.online_full_defs = deepCopy(onlineSeed.defs) || [];
@@ -575,15 +627,19 @@
     function onlineDescriptor(session) {
         if (!session || session.source !== 'online') return null;
         var list = session.playlist.length ? session.playlist : [{}];
+        var synthesisBase = freshSessionResolverShape(session);
         var items = list.map(function (item, idx) {
             item = item || {};
             var se = itemSE(item, idx);
             var h = exactHash(item, session.movie, se.season, se.episode);
             var raw = typeof item.url === 'string' ? cleanUrl(item.url) : '';
-            var resolver = lookupResolver(raw);
+            var resolver = lookupResolver(raw, session.card_key);
             if (idx === num(session.index) && session.resolver) resolver = session.resolver;
-            var carriedResolver = !resolver && item.resolver_url ? portableResolver(item.resolver_url) : '';
+            var explicitResolver = str(item.resolver_url).trim();
+            var carriedResolver = !resolver && explicitResolver ? portableResolver(explicitResolver) : '';
+            if (carriedResolver && !carriedResolverCompatible(carriedResolver, item, synthesisBase)) carriedResolver = '';
             var carriedSelection = carriedResolver ? resolverSelection(carriedResolver, item.selection || {}) : {};
+            var synthesized = !resolver && !explicitResolver ? synthesizeResolverForItem(synthesisBase, item) : null;
             var meta = playbackMeta(item);
             if (idx === num(session.index)) meta = mergeMeta(meta, session.active_meta || {});
             return {
@@ -592,9 +648,9 @@
                 img: str(item.thumbnail || item.img || ''),
                 voice_name: str(item.voice_name || ''),
                 direct_url: raw && !isTransientOnline(raw) ? raw : '',
-                resolver_url: resolver ? portableResolver(resolver.url) : carriedResolver,
-                resolver_headers: resolver ? clone(resolver.headers || {}) : clone(carriedResolver ? item.resolver_headers || {} : {}),
-                selection: resolver ? resolverSelection(resolver.url, {}) : carriedSelection,
+                resolver_url: resolver ? portableResolver(resolver.url) : (carriedResolver || str(synthesized && synthesized.url)),
+                resolver_headers: resolver ? portableResolverHeaders(resolver.headers) : portableResolverHeaders(carriedResolver ? item.resolver_headers : (synthesized && synthesized.headers)),
+                selection: resolver ? resolverSelection(resolver.url, {}) : (selectionKey(carriedSelection) ? carriedSelection : clone(synthesized && synthesized.selection || {})),
                 meta: meta
             };
         });
@@ -605,7 +661,9 @@
         var currentRecord = currentStore[recordKey(session.card_key)];
         if (currentRecord && currentRecord.card_key === session.card_key && currentRecord.source === 'online' &&
             currentRecord.online && Array.isArray(currentRecord.online.items)) {
-            var expectedSelection = selectionKey(session.online_selection) ? session.online_selection : onlineSelection(baseOnline);
+            var runtimeSelection = onlineSelection({ items: items });
+            var expectedSelection = selectionKey(session.online_selection) ? session.online_selection :
+                (selectionKey(runtimeSelection) ? runtimeSelection : onlineSelection(baseOnline));
             var storedSelection = onlineSelection(currentRecord.online);
             var expectedKey = selectionKey(expectedSelection);
             var storedKey = selectionKey(storedSelection);
@@ -646,12 +704,17 @@
             });
             items = merged;
         }
+        items.forEach(function (item) {
+            if (!item) return;
+            item.resolver_url = item.resolver_url ? portableResolver(item.resolver_url) : '';
+            item.resolver_headers = portableResolverHeaders(item.resolver_headers);
+        });
         var sessionResolver = session.resolver ? portableResolver(session.resolver.url) : '';
         var sessionSelection = session.resolver ? resolverSelection(session.resolver.url, {}) : {};
         var sessionDirect = isTransientOnline(session.url) ? '' : session.url;
         return {
-            resolver_url: sessionResolver || str(baseOnline.resolver_url || ''),
-            resolver_headers: session.resolver ? clone(session.resolver.headers || {}) : clone(baseOnline.resolver_headers || {}),
+            resolver_url: sessionResolver || (baseOnline.resolver_url ? portableResolver(baseOnline.resolver_url) : ''),
+            resolver_headers: portableResolverHeaders(session.resolver ? session.resolver.headers : baseOnline.resolver_headers),
             selection: selectionKey(sessionSelection) ? sessionSelection : clone(baseOnline.selection || {}),
             direct_url: sessionDirect || str(baseOnline.direct_url || ''),
             index: descriptorIndex,
@@ -902,7 +965,10 @@
         if (!data || typeof data !== 'object' || !data.url) return;
         var media = normalizeMedia(data.url);
         if (!isPlayable(media)) return;
-        var resolver = { url: str(event.params.url), headers: clone(event.params.headers || {}), at: now() };
+        var captureMovie = currentActivityMovie() || state.lastMovie;
+        var captureCardKey = cardKey(captureMovie);
+        if (!captureCardKey) return;
+        var resolver = { url: str(event.params.url), headers: clone(event.params.headers || {}), at: now(), card_key: captureCardKey };
         state.resolverByMedia[media] = resolver;
         if (data.quality && typeof data.quality === 'object') {
             Object.keys(data.quality).forEach(function (q) {
@@ -913,17 +979,146 @@
             });
         }
     }
-    function lookupResolver(media) { return state.resolverByMedia[normalizeMedia(media)] || null; }
+    function lookupResolver(media, expectedCardKey) {
+        var resolver = state.resolverByMedia[normalizeMedia(media)] || null;
+        if (expectedCardKey && (!resolver || resolver.card_key !== expectedCardKey)) return null;
+        return resolver;
+    }
     function isTransientOnline(url) { return /\/proxy(?:-dash)?\//i.test(str(url)); }
     function portableResolver(url) {
         url = str(url);
+        if (!url) return '';
         try {
             var u = new URL(url, location.href);
-            u.searchParams.delete('account_email');
-            u.searchParams.delete('uid');
-            u.searchParams.delete('nws_id');
+            stripLocalResolverParams(u);
             return u.toString();
         } catch (e) { return url; }
+    }
+    function stripLocalResolverParams(u) {
+        var remove = [];
+        try {
+            u.searchParams.forEach(function (_value, key) {
+                var normalized = str(key).toLowerCase();
+                if (normalized === 'account_email' || normalized === 'uid' || normalized === 'nws_id') remove.push(key);
+            });
+            remove.forEach(function (key) { u.searchParams.delete(key); });
+        } catch (e) {}
+        return u;
+    }
+    function portableResolverHeaders(saved) {
+        var headers = clone(saved || {});
+        Object.keys(headers).forEach(function (key) {
+            if (str(key).toLowerCase() === 'x-kit-aesgcm') delete headers[key];
+        });
+        return headers;
+    }
+    function sanitizeRecordResolvers(record) {
+        var online = record && record.online;
+        if (!online) return false;
+        var changed = false;
+        function sanitize(entry) {
+            if (!entry) return;
+            var oldUrl = str(entry.resolver_url || '');
+            var oldHeaders = json(entry.resolver_headers || {});
+            entry.resolver_url = oldUrl ? portableResolver(oldUrl) : '';
+            entry.resolver_headers = portableResolverHeaders(entry.resolver_headers);
+            if (entry.resolver_url !== oldUrl || json(entry.resolver_headers) !== oldHeaders) changed = true;
+        }
+        sanitize(online);
+        (online.items || []).forEach(sanitize);
+        return changed;
+    }
+    function positiveInteger(value) {
+        var text = str(value).trim();
+        return /^\d+$/.test(text) && num(text) > 0 ? num(text) : 0;
+    }
+    function explicitItemSE(item) {
+        item = item || {};
+        var season = item.season !== undefined ? item.season : (item.season_number !== undefined ? item.season_number : item.s);
+        var episode = item.episode !== undefined ? item.episode : (item.episode_number !== undefined ? item.episode_number : item.e);
+        season = positiveInteger(season);
+        episode = positiveInteger(episode);
+        return season && episode ? { season: season, episode: episode } : null;
+    }
+    function safeResolverShape(url) {
+        if (!/^https?:\/\//i.test(str(url).trim())) return null;
+        try {
+            var u = new URL(str(url));
+            if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+            if (u.username || u.password) return null;
+            if (!/^\/lite\/[A-Za-z0-9._-]+\/(?:video|serial|episodes?)\/?$/i.test(u.pathname)) return null;
+            var shortS = u.searchParams.getAll('s'), shortE = u.searchParams.getAll('e');
+            var longS = u.searchParams.getAll('season'), longE = u.searchParams.getAll('episode');
+            var shortPair = shortS.length === 1 && shortE.length === 1 && !longS.length && !longE.length;
+            var longPair = longS.length === 1 && longE.length === 1 && !shortS.length && !shortE.length;
+            if (!shortPair && !longPair) return null;
+            var seasonKey = shortPair ? 's' : 'season';
+            var episodeKey = shortPair ? 'e' : 'episode';
+            var season = positiveInteger(u.searchParams.get(seasonKey));
+            var episode = positiveInteger(u.searchParams.get(episodeKey));
+            if (!season || !episode) return null;
+            var translationCount = 0, translationInvalid = false;
+            ['t','translation','voice','voiceover','dub'].forEach(function (key) {
+                var values = u.searchParams.getAll(key);
+                if (values.length > 1) translationInvalid = true;
+                if (values.length === 1 && str(values[0]).trim()) translationCount++;
+            });
+            if (translationInvalid || translationCount > 1) return null;
+            var identity = {};
+            ['id','tmdb_id','kinopoisk_id','imdb_id'].forEach(function (key) {
+                var values = u.searchParams.getAll(key);
+                if (values.length === 1 && str(values[0]).trim()) identity[key] = str(values[0]);
+                else if (values.length) identity.invalid = '1';
+            });
+            if (identity.invalid || !Object.keys(identity).length) return null;
+            return {
+                url: u, origin: str(u.origin).toLowerCase(), path: str(u.pathname).toLowerCase(),
+                season_key: seasonKey, episode_key: episodeKey, season: season, episode: episode,
+                identity: identity, selection: resolverSelection(u.toString(), {})
+            };
+        } catch (e) { return null; }
+    }
+    function sameResolverIdentity(a, b) {
+        if (!a || !b || a.origin !== b.origin || a.path !== b.path ||
+            a.season_key !== b.season_key || a.episode_key !== b.episode_key ||
+            selectionKey(a.selection) !== selectionKey(b.selection)) return false;
+        var keys = ['id','tmdb_id','kinopoisk_id','imdb_id'];
+        for (var i = 0; i < keys.length; i++) {
+            if (str(a.identity[keys[i]]) !== str(b.identity[keys[i]])) return false;
+        }
+        return true;
+    }
+    function freshSessionResolverShape(session) {
+        var resolver = session && session.resolver;
+        var capturedAt = num(resolver && resolver.at);
+        var sessionAt = num(session && session.created_at);
+        if (!resolver || !session || !resolver.card_key || resolver.card_key !== session.card_key || !capturedAt || !sessionAt ||
+            sessionAt < capturedAt - 1000 || sessionAt - capturedAt > ONLINE_RESOLVER_CAPTURE_MAX_AGE) return null;
+        var shape = safeResolverShape(resolver.url);
+        if (!shape || shape.season !== positiveInteger(session.season) || shape.episode !== positiveInteger(session.episode)) return null;
+        shape.headers = portableResolverHeaders(resolver.headers);
+        return shape;
+    }
+    function carriedResolverCompatible(url, item, synthesisBase) {
+        var selection = resolverSelection(url, {});
+        var expected = resolverSelection('', item && item.selection || {});
+        if (selectionKey(expected) && selectionKey(expected) !== selectionKey(selection)) return false;
+        var target = explicitItemSE(item);
+        var shape = safeResolverShape(url);
+        if (!target || !shape || shape.season !== target.season || shape.episode !== target.episode) return false;
+        return !synthesisBase || sameResolverIdentity(synthesisBase, shape);
+    }
+    function synthesizeResolverForItem(base, item) {
+        var target = explicitItemSE(item);
+        if (!base || !target) return null;
+        var expected = resolverSelection('', item && item.selection || {});
+        if (selectionKey(expected) && selectionKey(expected) !== selectionKey(base.selection)) return null;
+        try {
+            var u = new URL(base.url.toString());
+            u.searchParams.set(base.season_key, str(target.season));
+            u.searchParams.set(base.episode_key, str(target.episode));
+            return { url: portableResolver(u.toString()), headers: clone(base.headers || {}), selection: clone(base.selection || {}) };
+        } catch (e) { return null; }
     }
     function activeRchConnectionId(host) {
         try {
@@ -934,8 +1129,10 @@
     }
     function localizeResolver(url) {
         url = str(url);
+        if (!url) return '';
         try {
             var u = new URL(url, location.href);
+            stripLocalResolverParams(u);
             var email = str(Lampa.Storage.get('account_email', ''));
             var uid = str(Lampa.Storage.get('lampac_unic_id', ''));
             var nws = activeRchConnectionId(u.host) || str(Lampa.Storage.get('lampac_nws_id', ''));
@@ -946,7 +1143,7 @@
         } catch (e) { return url; }
     }
     function onlineHeaders(saved) {
-        var h = clone(saved || {});
+        var h = portableResolverHeaders(saved);
         try { var aes = str(Lampa.Storage.get('aesgcmkey', '')); if (aes) h['X-Kit-AesGcm'] = aes; } catch (e) {}
         return h;
     }

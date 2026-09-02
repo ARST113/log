@@ -179,7 +179,7 @@ function harness() {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.1.8-online-lazy-resolvers-20260902');
+assert.equal(h.api.version, 'v6.1.9-builtin-lazy-resolvers-20260902');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -1075,10 +1075,11 @@ function seedDelayedOnline(env, id) {
     assert.equal(portableE2.searchParams.has('account_email'), false);
     assert.equal(portableE2.searchParams.has('uid'), false);
     assert.equal(portableE2.searchParams.has('nws_id'), false);
-    assert.deepEqual(saved.online.items[1].resolver_headers, { 'X-Kit-AesGcm': 'runtime-aes' });
+    assert.deepEqual(saved.online.items[1].resolver_headers, {}, 'device AES must not be persisted in synchronized resolver metadata');
     assert.deepEqual(saved.online.items[1].selection, { provider: 'zetflix', translation: 'original' });
 
     const resolverCalls = [];
+    h.storage.aesgcmkey = 'runtime-aes';
     h.setRequestHandler(({ url, ok, params }) => {
         const episode = Number(new URL(url).searchParams.get('e'));
         resolverCalls.push(episode);
@@ -1093,25 +1094,34 @@ function seedDelayedOnline(env, id) {
     assert.deepEqual(payload.playlist.map((item) => item.episode), [1, 2, 3]);
     assert.doesNotThrow(() => JSON.stringify(payload));
     h.setRequestHandler(null);
+    delete h.storage.aesgcmkey;
 }
 
 {
     const storageKey = 'continue_watch_v6_7';
-    const movie = { id: 801, media_type: 'tv', title: 'Lazy missing resolvers', original_name: 'Lazy missing resolvers' };
+    const movie = { id: 801, media_type: 'tv', title: 'Unsupported resolver schema', original_name: 'Unsupported resolver schema' };
     const cardKey = h.api.testing.cardKey(movie);
     const recordKey = 'c_' + h.Lampa.Utils.hash(cardKey);
-    const endpoint = (episode) => 'https://lampac.fun/lite/zetflix/video?id=801&s=1&e=' + episode + '&t=Original';
+    const endpoint = (episode) => 'https://lampac.fun/lite/zetflix/movie?id=801&s=1&e=' + episode + '&t=Original';
     const currentUrl = 'https://media.example/lazy-801-e1.m3u8';
     const cells = [
         {
             title: 'E1', url: currentUrl, resolver_url: endpoint(1), resolver_headers: { 'X-Kit-AesGcm': 'runtime-aes' },
             season: 1, episode: 1, timeline: { hash: 'lazy-801-1' }
         },
-        { title: 'E2', url: function lazyResolver() {}, season: 1, episode: 2, timeline: { hash: 'lazy-801-2' } },
+        {
+            title: 'E2', url: function lazyResolver() {},
+            resolver_url: 'https://user:password@lampac.fun/lite/zetflix/video?id=other&s=1&e=2&t=Fox+Life',
+            season: 1, episode: 2, timeline: { hash: 'lazy-801-2' }
+        },
         { title: 'E3', url: function lazyResolver() {}, season: 1, episode: 3, timeline: { hash: 'lazy-801-3' } }
     ];
     h.setActive(movie);
     h.setClock(4_100_000);
+    h.listeners.request_secuses[0]({
+        params: { url: endpoint(1), headers: { 'X-Kit-AesGcm': 'runtime-aes' } },
+        data: { url: currentUrl }
+    });
     h.Lampa.Player.play(Object.assign({}, cells[0], { card: movie, movie, isonline: true, playlist: undefined }));
     h.Lampa.Player.playlist(cells);
     h.timelineListeners.forEach((listener) => listener({
@@ -1119,13 +1129,14 @@ function seedDelayedOnline(env, id) {
     }));
     const saved = h.storage[storageKey][recordKey];
     assert.equal(saved.online.items.length, 3);
-    assert.equal(saved.online.items[1].resolver_url, '', 'missing carried E2 resolver must remain unavailable');
+    assert.equal(saved.online.items[1].resolver_url, '', 'userinfo/mismatched explicit resolver must fail closed');
+    assert.equal(saved.online.items[2].resolver_url, '', 'unsupported current schema must not synthesize a missing neighbor resolver');
 
     const resolverCalls = [];
     h.setRequestHandler(({ url, ok }) => {
         const episode = Number(new URL(url).searchParams.get('e'));
         resolverCalls.push(episode);
-        if (episode !== 1) throw new Error('missing E2 resolver must stop before E2/E3 network calls');
+        if (episode !== 1) throw new Error('unsupported schema must stop before E2/E3 network calls');
         ok({ url: 'https://media.example/lazy-801-e1.m3u8' });
     });
     const before = h.androidLaunches.length;
@@ -1134,6 +1145,216 @@ function seedDelayedOnline(env, id) {
     assert.deepEqual(resolverCalls, [1]);
     assert.deepEqual(h.androidLaunches[h.androidLaunches.length - 1].parsed.playlist.map((item) => item.episode), [1]);
     h.setRequestHandler(null);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 803, media_type: 'tv', title: 'Built-in Lampac lazy playlist', original_name: 'Built-in Lampac lazy playlist' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const currentUrl = 'https://media.example/builtin-803-e1.m3u8';
+    const sourceResolver = 'https://lampac.fun/lite/zetflix/video?id=803&s=1&e=1&t=Original&Account_Email=source%40example.test&UID=source-device&NwS_Id=source-rch';
+    let lazyCalls = 0;
+    const cells = Array.from({ length: 10 }, (_value, index) => {
+        const episode = index + 1;
+        return {
+            title: 'E' + episode,
+            url: episode === 1 ? currentUrl : function lazyResolver() { lazyCalls++; throw new Error('lazy resolver must not be invoked'); },
+            season: 1,
+            episode,
+            timeline: { hash: 'builtin-803-' + episode }
+        };
+    });
+    env.setActive(movie);
+    env.setClock(4_150_000);
+    env.listeners.request_secuses[0]({
+        params: { url: sourceResolver, headers: { 'X-Kit-AesGcm': 'source-device-aes' } },
+        data: { url: currentUrl }
+    });
+    env.Lampa.Player.play(Object.assign({}, cells[0], { card: movie, movie, isonline: true, playlist: undefined }));
+    env.Lampa.Player.playlist(cells);
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'builtin-803-1', road: { time: 165, duration: 3000, percent: 6, updated: 4_150_100 }
+    }));
+    const saved = env.storage[storageKey][recordKey];
+    assert.equal(lazyCalls, 0, 'playlist capture must never execute built-in lazy URL functions');
+    assert.equal(saved.online.items.length, 10);
+    saved.online.items.forEach((item, index) => {
+        const resolver = new URL(item.resolver_url);
+        assert.equal(resolver.pathname, '/lite/zetflix/video');
+        assert.equal(resolver.searchParams.get('id'), '803');
+        assert.equal(resolver.searchParams.get('s'), '1');
+        assert.equal(resolver.searchParams.get('e'), String(index + 1));
+        assert.equal(resolver.searchParams.get('t'), 'Original');
+        const normalizedKeys = Array.from(resolver.searchParams.keys()).map((key) => key.toLowerCase());
+        assert.equal(normalizedKeys.includes('account_email'), false);
+        assert.equal(normalizedKeys.includes('uid'), false);
+        assert.equal(normalizedKeys.includes('nws_id'), false);
+        assert.deepEqual(item.selection, { provider: 'zetflix', translation: 'original' });
+        assert.deepEqual(item.resolver_headers, {}, 'source-device AES must not cross synchronized storage');
+    });
+
+    env.storage.account_email = 'target@example.test';
+    env.storage.lampac_unic_id = 'target-device';
+    env.storage.lampac_nws_id = 'stale-target-rch';
+    const resolverCalls = [];
+    let expectedAes = '';
+    env.setRequestHandler(({ url, ok, params }) => {
+        const resolver = new URL(url);
+        resolverCalls.push(Number(resolver.searchParams.get('e')));
+        const normalizedKeys = Array.from(resolver.searchParams.keys()).map((key) => key.toLowerCase());
+        assert.equal(resolver.searchParams.get('account_email'), 'target@example.test');
+        assert.equal(resolver.searchParams.get('uid'), 'target-device');
+        assert.equal(resolver.searchParams.get('nws_id'), 'live-rch-session');
+        assert.equal(normalizedKeys.filter((key) => key === 'account_email').length, 1);
+        assert.equal(normalizedKeys.filter((key) => key === 'uid').length, 1);
+        assert.equal(normalizedKeys.filter((key) => key === 'nws_id').length, 1);
+        const aesKeys = Object.keys(params.headers).filter((key) => key.toLowerCase() === 'x-kit-aesgcm');
+        assert.equal(aesKeys.length, expectedAes ? 1 : 0);
+        if (expectedAes) assert.equal(params.headers[aesKeys[0]], expectedAes);
+        ok({ url: 'https://media.example/builtin-803-e' + resolver.searchParams.get('e') + '.m3u8' });
+    });
+    delete env.storage.aesgcmkey;
+    let before = env.androidLaunches.length;
+    env.api.launch();
+    assert.equal(env.androidLaunches.length, before + 1);
+    assert.deepEqual(resolverCalls, [1, 2, 3]);
+    assert.deepEqual(env.androidLaunches[env.androidLaunches.length - 1].parsed.playlist.map((item) => item.episode), [1, 2, 3]);
+    expectedAes = 'target-device-aes';
+    env.storage.aesgcmkey = expectedAes;
+    before = env.androidLaunches.length;
+    env.api.launch();
+    assert.equal(env.androidLaunches.length, before + 1);
+    assert.deepEqual(resolverCalls, [1, 2, 3, 1, 2, 3]);
+    assert.equal(lazyCalls, 0);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 804, media_type: 'tv', title: 'No-base carried validation', original_name: 'No-base carried validation' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const currentUrl = 'https://media.example/no-base-804-e1.m3u8';
+    const currentResolver = 'https://lampac.fun/lite/zetflix/video?id=804&s=1&e=1&t=Original';
+    const cells = [
+        { title: 'E1', url: currentUrl, resolver_url: currentResolver, season: 1, episode: 1, timeline: { hash: 'no-base-804-1' } },
+        {
+            title: 'E2', url: function lazyResolver() {},
+            resolver_url: 'https://evil.example/lite/attacker/video?t=Original',
+            season: 1, episode: 2, timeline: { hash: 'no-base-804-2' }
+        }
+    ];
+    env.setActive(movie);
+    env.setClock(4_175_000);
+    env.Lampa.Player.play(Object.assign({}, cells[0], { card: movie, movie, isonline: true, playlist: undefined }));
+    env.Lampa.Player.playlist(cells);
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'no-base-804-1', road: { time: 120, duration: 3000, percent: 4, updated: 4_175_100 }
+    }));
+    const saved = env.storage[storageKey][recordKey];
+    assert.equal(saved.online.items[1].resolver_url, '', 'no-base carried resolver without stable identity and coordinates must fail closed');
+    const requestedHosts = [];
+    env.setRequestHandler(({ url, ok }) => {
+        const parsed = new URL(url);
+        requestedHosts.push(parsed.host);
+        assert.equal(parsed.host, 'lampac.fun', 'the rejected carried host must never be requested');
+        ok({ url: 'https://media.example/no-base-804-e1.m3u8' });
+    });
+    env.api.launch();
+    assert.deepEqual(requestedHosts, ['lampac.fun']);
+    assert.deepEqual(env.androidLaunches[env.androidLaunches.length - 1].parsed.playlist.map((item) => item.episode), [1]);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 805, media_type: 'tv', title: 'Legacy resolver secret migration', original_name: 'Legacy resolver secret migration' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const legacyResolver = (episode) => 'https://lampac.fun/lite/zetflix/video?id=805&s=1&e=' + episode + '&t=Original&ACCOUNT_EMAIL=source%40example.test&Uid=source-device&nWs_Id=source-rch';
+    const items = Array.from({ length: 10 }, (_value, index) => ({
+        title: 'E' + (index + 1), season: 1, episode: index + 1, hash: 'legacy-805-' + (index + 1),
+        resolver_url: legacyResolver(index + 1),
+        resolver_headers: { 'x-KIT-aESgCm': 'source-device-aes', 'X-Series': String(index + 1) },
+        selection: { provider: 'zetflix', translation: 'original' }, meta: {}
+    }));
+    env.storage[storageKey] = {};
+    env.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 4_180_000,
+        season: 1, episode: 1, episode_title: 'E1', timeline_hash: 'legacy-805-1',
+        time: 100, duration: 3000, percent: 3, current_index: 0,
+        online: {
+            index: 0, resolver_url: legacyResolver(1),
+            resolver_headers: { 'X-Kit-AesGcm': 'source-device-aes', 'X-Series': 'top' },
+            selection: { provider: 'zetflix', translation: 'original' }, items
+        }
+    };
+    env.setActive(movie);
+    env.setClock(4_180_100);
+    const calls = [];
+    env.setRequestHandler(({ url, ok, params }) => {
+        const parsed = new URL(url);
+        const episode = Number(parsed.searchParams.get('e'));
+        calls.push(episode);
+        assert.equal(Array.from(parsed.searchParams.keys()).some((key) => ['account_email', 'uid'].includes(key.toLowerCase())), false);
+        assert.equal(Object.keys(params.headers).some((key) => key.toLowerCase() === 'x-kit-aesgcm'), false);
+        ok({ url: 'https://media.example/legacy-805-e' + episode + '.m3u8' });
+    });
+    env.api.launch();
+    assert.deepEqual(calls, [1, 2, 3]);
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'legacy-805-1', road: { time: 180, duration: 3000, percent: 6, updated: 4_180_200 }
+    }));
+    const saved = env.storage[storageKey][recordKey];
+    assert.equal(saved.online.items.length, 10, 'a partial runtime window must preserve the full stored definition list');
+    [saved.online].concat(saved.online.items).forEach((entry) => {
+        const parsed = new URL(entry.resolver_url);
+        const normalizedKeys = Array.from(parsed.searchParams.keys()).map((key) => key.toLowerCase());
+        assert.equal(normalizedKeys.some((key) => key === 'account_email' || key === 'uid' || key === 'nws_id'), false);
+        assert.equal(Object.keys(entry.resolver_headers || {}).some((key) => key.toLowerCase() === 'x-kit-aesgcm'), false);
+    });
+    assert.equal(saved.online.items[9].resolver_headers['X-Series'], '10', 'non-device resolver headers must survive migration');
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movieA = { id: 9910, media_type: 'tv', title: 'Resolver owner A', original_name: 'Resolver owner A' };
+    const movieB = { id: 9911, media_type: 'tv', title: 'Resolver owner B', original_name: 'Resolver owner B' };
+    const sharedMediaUrl = 'https://media.example/shared-cross-card.m3u8';
+    env.setClock(4_190_000);
+    env.setActive(movieA);
+    env.listeners.request_secuses[0]({
+        params: { url: 'https://lampac.fun/lite/zetflix/video?id=9910&s=1&e=1&t=Original', headers: {} },
+        data: { url: sharedMediaUrl }
+    });
+
+    const cells = [
+        { title: 'B E1', url: sharedMediaUrl, season: 1, episode: 1, timeline: { hash: 'cross-card-9911-1' } },
+        { title: 'B E2', url: function lazyResolver() {}, season: 1, episode: 2, timeline: { hash: 'cross-card-9911-2' } }
+    ];
+    env.setClock(4_190_100);
+    env.setActive(movieB);
+    env.Lampa.Player.play(Object.assign({}, cells[0], { card: movieB, movie: movieB, isonline: true, playlist: undefined }));
+    env.Lampa.Player.playlist(cells);
+    assert.equal(env.api.session().resolver, null, 'a captured resolver bound to card A must not attach to card B sharing the same media URL');
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'cross-card-9911-1', road: { time: 130, duration: 3000, percent: 4, updated: 4_190_200 }
+    }));
+    const recordKey = 'c_' + env.Lampa.Utils.hash(env.api.testing.cardKey(movieB));
+    const saved = env.storage[storageKey][recordKey];
+    assert.equal(saved.online.items.length, 2);
+    assert.equal(saved.online.items[0].resolver_url, '');
+    assert.equal(saved.online.items[1].resolver_url, '', 'card B must not synthesize E2 from card A identity');
+    let requests = 0;
+    env.setRequestHandler(() => { requests++; throw new Error('cross-card captured resolver must never be requested'); });
+    const before = env.androidLaunches.length;
+    env.api.launch();
+    assert.equal(requests, 0);
+    assert.equal(env.androidLaunches.length, before + 1);
+    assert.deepEqual(env.androidLaunches[env.androidLaunches.length - 1].parsed.playlist.map((item) => item.episode), [1]);
 }
 
 {
@@ -1169,6 +1390,234 @@ function seedDelayedOnline(env, id) {
     assert.equal(saved.timeline_hash, 'canonical-802-1');
     assert.equal(saved.online.items[0].hash, 'canonical-802-1');
     assert.equal(saved.online.items[9].episode, 10);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const outboxKey = 'continue_watch_v6_outbox_7';
+    const movie = { id: 809, media_type: 'tv', title: 'Outbox equal-time richness', original_name: 'Outbox equal-time richness' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const resolver = (episode) => 'https://lampac.fun/lite/zetflix/video?id=809&s=1&e=' + episode + '&t=Original';
+    const activityAt = 4_900_100;
+    const cells = Array.from({ length: 10 }, (_value, index) => {
+        const episode = index + 1;
+        return {
+            title: 'E' + episode, url: episode === 1 ? 'https://media.example/outbox-809-e1.m3u8' : function lazyResolver() {},
+            resolver_url: resolver(episode), season: 1, episode, timeline: { hash: 'outbox-809-' + episode }
+        };
+    });
+    env.setActive(movie);
+    env.setClock(activityAt);
+    env.Lampa.Player.play(Object.assign({}, cells[0], { card: movie, movie, isonline: true, playlist: undefined }));
+    env.Lampa.Player.playlist(cells);
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'outbox-809-1', road: { time: 140, duration: 3000, percent: 5, updated: activityAt }
+    }));
+    const rich = JSON.parse(JSON.stringify(env.storage[storageKey][recordKey]));
+    assert.equal(rich.online.items.length, 10);
+    assert.equal(JSON.parse(env.local[outboxKey])[recordKey].online.items.length, 10);
+
+    const poor = JSON.parse(JSON.stringify(rich));
+    poor.online.items = poor.online.items.slice(0, 1);
+    env.storage[storageKey][recordKey] = poor;
+    assert.equal(env.storage[storageKey][recordKey].online.items.length, 1, 'remote synchronization may expose the equal-time poor snapshot before flush');
+    env.fireTimeouts(6500);
+    assert.equal(env.storage[storageKey][recordKey].online.items.length, 10, 'equal-time rich outbox must repair a poorer compatible synchronized record');
+    assert.equal(JSON.parse(env.local[outboxKey])[recordKey].online.items.length, 10, 'the rich outbox snapshot must survive the merge');
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 810, media_type: 'tv', title: 'Deferred reconcile race', original_name: 'Deferred reconcile race' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const originalResolver = (episode) => 'https://lampac.fun/lite/zetflix/video?id=810&s=1&e=' + episode + '&t=Original';
+    const activityAt = 5_000_100;
+    env.storage[storageKey] = {};
+    env.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 5_000_000,
+        season: 1, episode: 1, episode_title: 'Old E1', timeline_hash: 'race-810-1',
+        time: 60, duration: 3000, percent: 2, current_index: 0,
+        online: {
+            index: 0, resolver_url: originalResolver(1),
+            selection: { provider: 'zetflix', translation: 'original' },
+            items: [{
+                title: 'Old E1', season: 1, episode: 1, hash: 'race-810-1',
+                resolver_url: originalResolver(1),
+                selection: { provider: 'zetflix', translation: 'original' }, meta: {}
+            }]
+        }
+    };
+    env.roads['race-810-1'] = { time: 180, duration: 3000, percent: 6, updated: activityAt };
+    env.setActive(movie);
+    env.setClock(activityAt);
+    const reconciled = env.api.record();
+    assert.equal(reconciled.activity_at, activityAt, 'getRecord must expose the newer timeline before its deferred save');
+    assert.equal(reconciled.online.items.length, 1, 'the deferred reconcile snapshot intentionally remains the old one-item playlist');
+
+    const currentUrl = 'https://media.example/race-810-e1.m3u8';
+    const cells = Array.from({ length: 10 }, (_value, index) => {
+        const episode = index + 1;
+        return {
+            title: 'E' + episode,
+            url: episode === 1 ? currentUrl : function lazyResolver() {},
+            resolver_url: originalResolver(episode),
+            resolver_headers: { 'X-Kit-AesGcm': 'runtime-aes' },
+            season: 1,
+            episode,
+            timeline: { hash: 'race-810-' + episode }
+        };
+    });
+    env.Lampa.Player.play(Object.assign({}, cells[0], { card: movie, movie, isonline: true, playlist: undefined }));
+    env.Lampa.Player.playlist(cells);
+    env.timelineListeners.forEach((listener) => listener({ hash: 'race-810-1', road: env.roads['race-810-1'] }));
+    let saved = env.storage[storageKey][recordKey];
+    assert.equal(saved.activity_at, activityAt);
+    assert.equal(saved.online.items.length, 10, 'the canonical playlist wins before the deferred stale callback runs');
+    assert.equal(new URL(saved.online.items[1].resolver_url).searchParams.get('e'), '2');
+
+    env.advance(0);
+    saved = env.storage[storageKey][recordKey];
+    assert.equal(saved.online.items.length, 10, 'equal-time deferred one-item reconcile must not overwrite the richer compatible playlist');
+    assert.equal(saved.time, 180);
+    assert.equal(saved.current_index, 0);
+    assert.equal(saved.online.index, 0);
+    assert.equal(saved.timeline_hash, 'race-810-1');
+    assert.equal(new URL(saved.online.items[1].resolver_url).searchParams.get('e'), '2');
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 811, media_type: 'tv', title: 'Torrent richness upgrade', original_name: 'Torrent richness upgrade' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const torrentHash = 'torrent-811';
+    const activityAt = 6_000_100;
+    env.storage[storageKey] = {};
+    env.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'torrent', activity_at: activityAt,
+        season: 1, episode: 1, episode_title: 'Old E1', timeline_hash: 'torrent-811-1',
+        time: 100, duration: 3000, percent: 3, current_index: 0,
+        torrent: {
+            hash: torrentHash, magnet: 'magnet:?xt=urn:btih:' + torrentHash, index: 0,
+            items: [{ file_id: 0, file_name: 'S01E01.mkv', title: 'Old E1', season: 1, episode: 1, hash: 'torrent-811-1', meta: {} }]
+        }
+    };
+    const cells = Array.from({ length: 10 }, (_value, index) => {
+        const episode = index + 1;
+        return {
+            title: 'E' + episode,
+            file_name: 'S01E' + String(episode).padStart(2, '0') + '.mkv',
+            url: 'http://127.0.0.1:8090/stream/S01E' + String(episode).padStart(2, '0') + '.mkv?link=' + torrentHash + '&index=' + index + '&play',
+            torrent_hash: torrentHash,
+            season: 1,
+            episode,
+            timeline: { hash: 'torrent-811-' + episode }
+        };
+    });
+    env.setActive(movie);
+    env.setClock(activityAt);
+    env.Lampa.Player.play({
+        card: movie, movie, url: cells[0].url, torrent_hash: torrentHash,
+        playlist: cells, playlist_index: 0, timeline: { hash: 'torrent-811-1' }
+    });
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'torrent-811-1', road: { time: 200, duration: 3000, percent: 7, updated: activityAt }
+    }));
+    const saved = env.storage[storageKey][recordKey];
+    assert.equal(saved.activity_at, activityAt);
+    assert.equal(saved.torrent.items.length, 10, 'an equal-time compatible torrent upgrade from one item to ten must be accepted');
+    assert.equal(saved.torrent.hash, torrentHash);
+    assert.equal(saved.torrent.index, 0);
+    assert.equal(saved.torrent.items[9].episode, 10);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 812, media_type: 'tv', title: 'Selection conflict', original_name: 'Selection conflict' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const originalResolver = (episode) => 'https://lampac.fun/lite/zetflix/video?id=812&s=1&e=' + episode + '&t=Original';
+    const foxResolver = 'https://lampac.fun/lite/zetflix/video?id=812&s=1&e=1&t=Fox+Life';
+    const activityAt = 7_000_100;
+    env.storage[storageKey] = {};
+    env.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: activityAt,
+        season: 1, episode: 1, episode_title: 'Original E1', timeline_hash: 'selection-812-1',
+        time: 100, duration: 3000, percent: 3, current_index: 0,
+        online: {
+            index: 0, resolver_url: originalResolver(1),
+            selection: { provider: 'zetflix', translation: 'original' },
+            items: Array.from({ length: 10 }, (_value, index) => ({
+                title: 'Original E' + (index + 1), season: 1, episode: index + 1, hash: 'original-812-' + (index + 1),
+                resolver_url: originalResolver(index + 1),
+                selection: { provider: 'zetflix', translation: 'original' }, meta: {}
+            }))
+        }
+    };
+    const currentUrl = 'https://media.example/selection-812-fox-e1.m3u8';
+    const foxItem = {
+        title: 'Fox E1', url: currentUrl, resolver_url: foxResolver,
+        resolver_headers: { 'X-Kit-AesGcm': 'fox-runtime-aes' },
+        season: 1, episode: 1, timeline: { hash: 'selection-812-1' }
+    };
+    env.setActive(movie);
+    env.setClock(activityAt);
+    env.Lampa.Player.play(Object.assign({}, foxItem, { card: movie, movie, isonline: true, playlist: [foxItem], playlist_index: 0 }));
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'selection-812-1', road: { time: 220, duration: 3000, percent: 7, updated: activityAt }
+    }));
+    const saved = env.storage[storageKey][recordKey];
+    assert.equal(saved.online.items.length, 1, 'a different active translation must not inherit the richer stored translation playlist');
+    assert.deepEqual(saved.online.items[0].selection, { provider: 'zetflix', translation: 'fox life' });
+    assert.equal(new URL(saved.online.items[0].resolver_url).searchParams.get('t'), 'Fox Life');
+    assert.equal(saved.online.items.some((item) => item.selection && item.selection.translation === 'original'), false);
+    assert.equal(saved.online.items.some((item) => /^Original E/.test(item.title)), false);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 813, media_type: 'tv', title: 'Equal-time episode switch', original_name: 'Equal-time episode switch' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const torrentHash = 'torrent-813';
+    const activityAt = 7_100_100;
+    env.storage[storageKey] = {};
+    env.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'torrent', activity_at: activityAt,
+        season: 1, episode: 1, episode_title: 'E1', timeline_hash: 'torrent-813-1',
+        time: 100, duration: 3000, percent: 3, current_index: 0,
+        torrent: {
+            hash: torrentHash, magnet: 'magnet:?xt=urn:btih:' + torrentHash, index: 0,
+            items: Array.from({ length: 10 }, (_value, index) => ({
+                file_id: index, file_name: 'S01E' + String(index + 1).padStart(2, '0') + '.mkv',
+                title: 'E' + (index + 1), season: 1, episode: index + 1, hash: 'torrent-813-' + (index + 1), meta: {}
+            }))
+        }
+    };
+    const current = {
+        card: movie, movie, title: 'E2', file_name: 'S01E02.mkv',
+        url: 'http://127.0.0.1:8090/stream/S01E02.mkv?link=' + torrentHash + '&index=1&play',
+        torrent_hash: torrentHash, season: 1, episode: 2,
+        timeline: { hash: 'torrent-813-2' }
+    };
+    env.setActive(movie);
+    env.setClock(activityAt);
+    env.Lampa.Player.play(Object.assign({}, current, { playlist: [current], playlist_index: 0 }));
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'torrent-813-2', road: { time: 15, duration: 3000, percent: 1, updated: activityAt }
+    }));
+    const saved = env.storage[storageKey][recordKey];
+    assert.equal(saved.torrent.items.length, 1, 'a real episode switch at the same timestamp must not be mistaken for a stale richness downgrade');
+    assert.equal(saved.episode, 2);
+    assert.equal(saved.timeline_hash, 'torrent-813-2');
+    assert.equal(saved.torrent.items[0].hash, 'torrent-813-2');
 }
 
 {
@@ -1209,4 +1658,4 @@ function seedDelayedOnline(env, id) {
     h.setRequestHandler(null);
 }
 
-console.log('ContinueWatching v6.1.8: 38 fixtures passed');
+console.log('ContinueWatching v6.1.9: 47 fixtures passed');
