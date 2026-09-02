@@ -23,6 +23,8 @@ assert.equal(api.globalTimeout, 15000);
 assert.equal(api.previous, 1);
 assert.equal(api.next, 2);
 assert(source.includes("item.season && Lampa.Platform.is('android') && Lampa.Storage.field('player') !== 'inner'"));
+assert(source.includes('window.Online2RchHandshake = function(response, ready)'), 'Online2 must expose the narrow RCH compatibility hook');
+assert(source.includes('rchRun(response, function()'), 'the hook must pass the full response to the existing RCH owner');
 
 const builderSource = source.slice(
   source.indexOf('this.buildExternalAndroidPlaylist'),

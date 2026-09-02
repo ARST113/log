@@ -325,6 +325,20 @@
     }
   }
 
+  // Narrow compatibility hook for consumers that already received a full RCH response.
+  // The handshake stays owned by Online2; callers only get a single ready callback.
+  window.Online2RchHandshake = function(response, ready) {
+    if (!response || !response.rch || typeof ready != 'function') return false;
+    try {
+      rchRun(response, function() {
+        ready();
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
   // --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ACCOUNT ---
   function account(url) {
     url = url + '';
