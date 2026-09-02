@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.1.9-builtin-lazy-resolvers-20260902';
+    var VERSION = 'v6.1.10-online-series-index-20260902';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -563,6 +563,9 @@
             url: url,
             playlist: list,
             index: idx,
+            capture_index: idx,
+            capture_season: num(se.season),
+            capture_episode: num(se.episode),
             season: num(se.season),
             episode: num(se.episode),
             hash: h,
@@ -624,9 +627,11 @@
             items: items
         };
     }
-    function onlineDescriptor(session) {
+    function onlineDescriptor(session, currentRuntimeIndex) {
         if (!session || session.source !== 'online') return null;
         var list = session.playlist.length ? session.playlist : [{}];
+        var selectedRuntimeIndex = currentRuntimeIndex === undefined ? num(session.index) : num(currentRuntimeIndex);
+        var captureIndex = session.capture_index === undefined ? num(session.index) : num(session.capture_index);
         var synthesisBase = freshSessionResolverShape(session);
         var items = list.map(function (item, idx) {
             item = item || {};
@@ -634,16 +639,17 @@
             var h = exactHash(item, session.movie, se.season, se.episode);
             var raw = typeof item.url === 'string' ? cleanUrl(item.url) : '';
             var resolver = lookupResolver(raw, session.card_key);
-            if (idx === num(session.index) && session.resolver) resolver = session.resolver;
+            if (resolver && !resolverMatchesItem(resolver.url, item)) resolver = null;
+            if (idx === captureIndex && session.resolver && resolverMatchesItem(session.resolver.url, item)) resolver = session.resolver;
             var explicitResolver = str(item.resolver_url).trim();
             var carriedResolver = !resolver && explicitResolver ? portableResolver(explicitResolver) : '';
             if (carriedResolver && !carriedResolverCompatible(carriedResolver, item, synthesisBase)) carriedResolver = '';
             var carriedSelection = carriedResolver ? resolverSelection(carriedResolver, item.selection || {}) : {};
             var synthesized = !resolver && !explicitResolver ? synthesizeResolverForItem(synthesisBase, item) : null;
             var meta = playbackMeta(item);
-            if (idx === num(session.index)) meta = mergeMeta(meta, session.active_meta || {});
+            if (idx === captureIndex) meta = mergeMeta(meta, session.active_meta || {});
             return {
-                title: str(item.title || item.name || (idx === num(session.index) ? session.movie.name || session.movie.title || '' : '')),
+                title: str(item.title || item.name || (idx === captureIndex ? session.movie.name || session.movie.title || '' : '')),
                 season: num(se.season), episode: num(se.episode), hash: h,
                 img: str(item.thumbnail || item.img || ''),
                 voice_name: str(item.voice_name || ''),
@@ -654,7 +660,7 @@
                 meta: meta
             };
         });
-        var descriptorIndex = num(session.index);
+        var descriptorIndex = selectedRuntimeIndex;
         var fullDefs = Array.isArray(session.online_full_defs) ? session.online_full_defs : [];
         var baseOnline = session.online_seed_descriptor || {};
         var currentStore = store();
@@ -700,23 +706,33 @@
                     else saved[key] = value;
                 });
                 merged[fullIndex] = saved;
-                if (runtimeIndex === num(session.index)) descriptorIndex = fullIndex;
+                if (runtimeIndex === selectedRuntimeIndex) descriptorIndex = fullIndex;
             });
             items = merged;
         }
         items.forEach(function (item) {
             if (!item) return;
-            item.resolver_url = item.resolver_url ? portableResolver(item.resolver_url) : '';
-            item.resolver_headers = portableResolverHeaders(item.resolver_headers);
+            item.resolver_url = item.resolver_url && resolverMatchesItem(item.resolver_url, item) ? portableResolver(item.resolver_url) : '';
+            item.resolver_headers = item.resolver_url ? portableResolverHeaders(item.resolver_headers) : {};
         });
+        var activeDescriptor = items[descriptorIndex] || {};
         var sessionResolver = session.resolver ? portableResolver(session.resolver.url) : '';
         var sessionSelection = session.resolver ? resolverSelection(session.resolver.url, {}) : {};
         var sessionDirect = isTransientOnline(session.url) ? '' : session.url;
+        var baseMatchesActive = descriptorIndex === num(baseOnline.index);
+        var captureMatchesActive = selectedRuntimeIndex === captureIndex && resolverMatchesItem(sessionResolver, activeDescriptor);
+        var baseResolver = baseMatchesActive && baseOnline.resolver_url && resolverMatchesItem(baseOnline.resolver_url, activeDescriptor)
+            ? portableResolver(baseOnline.resolver_url) : '';
+        var activeResolver = str(activeDescriptor.resolver_url || '') || (captureMatchesActive ? sessionResolver : '') ||
+            baseResolver;
+        var activeHeaders = activeDescriptor.resolver_url ? activeDescriptor.resolver_headers :
+            (captureMatchesActive && session.resolver ? session.resolver.headers : (baseResolver ? baseOnline.resolver_headers : {}));
+        var activeSelection = resolverSelection(activeResolver, activeDescriptor.selection || {});
         return {
-            resolver_url: sessionResolver || (baseOnline.resolver_url ? portableResolver(baseOnline.resolver_url) : ''),
-            resolver_headers: portableResolverHeaders(session.resolver ? session.resolver.headers : baseOnline.resolver_headers),
-            selection: selectionKey(sessionSelection) ? sessionSelection : clone(baseOnline.selection || {}),
-            direct_url: sessionDirect || str(baseOnline.direct_url || ''),
+            resolver_url: activeResolver,
+            resolver_headers: portableResolverHeaders(activeHeaders),
+            selection: selectionKey(activeSelection) ? activeSelection : (captureMatchesActive && selectionKey(sessionSelection) ? sessionSelection : clone(baseMatchesActive ? baseOnline.selection || {} : {})),
+            direct_url: str(activeDescriptor.direct_url || '') || (captureMatchesActive ? sessionDirect : '') || str(baseMatchesActive ? baseOnline.direct_url || '' : ''),
             index: descriptorIndex,
             items: items
         };
@@ -753,7 +769,7 @@
         };
         if (session.source === 'torrent') r.torrent = torrentDescriptor(session);
         if (session.source === 'online') {
-            r.online = onlineDescriptor(session);
+            r.online = onlineDescriptor(session, itemIndex);
             if (r.online) r.current_index = num(r.online.index);
         }
         return r;
@@ -1095,7 +1111,9 @@
         if (!resolver || !session || !resolver.card_key || resolver.card_key !== session.card_key || !capturedAt || !sessionAt ||
             sessionAt < capturedAt - 1000 || sessionAt - capturedAt > ONLINE_RESOLVER_CAPTURE_MAX_AGE) return null;
         var shape = safeResolverShape(resolver.url);
-        if (!shape || shape.season !== positiveInteger(session.season) || shape.episode !== positiveInteger(session.episode)) return null;
+        var captureSeason = positiveInteger(session.capture_season || session.season);
+        var captureEpisode = positiveInteger(session.capture_episode || session.episode);
+        if (!shape || shape.season !== captureSeason || shape.episode !== captureEpisode) return null;
         shape.headers = portableResolverHeaders(resolver.headers);
         return shape;
     }
@@ -1119,6 +1137,25 @@
             u.searchParams.set(base.episode_key, str(target.episode));
             return { url: portableResolver(u.toString()), headers: clone(base.headers || {}), selection: clone(base.selection || {}) };
         } catch (e) { return null; }
+    }
+    function resolverMatchesItem(url, item, requireCoordinates) {
+        if (!url) return false;
+        try {
+            var parsed = new URL(str(url));
+            if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.username || parsed.password || !looksOnlineResolver(parsed.toString())) return false;
+            var shortS = parsed.searchParams.getAll('s'), shortE = parsed.searchParams.getAll('e');
+            var longS = parsed.searchParams.getAll('season'), longE = parsed.searchParams.getAll('episode');
+            var hasCoordinates = shortS.length || shortE.length || longS.length || longE.length;
+            if (!hasCoordinates) return !requireCoordinates;
+            var shortPair = shortS.length === 1 && shortE.length === 1 && !longS.length && !longE.length;
+            var longPair = longS.length === 1 && longE.length === 1 && !shortS.length && !shortE.length;
+            if (!shortPair && !longPair) return false;
+            var season = positiveInteger(parsed.searchParams.get(shortPair ? 's' : 'season'));
+            var episode = positiveInteger(parsed.searchParams.get(shortPair ? 'e' : 'episode'));
+            if (!season || !episode) return false;
+            var target = explicitItemSE(item);
+            return !target || (season === target.season && episode === target.episode);
+        } catch (e) { return false; }
     }
     function activeRchConnectionId(host) {
         try {
@@ -1156,17 +1193,44 @@
         if (typeof u === 'string' && u.indexOf(' or ') !== -1) u = u.split(' or ')[0];
         return cleanUrl(u);
     }
+    function normalizedOnlineIndex(online) {
+        online = online || {};
+        return Math.max(0, Math.min(Math.max(0, (online.items || []).length - 1), num(online.index)));
+    }
+    function onlineRecordIndex(record) {
+        var online = record && record.online || {};
+        var items = Array.isArray(online.items) ? online.items : [];
+        var hash = str(record && record.timeline_hash);
+        var i;
+        if (hash) {
+            for (i = 0; i < items.length; i++) if (items[i] && str(items[i].hash) === hash) return i;
+        }
+        var season = positiveInteger(record && record.season);
+        var episode = positiveInteger(record && record.episode);
+        if (season && episode) {
+            for (i = 0; i < items.length; i++) {
+                if (items[i] && num(items[i].season) === season && num(items[i].episode) === episode) return i;
+            }
+        }
+        return Math.max(0, Math.min(Math.max(0, items.length - 1), num(record && record.current_index !== undefined ? record.current_index : online.index)));
+    }
     function onlineResolverForRecord(record) {
         var o = record && record.online || {};
-        var idx = Math.max(0, num(record && record.current_index !== undefined ? record.current_index : o.index));
+        var idx = onlineRecordIndex(record);
         var item = o.items && o.items[idx] || {};
-        var expected = o.selection || item.selection || resolverSelection(o.resolver_url || item.resolver_url || '', {});
+        var savedIndex = normalizedOnlineIndex(o);
+        var expected = selectionKey(item.selection) ? item.selection : resolverSelection(item.resolver_url || '', {});
+        if (!selectionKey(expected) && idx === savedIndex) {
+            expected = selectionKey(o.selection) ? o.selection : resolverSelection(o.resolver_url || '', {});
+        }
         var candidates = [
-            { url: o.resolver_url || '', headers: o.resolver_headers || {} },
-            { url: item.resolver_url || '', headers: item.resolver_headers || {} }
+            { url: item.resolver_url || '', headers: item.resolver_headers || {}, top: false },
+            { url: o.resolver_url || '', headers: o.resolver_headers || {}, top: true }
         ];
         for (var i = 0; i < candidates.length; i++) {
             if (!candidates[i].url) continue;
+            var requireCoordinates = candidates[i].top && idx !== savedIndex;
+            if (!resolverMatchesItem(candidates[i].url, { season: record && record.season, episode: record && record.episode }, requireCoordinates)) continue;
             var actual = resolverSelection(candidates[i].url, {});
             if (selectionKey(expected) && !selectionMatches(expected, actual)) continue;
             candidates[i].selection = actual;
@@ -1438,7 +1502,7 @@
                 title: record.episode_title || record.title, season: record.season, episode: record.episode,
                 hash: record.timeline_hash, direct_url: online.direct_url || '', meta: {}
             }];
-            var idx = Math.max(0, Math.min(defs.length - 1, num(record.current_index !== undefined ? record.current_index : online.index)));
+            var idx = onlineRecordIndex(record);
             var list = defs.map(function (it, i) {
                 var h = it.hash || timelineHash(movie, it.season, it.episode);
                 var road = timelineView(h) || {};
@@ -1457,7 +1521,9 @@
                 return item;
             });
             var activeDef = defs[idx] || {};
-            var u = resolved && resolved.url ? resolved.url : (directOnlineUrl(activeDef) || directOnlineUrl({ direct_url: online.direct_url }));
+            var allowTopFallback = idx === normalizedOnlineIndex(online);
+            var u = resolved && resolved.url ? resolved.url : (directOnlineUrl(activeDef) ||
+                (allowTopFallback ? directOnlineUrl({ direct_url: online.direct_url }) : ''));
             if (!u) return noty('Не удалось получить свежую ссылку серии');
             var live = timelineView(record.timeline_hash) || {};
             var resumeRoad = mergeRecordRoad(record, live);
@@ -1526,6 +1592,7 @@
     function hydrateOnlinePlaylist(input) {
         var session = state.session;
         if (!session || session.source !== 'online') return false;
+        var hadPlaylist = !!session.playlist.length;
         var list = normalizePlaylist(input);
         if (!list.length) return false;
         var matched = -1;
@@ -1553,6 +1620,11 @@
         var currentSE = itemSE(current, matched);
         session.playlist = list;
         session.index = matched;
+        if (!hadPlaylist) {
+            session.capture_index = matched;
+            session.capture_season = num(currentSE.season || session.capture_season);
+            session.capture_episode = num(currentSE.episode || session.capture_episode);
+        }
         session.season = num(currentSE.season || session.season);
         session.episode = num(currentSE.episode || session.episode);
         session.hash = str(current.timeline && current.timeline.hash || exactHash(current, session.movie, session.season, session.episode) || session.hash);
