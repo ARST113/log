@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.1.7-online-launch-budget-20260902';
+    var VERSION = 'v6.1.8-online-lazy-resolvers-20260902';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -27,6 +27,7 @@
         settleTimer: null,
         uiTimer: null,
         playerPatched: false,
+        playerPlaylistPatched: false,
         torrentPatched: false,
         installed: false,
         syncKeys: {},
@@ -581,6 +582,8 @@
             var raw = typeof item.url === 'string' ? cleanUrl(item.url) : '';
             var resolver = lookupResolver(raw);
             if (idx === num(session.index) && session.resolver) resolver = session.resolver;
+            var carriedResolver = !resolver && item.resolver_url ? portableResolver(item.resolver_url) : '';
+            var carriedSelection = carriedResolver ? resolverSelection(carriedResolver, item.selection || {}) : {};
             var meta = playbackMeta(item);
             if (idx === num(session.index)) meta = mergeMeta(meta, session.active_meta || {});
             return {
@@ -589,9 +592,9 @@
                 img: str(item.thumbnail || item.img || ''),
                 voice_name: str(item.voice_name || ''),
                 direct_url: raw && !isTransientOnline(raw) ? raw : '',
-                resolver_url: resolver ? portableResolver(resolver.url) : '',
-                resolver_headers: resolver ? clone(resolver.headers || {}) : {},
-                selection: resolverSelection(resolver ? resolver.url : '', {}),
+                resolver_url: resolver ? portableResolver(resolver.url) : carriedResolver,
+                resolver_headers: resolver ? clone(resolver.headers || {}) : clone(carriedResolver ? item.resolver_headers || {} : {}),
+                selection: resolver ? resolverSelection(resolver.url, {}) : carriedSelection,
                 meta: meta
             };
         });
@@ -1323,21 +1326,67 @@
         }
         state.torrentPatched = true;
     }
+    function hydrateOnlinePlaylist(input) {
+        var session = state.session;
+        if (!session || session.source !== 'online') return false;
+        var list = normalizePlaylist(input);
+        if (!list.length) return false;
+        var matched = -1;
+        var currentHash = str(session.hash);
+        var currentUrl = cleanUrl(session.url);
+        for (var i = 0; i < list.length; i++) {
+            var itemHash = list[i].timeline && str(list[i].timeline.hash);
+            if (currentHash && itemHash && itemHash === currentHash) { matched = i; break; }
+        }
+        if (matched < 0 && currentUrl) {
+            for (var j = 0; j < list.length; j++) {
+                var itemUrl = typeof list[j].url === 'string' ? cleanUrl(list[j].url) : '';
+                if (itemUrl && itemUrl === currentUrl) { matched = j; break; }
+            }
+        }
+        if (matched < 0) return false;
+        for (var k = 0; k < list.length; k++) {
+            var itemSEValue = itemSE(list[k], k);
+            list[k].season = num(list[k].season || itemSEValue.season);
+            list[k].episode = num(list[k].episode || itemSEValue.episode);
+            if (!list[k].timeline) list[k].timeline = {};
+            if (!list[k].timeline.hash) list[k].timeline.hash = exactHash(list[k], session.movie, list[k].season, list[k].episode);
+        }
+        var current = list[matched] || {};
+        var currentSE = itemSE(current, matched);
+        session.playlist = list;
+        session.index = matched;
+        session.season = num(currentSE.season || session.season);
+        session.episode = num(currentSE.episode || session.episode);
+        session.hash = str(current.timeline && current.timeline.hash || exactHash(current, session.movie, session.season, session.episode) || session.hash);
+        return true;
+    }
     function patchPlayer() {
-        if (state.playerPatched || !Lampa.Player || typeof Lampa.Player.play !== 'function') return;
-        var old = Lampa.Player.play;
-        Lampa.Player.play = function (data) {
-            try {
-                var s = buildSession(data || {});
-                if (s) {
-                    state.session = s;
-                    if (s.source === 'torrent' && isJustExternal()) writePending(s);
-                }
-            } catch (e) { try { console.warn('[CW6] capture failed', e); } catch (ee) {} }
-            return old.apply(this, arguments);
-        };
-        Lampa.Player.__cw6_patched = VERSION;
-        state.playerPatched = true;
+        if (!Lampa.Player) return;
+        if (!state.playerPatched && typeof Lampa.Player.play === 'function') {
+            var old = Lampa.Player.play;
+            Lampa.Player.play = function (data) {
+                try {
+                    var s = buildSession(data || {});
+                    if (s) {
+                        state.session = s;
+                        if (s.source === 'torrent' && isJustExternal()) writePending(s);
+                    }
+                } catch (e) { try { console.warn('[CW6] capture failed', e); } catch (ee) {} }
+                return old.apply(this, arguments);
+            };
+            Lampa.Player.__cw6_patched = VERSION;
+            state.playerPatched = true;
+        }
+        if (!state.playerPlaylistPatched && typeof Lampa.Player.playlist === 'function') {
+            var oldPlaylist = Lampa.Player.playlist;
+            Lampa.Player.playlist = function (list) {
+                try { hydrateOnlinePlaylist(list); } catch (e) { try { console.warn('[CW6] playlist capture failed', e); } catch (ee) {} }
+                return oldPlaylist.apply(this, arguments);
+            };
+            Lampa.Player.__cw6_playlist_patched = VERSION;
+            state.playerPlaylistPatched = true;
+        }
     }
 
     function injectStyle() {

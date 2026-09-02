@@ -105,6 +105,15 @@
     return true;
   }
 
+  function carryLazyResolverData(play, file, aesgcm) {
+    if (!play || !file || file.method != 'call' || typeof file.url != 'string' || !file.url) return play;
+    play.resolver_url = file.url;
+    play.resolver_headers = {
+      'X-Kit-AesGcm': aesgcm === undefined || aesgcm === null ? '' : String(aesgcm)
+    };
+    return play;
+  }
+
   if (window.__ONLINE2_TEST_MODE__) {
     window.Online2Test = {
       concurrency: EXTERNAL_ANDROID_PLAYLIST_CONCURRENCY,
@@ -114,7 +123,8 @@
       next: EXTERNAL_ANDROID_PLAYLIST_NEXT,
       resolveExternalAndroidPlaylist: resolveExternalAndroidPlaylist,
       contiguousPlaylistWindow: contiguousPlaylistWindow,
-      applyResolvedPlaylistData: applyResolvedPlaylistData
+      applyResolvedPlaylistData: applyResolvedPlaylistData,
+      carryLazyResolverData: carryLazyResolverData
     };
     return;
   }
@@ -934,7 +944,7 @@
         voice_name: file.voice_name,
         thumbnail: file.thumbnail
       };
-      return play;
+      return carryLazyResolverData(play, file, Lampa.Storage.get('aesgcmkey', ''));
     };
     this.orUrlReserve = function(data) {
       if (data.url && typeof data.url == 'string' && data.url.indexOf(" or ") !== -1) {
