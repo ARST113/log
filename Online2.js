@@ -1,6 +1,124 @@
 (function() {
   'use strict';
 
+  var EXTERNAL_ANDROID_PLAYLIST_CONCURRENCY = 1;
+  var EXTERNAL_ANDROID_PLAYLIST_ITEM_TIMEOUT = 9000;
+  var EXTERNAL_ANDROID_PLAYLIST_GLOBAL_TIMEOUT = 15000;
+  var EXTERNAL_ANDROID_PLAYLIST_PREVIOUS = 1;
+  var EXTERNAL_ANDROID_PLAYLIST_NEXT = 2;
+
+  function resolveExternalAndroidPlaylist(items, currentIndex, resolver, done) {
+    var results = new Array(items.length);
+    var queue = [];
+    var cursor = 0;
+    var active = 0;
+    var pending = 0;
+    var completed = false;
+    var globalTimer;
+
+    for (var next = 1; next <= EXTERNAL_ANDROID_PLAYLIST_NEXT; next++) {
+      if (currentIndex + next < items.length && items[currentIndex + next] && items[currentIndex + next].method == 'call') {
+        queue.push(currentIndex + next);
+      }
+    }
+    for (var previous = 1; previous <= EXTERNAL_ANDROID_PLAYLIST_PREVIOUS; previous++) {
+      if (currentIndex - previous >= 0 && items[currentIndex - previous] && items[currentIndex - previous].method == 'call') {
+        queue.push(currentIndex - previous);
+      }
+    }
+    pending = queue.length;
+
+    function complete() {
+      if (completed) return;
+      completed = true;
+      if (globalTimer) clearTimeout(globalTimer);
+      done(results);
+    }
+
+    function settle(index, stream, stream_json) {
+      if (completed) return;
+      if (stream && typeof stream.url == 'string' && stream.url) {
+        results[index] = {
+          stream: stream,
+          stream_json: stream_json || {}
+        };
+      } else {
+        results[index] = null;
+      }
+      active--;
+      pending--;
+      if (!pending) complete();
+      else pump();
+    }
+
+    function pump() {
+      if (completed) return;
+      while (active < EXTERNAL_ANDROID_PLAYLIST_CONCURRENCY && cursor < queue.length) {
+        (function(index) {
+          var settled = false;
+          active++;
+          cursor++;
+          try {
+            resolver(items[index], function(stream, stream_json) {
+              if (settled || completed) return;
+              settled = true;
+              settle(index, stream, stream_json);
+            });
+          } catch (e) {
+            if (settled || completed) return;
+            settled = true;
+            settle(index, null, {});
+          }
+        })(queue[cursor]);
+      }
+    }
+
+    if (currentIndex < 0 || currentIndex >= items.length) complete();
+    else if (!pending) complete();
+    else {
+      globalTimer = setTimeout(complete, EXTERNAL_ANDROID_PLAYLIST_GLOBAL_TIMEOUT);
+      pump();
+    }
+  }
+
+  function contiguousPlaylistWindow(cells, currentIndex) {
+    if (currentIndex < 0 || currentIndex >= cells.length || !cells[currentIndex]) return [];
+    var minimum = Math.max(0, currentIndex - EXTERNAL_ANDROID_PLAYLIST_PREVIOUS);
+    var maximum = Math.min(cells.length - 1, currentIndex + EXTERNAL_ANDROID_PLAYLIST_NEXT);
+    var from = currentIndex;
+    var to = currentIndex;
+    while (from > minimum && cells[from - 1]) from--;
+    while (to < maximum && cells[to + 1]) to++;
+    return cells.slice(from, to + 1);
+  }
+
+  function applyResolvedPlaylistData(cell, source, stream, stream_json) {
+    if (!stream || typeof stream.url != 'string' || !stream.url) return false;
+    stream_json = stream_json || {};
+    cell.url = stream.url;
+    cell.headers = stream_json.headers || stream.headers || cell.headers;
+    cell.quality = stream_json.quality || source.qualitys || cell.quality;
+    cell.segments = stream_json.segments || stream.segments || source.segments || cell.segments;
+    cell.hls_manifest_timeout = stream_json.hls_manifest_timeout || stream.hls_manifest_timeout || cell.hls_manifest_timeout;
+    if (stream.subtitles !== undefined) cell.subtitles = stream.subtitles;
+    cell.subtitles_call = stream_json.subtitles_call || stream.subtitles_call || cell.subtitles_call;
+    return true;
+  }
+
+  if (window.__ONLINE2_TEST_MODE__) {
+    window.Online2Test = {
+      concurrency: EXTERNAL_ANDROID_PLAYLIST_CONCURRENCY,
+      itemTimeout: EXTERNAL_ANDROID_PLAYLIST_ITEM_TIMEOUT,
+      globalTimeout: EXTERNAL_ANDROID_PLAYLIST_GLOBAL_TIMEOUT,
+      previous: EXTERNAL_ANDROID_PLAYLIST_PREVIOUS,
+      next: EXTERNAL_ANDROID_PLAYLIST_NEXT,
+      resolveExternalAndroidPlaylist: resolveExternalAndroidPlaylist,
+      contiguousPlaylistWindow: contiguousPlaylistWindow,
+      applyResolvedPlaylistData: applyResolvedPlaylistData
+    };
+    return;
+  }
+
   var Defined = {
     api: 'lampac',
     localhost: 'http://lampac.fun/', // Ваш основной сервер
@@ -808,6 +926,44 @@
         }
       }
     };
+    this.buildExternalAndroidPlaylist = function(videos, item, json, json_call, call) {
+      var _this5 = this;
+      var current_index = videos.indexOf(item);
+      resolveExternalAndroidPlaylist(videos, current_index, function(elem, resolved) {
+        var finished = false;
+        var timer = setTimeout(function() {
+          if (finished) return;
+          finished = true;
+          resolved(null, {});
+        }, EXTERNAL_ANDROID_PLAYLIST_ITEM_TIMEOUT);
+        _this5.getFileUrl(elem, function(stream, stream_json) {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timer);
+          resolved(stream, stream_json);
+        });
+      }, function(resolved) {
+        var cells = new Array(videos.length);
+        videos.forEach(function(elem, index) {
+          var cell = _this5.toPlayElement(elem);
+          if (elem.method == 'call') {
+            var result = index == current_index ? {
+              stream: json,
+              stream_json: json_call
+            } : resolved[index];
+            if (!result || !applyResolvedPlaylistData(cell, elem, result.stream, result.stream_json)) return;
+          } else {
+            cell.url = elem.url;
+            if (!cell.url) return;
+          }
+          _this5.orUrlReserve(cell);
+          _this5.setDefaultQuality(cell);
+          cells[index] = cell;
+        });
+
+        call(contiguousPlaylistWindow(cells, current_index));
+      });
+    };
     this.display = function(videos) {
       var _this5 = this;
       this.draw(videos, {
@@ -834,7 +990,44 @@
               }
               _this5.orUrlReserve(first);
               _this5.setDefaultQuality(first);
-              if (item.season) {
+              var launch = function launch(playlist) {
+                if (playlist.length > 1) first.playlist = playlist;
+                if (first.url) {
+                  var element = first;
+                  element.isonline = true;
+                  if (element.url && element.isonline) {
+                    // online.js
+                  } else if (element.url) {
+                    if (false) {
+                      if (Platform.is('browser') && location.host.indexOf("127.0.0.1") !== -1) {
+                        Noty.show('Видео открыто в playerInner', {
+                          time: 3000
+                        });
+                        $.get('http://lampac.fun/player-inner/' + element.url);
+                        return;
+                      }
+
+                      Player.play(element);
+                    } else {
+                      if (false && Platform.is('browser') && location.host.indexOf("127.0.0.1") !== -1)
+                        Noty.show('Внешний плеер можно указать в init.conf (playerInner)', {
+                          time: 3000
+                        });
+                      Player.play(element);
+                    }
+                  }
+                  Lampa.Player.play(element);
+                  Lampa.Player.playlist(playlist);
+                  if (element.subtitles_call) _this5.loadSubtitles(element.subtitles_call)
+                  item.mark();
+                  _this5.updateBalanser(balanser);
+                } else {
+                  Lampa.Noty.show(Lampa.Lang.translate('lampac_nolink'));
+                }
+              };
+              if (item.season && Lampa.Platform.is('android') && Lampa.Storage.field('player') !== 'inner') {
+                _this5.buildExternalAndroidPlaylist(videos, item, json, json_call, launch);
+              } else if (item.season) {
                 videos.forEach(function(elem) {
                   var cell = _this5.toPlayElement(elem);
                   if (elem == item) cell.url = json.url;
@@ -877,41 +1070,10 @@
                   _this5.setDefaultQuality(cell);
                   playlist.push(cell);
                 }); //Lampa.Player.playlist(playlist) 
+                launch(playlist);
               } else {
                 playlist.push(first);
-              }
-              if (playlist.length > 1) first.playlist = playlist;
-              if (first.url) {
-                var element = first;
-                element.isonline = true;
-                if (element.url && element.isonline) {
-                  // online.js
-                } else if (element.url) {
-                  if (false) {
-                    if (Platform.is('browser') && location.host.indexOf("127.0.0.1") !== -1) {
-                      Noty.show('Видео открыто в playerInner', {
-                        time: 3000
-                      });
-                      $.get('http://lampac.fun/player-inner/' + element.url);
-                      return;
-                    }
-
-                    Player.play(element);
-                  } else {
-                    if (false && Platform.is('browser') && location.host.indexOf("127.0.0.1") !== -1)
-                      Noty.show('Внешний плеер можно указать в init.conf (playerInner)', {
-                        time: 3000
-                      });
-                    Player.play(element);
-                  }
-                }
-                Lampa.Player.play(element);
-                Lampa.Player.playlist(playlist);
-                if (element.subtitles_call) _this5.loadSubtitles(element.subtitles_call)
-                item.mark();
-                _this5.updateBalanser(balanser);
-              } else {
-                Lampa.Noty.show(Lampa.Lang.translate('lampac_nolink'));
+                launch(playlist);
               }
             } else Lampa.Noty.show(Lampa.Lang.translate('lampac_nolink'));
           }, true);
