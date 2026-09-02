@@ -296,44 +296,59 @@
   };
   window.rch_nws[hostkey].typeInvoke('http://lampac.fun', function() {});
 
-  function rchInvoke(json, call) {
+  function rchActive(isActive) {
+    try {
+      return typeof isActive != 'function' || isActive();
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function rchInvoke(json, call, isActive) {
+    if (!rchActive(isActive)) return false;
     if (window.nwsClient && window.nwsClient[hostkey] && window.nwsClient[hostkey]._shouldReconnect) {
-      call();
-      return;
+      if (rchActive(isActive)) call();
+      return true;
     }
     if (!window.nwsClient) window.nwsClient = {};
+    if (!rchActive(isActive)) return false;
     if (window.nwsClient[hostkey] && window.nwsClient[hostkey].socket)
       window.nwsClient[hostkey].socket.close();
+    if (!rchActive(isActive)) return false;
     window.nwsClient[hostkey] = new NativeWsClient(json.nws, {
       autoReconnect: false
     });
     window.nwsClient[hostkey].on('Connected', function(connectionId) {
+      if (!rchActive(isActive)) return;
       window.rch_nws[hostkey].Registry(window.nwsClient[hostkey], function() {
-        call();
+        if (rchActive(isActive)) call();
       });
     });
     window.nwsClient[hostkey].connect();
+    return true;
   }
 
-  function rchRun(json, call) {
+  function rchRun(json, call, isActive) {
+    if (!rchActive(isActive)) return false;
     if (typeof NativeWsClient == 'undefined') {
       Lampa.Utils.putScript(["http://lampac.fun/js/nws-client-es5.js?v18112025"], function() {}, false, function() {
-        rchInvoke(json, call);
+        if (rchActive(isActive)) rchInvoke(json, call, isActive);
       }, true);
     } else {
-      rchInvoke(json, call);
+      return rchInvoke(json, call, isActive);
     }
+    return true;
   }
 
   // Narrow compatibility hook for consumers that already received a full RCH response.
   // The handshake stays owned by Online2; callers only get a single ready callback.
-  window.Online2RchHandshake = function(response, ready) {
+  window.Online2RchHandshake = function(response, ready, isActive) {
     if (!response || !response.rch || typeof ready != 'function') return false;
+    if (!rchActive(isActive)) return false;
     try {
-      rchRun(response, function() {
-        ready();
-      });
-      return true;
+      return rchRun(response, function() {
+        if (rchActive(isActive)) ready();
+      }, isActive) !== false;
     } catch (e) {
       return false;
     }

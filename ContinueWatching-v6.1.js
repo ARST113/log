@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.1.6-online-rch-retry-20260902';
+    var VERSION = 'v6.1.7-online-launch-budget-20260902';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -12,8 +12,8 @@
     var COMPLETION_PERCENT_TOLERANCE = 8;
     var COMPLETION_JUMP_TOLERANCE = 45;
     var TORRENT_HASH_FALLBACK = 2000;
-    var ONLINE_NEIGHBOR_TIMEOUT = 9000;
-    var ONLINE_WINDOW_DEADLINE = 18000;
+    var ONLINE_CANDIDATE_TIMEOUT = 15000;
+    var ONLINE_LAUNCH_DEADLINE = 30000;
 
     if (!window.Lampa) return;
     if (window.__CW_V6_VERSION__ === VERSION) return;
@@ -974,15 +974,17 @@
         }
         return null;
     }
-    function resolveOnlineCandidate(resolver, callback, timeout) {
+    function resolveOnlineCandidate(resolver, callback, launchDeadline) {
         if (!resolver || !resolver.url || !Lampa.Reguest) return callback(null);
-        var limit = timeout || 12000;
-        var deadline = now() + limit;
+        var deadline = Math.min(num(launchDeadline) || now() + ONLINE_CANDIDATE_TIMEOUT, now() + ONLINE_CANDIDATE_TIMEOUT);
+        var limit = Math.max(0, deadline - now());
+        if (!limit) return callback(null);
         var settled = false;
         var retried = false;
         var timer = setTimeout(function () { finish(null); }, limit);
         function finish(result) {
             if (settled) return;
+            if (result && now() >= deadline) result = null;
             settled = true;
             if (timer) clearTimeout(timer);
             callback(result);
@@ -994,6 +996,7 @@
             try {
                 n.native(localizeResolver(resolver.url), function (d) {
                     if (settled) return;
+                    if (now() >= deadline) return finish(null);
                     if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e2) { d = null; } }
                     if (d && d.rch) {
                         if (retried) return finish(null);
@@ -1006,26 +1009,30 @@
                                 if (ready || settled) return;
                                 ready = true;
                                 request();
-                            });
+                            }, function () { return !settled && now() < deadline; });
                             if (accepted === false && !ready) finish(null);
                         } catch (e3) { finish(null); }
                         return;
                     }
                     var u = chooseOnlineUrl(d);
                     finish(u && !looksOnlineResolver(u) ? { url: u, data: d || {}, selection: resolver.selection || {} } : null);
-                }, function () { finish(null); }, false, { headers: onlineHeaders(resolver.headers) });
+                }, function () {
+                    if (settled) return;
+                    if (now() >= deadline) return finish(null);
+                    finish(null);
+                }, false, { headers: onlineHeaders(resolver.headers) });
             } catch (e4) { finish(null); }
         }
         request();
     }
-    function resolveOnline(record, callback) {
+    function resolveOnline(record, callback, launchDeadline) {
         var resolver = onlineResolverForRecord(record);
         if (!resolver) return callback(null);
         onlineNoty('RESOLVE ' + shortUrl(resolver.url));
         resolveOnlineCandidate(resolver, function (resolved) {
             onlineNoty(resolved ? 'RESOLVE OK ' + shortUrl(resolved.url) : 'RESOLVE FAIL');
             callback(resolved);
-        }, 12000);
+        }, launchDeadline);
     }
     function looksOnlineResolver(url) {
         try {
@@ -1054,7 +1061,7 @@
         item.online_selection = clone(resolved.selection || {});
         return true;
     }
-    function prepareOnlineWindow(defs, list, idx, fallbackSelection, callback) {
+    function prepareOnlineWindow(defs, list, idx, fallbackSelection, launchDeadline, callback) {
         var last = Math.min(defs.length - 1, idx + 2);
         var first = idx;
         var forward = idx;
@@ -1063,7 +1070,7 @@
         var tasks = [];
         for (var i = idx + 1; i <= last; i++) tasks.push(i);
         if (idx > 0) tasks.push(idx - 1);
-        var globalTimer = setTimeout(finish, ONLINE_WINDOW_DEADLINE);
+        var globalTimer = null;
 
         function finish() {
             if (done) return;
@@ -1076,6 +1083,7 @@
         }
         function resolvedAt(index, resolved) {
             if (done) return;
+            if (now() >= num(launchDeadline)) return finish();
             if (!applyResolvedOnlineItem(list[index], resolved)) {
                 if (index > idx) stoppedForward = true;
             } else if (index > idx) {
@@ -1087,18 +1095,25 @@
         }
         function next() {
             if (done) return;
+            if (now() >= num(launchDeadline)) return finish();
             if (!tasks.length) return finish();
             var index = tasks.shift();
             if (index > idx && stoppedForward) return next();
             var def = defs[index] || {};
             var resolver = onlineResolverForItem(def, fallbackSelection);
             if (resolver) {
-                resolveOnlineCandidate(resolver, function (resolved) { resolvedAt(index, resolved); }, ONLINE_NEIGHBOR_TIMEOUT);
+                var remaining = num(launchDeadline) - now();
+                if (remaining <= 0) return finish();
+                var firstForward = index === idx + 1;
+                if (!firstForward && remaining < ONLINE_CANDIDATE_TIMEOUT) return resolvedAt(index, null);
+                resolveOnlineCandidate(resolver, function (resolved) { resolvedAt(index, resolved); }, launchDeadline);
                 return;
             }
             var direct = directOnlineUrl(def);
             resolvedAt(index, direct ? { url: direct, data: {}, selection: def.selection || fallbackSelection || {} } : null);
         }
+        if (now() >= num(launchDeadline)) return finish();
+        globalTimer = setTimeout(finish, Math.max(0, num(launchDeadline) - now()));
         next();
     }
 
@@ -1215,6 +1230,7 @@
         });
     }
     function launchOnline(movie, record) {
+        var launchDeadline = now() + ONLINE_LAUNCH_DEADLINE;
         onlineNoty('CONTINUE S' + num(record.season) + 'E' + num(record.episode) + ' ' + formatTime(record.time));
         resolveOnline(record, function (resolved) {
             var online = record.online || {};
@@ -1262,7 +1278,7 @@
             d.continue_watch_v6 = true;
             if (resolved && resolved.data) applyMeta(d, playbackMeta(resolved.data));
             list[idx] = deepCopy(d) || clone(d);
-            prepareOnlineWindow(defs, list, idx, d.online_selection, function (prepared) {
+            prepareOnlineWindow(defs, list, idx, d.online_selection, launchDeadline, function (prepared) {
                 d.playlist_index = prepared.index; d.start_index = prepared.index;
                 if (prepared.list[prepared.index]) prepared.list[prepared.index].start_index = prepared.index;
                 d.currentItem = deepCopy(prepared.list[prepared.index]) || clone(prepared.list[prepared.index]);
@@ -1282,7 +1298,7 @@
                 } catch (e) { noty('Ошибка запуска online'); }
                 finally { state.onlineLaunchSeed = null; }
             });
-        });
+        }, launchDeadline);
     }
     function launch(movie) {
         var r = getRecord(movie);
