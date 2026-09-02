@@ -89,6 +89,7 @@ function harness() {
         window: null,
         document,
         navigator: { maxTouchPoints: 0, userAgent: '' },
+        rch_nws: { 'lampac.fun': { connectionId: 'live-rch-session' } },
         location: { href: 'https://lampac.fun/', protocol: 'https:' },
         localStorage: {
             getItem(key) { return Object.prototype.hasOwnProperty.call(local, key) ? local[key] : null; },
@@ -116,6 +117,7 @@ function harness() {
         roads,
         listeners,
         timelineListeners,
+        rch_nws: context.rch_nws,
         setActive(movie) { active = movie; },
         setClock(value) { clock = value; }
     };
@@ -124,7 +126,7 @@ function harness() {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.1.1-technical-resume-fix-20260902');
+assert.equal(h.api.version, 'v6.1.2-online-resolver-session-fix-20260902');
 
 {
     const result = t.normalizeRoad(
@@ -203,6 +205,20 @@ assert.equal(h.api.version, 'v6.1.1-technical-resume-fix-20260902');
 }
 
 {
+    h.storage.account_email = 'viewer@example.test';
+    h.storage.lampac_unic_id = 'device-id';
+    h.storage.lampac_nws_id = 'stale-rch-session';
+    const localized = new URL(t.localizeResolver('https://lampac.fun/lite/zetflix/video?id=2&t=DUB+okko'));
+    assert.equal(localized.searchParams.get('nws_id'), 'live-rch-session', 'active Online2 RCH session must beat stale storage');
+    assert.equal(localized.searchParams.get('uid'), 'device-id');
+    assert.equal(localized.searchParams.get('account_email'), 'viewer@example.test');
+
+    delete h.rch_nws['lampac.fun'];
+    const fallback = new URL(t.localizeResolver('https://lampac.fun/lite/zetflix/video?id=2'));
+    assert.equal(fallback.searchParams.get('nws_id'), 'stale-rch-session', 'stored RCH id remains the compatibility fallback');
+}
+
+{
     const movieA = { id: 1, media_type: 'movie', title: 'A' };
     const movieB = { id: 2, media_type: 'movie', title: 'B' };
     const record = { activity_at: 10, source: 'online', timeline_hash: 'h' };
@@ -266,4 +282,4 @@ assert.equal(h.api.version, 'v6.1.1-technical-resume-fix-20260902');
     assert.equal(saved.online.selection.translation, 'dvo');
 }
 
-console.log('ContinueWatching v6.1.1: 14 fixtures passed');
+console.log('ContinueWatching v6.1.2: 16 fixtures passed');
