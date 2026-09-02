@@ -41,6 +41,7 @@ function harness() {
     const timelineListeners = [];
     const timers = new Map();
     const androidLaunches = [];
+    const playlistCalls = [];
 
     const Android = {
         openPlayer(link, data) {
@@ -66,7 +67,7 @@ function harness() {
         Noty: { show() {} },
         Platform: { is() { return false; } },
         Android,
-        Player: { play(data) { return Android.openPlayer(data.url, data); }, playlist() {} },
+        Player: { play(data) { return Android.openPlayer(data.url, data); }, playlist(data) { playlistCalls.push(data); } },
         Storage: {
             listener: { follow() {} },
             field() { return ''; },
@@ -140,6 +141,7 @@ function harness() {
         listeners,
         timelineListeners,
         androidLaunches,
+        playlistCalls,
         rch_nws: context.rch_nws,
         setRequestHandler(handler) { requestHandler = handler; },
         setRchHook(handler) {
@@ -177,7 +179,7 @@ function harness() {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.1.7-online-launch-budget-20260902');
+assert.equal(h.api.version, 'v6.1.8-online-lazy-resolvers-20260902');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -1039,6 +1041,138 @@ function seedDelayedOnline(env, id) {
 
 {
     const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 800, media_type: 'tv', title: 'Lazy carried resolvers', original_name: 'Lazy carried resolvers' };
+    const cardKey = h.api.testing.cardKey(movie);
+    const recordKey = 'c_' + h.Lampa.Utils.hash(cardKey);
+    const endpoint = (episode) => 'https://lampac.fun/lite/zetflix/video?id=800&s=1&e=' + episode + '&t=Original&account_email=private%40example.test&uid=private-uid&nws_id=private-nws';
+    const currentUrl = 'https://media.example/lazy-800-e1.m3u8';
+    const cells = [1, 2, 3].map((episode) => ({
+        title: 'E' + episode,
+        url: episode === 1 ? currentUrl : function lazyResolver() {},
+        resolver_url: endpoint(episode),
+        resolver_headers: { 'X-Kit-AesGcm': 'runtime-aes' },
+        season: 1,
+        episode,
+        timeline: { hash: 'lazy-800-' + episode }
+    }));
+    const current = Object.assign({}, cells[0], { card: movie, movie, isonline: true, playlist: undefined });
+    h.setActive(movie);
+    h.setClock(4_000_000);
+    h.Lampa.Player.play(current);
+    const playlistCallCount = h.playlistCalls.length;
+    h.Lampa.Player.playlist(cells);
+    assert.equal(h.playlistCalls.length, playlistCallCount + 1, 'playlist wrapper must preserve the original Player.playlist call');
+    assert.strictEqual(h.playlistCalls[h.playlistCalls.length - 1], cells, 'original playlist receives the unchanged input object');
+    h.timelineListeners.forEach((listener) => listener({
+        hash: 'lazy-800-1', road: { time: 150, duration: 3000, percent: 5, updated: 4_000_100 }
+    }));
+    const saved = h.storage[storageKey][recordKey];
+    assert.equal(saved.online.items.length, 3, 'lazy Online2 playlist must remain complete after timeline save');
+    const portableE2 = new URL(saved.online.items[1].resolver_url);
+    assert.equal(portableE2.pathname, '/lite/zetflix/video');
+    assert.equal(portableE2.searchParams.get('e'), '2');
+    assert.equal(portableE2.searchParams.get('t'), 'Original');
+    assert.equal(portableE2.searchParams.has('account_email'), false);
+    assert.equal(portableE2.searchParams.has('uid'), false);
+    assert.equal(portableE2.searchParams.has('nws_id'), false);
+    assert.deepEqual(saved.online.items[1].resolver_headers, { 'X-Kit-AesGcm': 'runtime-aes' });
+    assert.deepEqual(saved.online.items[1].selection, { provider: 'zetflix', translation: 'original' });
+
+    const resolverCalls = [];
+    h.setRequestHandler(({ url, ok, params }) => {
+        const episode = Number(new URL(url).searchParams.get('e'));
+        resolverCalls.push(episode);
+        assert.equal(params.headers['X-Kit-AesGcm'], 'runtime-aes');
+        ok({ url: 'https://media.example/lazy-800-e' + episode + '.m3u8' });
+    });
+    const before = h.androidLaunches.length;
+    h.api.launch();
+    assert.equal(h.androidLaunches.length, before + 1, 'carried lazy resolvers must produce one circular-safe Continue launch');
+    assert.deepEqual(resolverCalls, [1, 2, 3]);
+    const payload = h.androidLaunches[h.androidLaunches.length - 1].parsed;
+    assert.deepEqual(payload.playlist.map((item) => item.episode), [1, 2, 3]);
+    assert.doesNotThrow(() => JSON.stringify(payload));
+    h.setRequestHandler(null);
+}
+
+{
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 801, media_type: 'tv', title: 'Lazy missing resolvers', original_name: 'Lazy missing resolvers' };
+    const cardKey = h.api.testing.cardKey(movie);
+    const recordKey = 'c_' + h.Lampa.Utils.hash(cardKey);
+    const endpoint = (episode) => 'https://lampac.fun/lite/zetflix/video?id=801&s=1&e=' + episode + '&t=Original';
+    const currentUrl = 'https://media.example/lazy-801-e1.m3u8';
+    const cells = [
+        {
+            title: 'E1', url: currentUrl, resolver_url: endpoint(1), resolver_headers: { 'X-Kit-AesGcm': 'runtime-aes' },
+            season: 1, episode: 1, timeline: { hash: 'lazy-801-1' }
+        },
+        { title: 'E2', url: function lazyResolver() {}, season: 1, episode: 2, timeline: { hash: 'lazy-801-2' } },
+        { title: 'E3', url: function lazyResolver() {}, season: 1, episode: 3, timeline: { hash: 'lazy-801-3' } }
+    ];
+    h.setActive(movie);
+    h.setClock(4_100_000);
+    h.Lampa.Player.play(Object.assign({}, cells[0], { card: movie, movie, isonline: true, playlist: undefined }));
+    h.Lampa.Player.playlist(cells);
+    h.timelineListeners.forEach((listener) => listener({
+        hash: 'lazy-801-1', road: { time: 160, duration: 3000, percent: 5, updated: 4_100_100 }
+    }));
+    const saved = h.storage[storageKey][recordKey];
+    assert.equal(saved.online.items.length, 3);
+    assert.equal(saved.online.items[1].resolver_url, '', 'missing carried E2 resolver must remain unavailable');
+
+    const resolverCalls = [];
+    h.setRequestHandler(({ url, ok }) => {
+        const episode = Number(new URL(url).searchParams.get('e'));
+        resolverCalls.push(episode);
+        if (episode !== 1) throw new Error('missing E2 resolver must stop before E2/E3 network calls');
+        ok({ url: 'https://media.example/lazy-801-e1.m3u8' });
+    });
+    const before = h.androidLaunches.length;
+    h.api.launch();
+    assert.equal(h.androidLaunches.length, before + 1);
+    assert.deepEqual(resolverCalls, [1]);
+    assert.deepEqual(h.androidLaunches[h.androidLaunches.length - 1].parsed.playlist.map((item) => item.episode), [1]);
+    h.setRequestHandler(null);
+}
+
+{
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 802, media_type: 'tv', title: 'Canonical split playlist', original_name: 'Canonical split playlist' };
+    const cardKey = h.api.testing.cardKey(movie);
+    const recordKey = 'c_' + h.Lampa.Utils.hash(cardKey);
+    const currentUrl = 'https://media.example/canonical-802-e1.m3u8';
+    const cells = Array.from({ length: 10 }, (_value, index) => {
+        const episode = index + 1;
+        return {
+            title: 'E' + episode,
+            url: episode === 1 ? currentUrl : function lazyResolver() {},
+            resolver_url: 'https://lampac.fun/lite/zetflix/video?id=802&s=1&e=' + episode + '&t=Original',
+            resolver_headers: { 'X-Kit-AesGcm': 'runtime-aes' },
+            season: 1,
+            episode,
+            timeline: { hash: 'canonical-802-' + episode }
+        };
+    });
+    assert.equal(h.storage[storageKey][recordKey], undefined, 'canonical split regression starts with an empty card record');
+    h.setActive(movie);
+    h.setClock(4_200_000);
+    h.Lampa.Player.play(Object.assign({}, cells[0], { card: movie, movie, isonline: true, playlist: undefined }));
+    h.Lampa.Player.playlist(cells);
+    h.timelineListeners.forEach((listener) => listener({
+        hash: 'canonical-802-1', road: { time: 170, duration: 3000, percent: 6, updated: 4_200_100 }
+    }));
+    const saved = h.storage[storageKey][recordKey];
+    assert.equal(saved.online.items.length, 10, 'play(E1) followed by playlist(E1..E10) must hydrate the current session');
+    assert.equal(saved.current_index, 0);
+    assert.equal(saved.online.index, 0);
+    assert.equal(saved.timeline_hash, 'canonical-802-1');
+    assert.equal(saved.online.items[0].hash, 'canonical-802-1');
+    assert.equal(saved.online.items[9].episode, 10);
+}
+
+{
+    const storageKey = 'continue_watch_v6_7';
     const movie = { id: 782, media_type: 'tv', title: 'Nested resolver output', original_name: 'Nested resolver output' };
     const cardKey = t.cardKey(movie);
     const recordKey = 'c_' + h.Lampa.Utils.hash(cardKey);
@@ -1075,4 +1209,4 @@ function seedDelayedOnline(env, id) {
     h.setRequestHandler(null);
 }
 
-console.log('ContinueWatching v6.1.7: 35 fixtures passed');
+console.log('ContinueWatching v6.1.8: 38 fixtures passed');

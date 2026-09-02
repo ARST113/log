@@ -26,6 +26,28 @@ assert(source.includes("item.season && Lampa.Platform.is('android') && Lampa.Sto
 assert(source.includes('window.Online2RchHandshake = function(response, ready, isActive)'), 'Online2 must expose the guarded narrow RCH compatibility hook');
 assert(source.includes('rchRun(response, function()'), 'the hook must pass the full response to the existing RCH owner');
 
+{
+  const endpoint = 'https://lampac.fun/lite/zetflix/video?id=800&s=1&e=2&t=Original';
+  const cell = api.carryLazyResolverData(
+    { title: 'E2', url: endpoint },
+    { method: 'call', url: endpoint },
+    'runtime-aes-value'
+  );
+  const lazy = function lazyResolver() {};
+  cell.url = lazy;
+  assert.strictEqual(cell.url, lazy, 'carried resolver metadata must not replace the lazy cell.url function');
+  assert.equal(cell.resolver_url, endpoint);
+  assert.deepEqual(cell.resolver_headers, { 'X-Kit-AesGcm': 'runtime-aes-value' });
+  const serialized = JSON.parse(JSON.stringify(cell));
+  assert.equal(serialized.url, undefined, 'lazy function remains non-serializable by design');
+  assert.equal(serialized.resolver_url, endpoint, 'resolver endpoint survives the playlist serialization boundary');
+  assert.deepEqual(serialized.resolver_headers, { 'X-Kit-AesGcm': 'runtime-aes-value' });
+
+  const direct = api.carryLazyResolverData({ url: 'https://cdn.example/e2.m3u8' }, { method: 'play', url: endpoint }, 'secret');
+  assert.equal(direct.resolver_url, undefined, 'non-call items must not gain resolver metadata');
+  assert.equal(direct.resolver_headers, undefined, 'no unrelated headers are copied');
+}
+
 const rchLifecycleSource = source.slice(
   source.indexOf('  function rchActive'),
   source.indexOf('  // --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ACCOUNT ---')
