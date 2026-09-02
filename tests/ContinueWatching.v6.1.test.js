@@ -31,12 +31,14 @@ function jqueryStub() {
 
 function harness() {
     let clock = 2_000_000;
+    let nextTimerId = 1;
     let active = null;
     const storage = {};
     const local = {};
     const roads = {};
     const listeners = {};
     const timelineListeners = [];
+    const timers = new Map();
 
     const document = {
         head: { appendChild() {} },
@@ -96,8 +98,12 @@ function harness() {
             setItem(key, value) { local[key] = String(value); },
             removeItem(key) { delete local[key]; }
         },
-        setTimeout() { return 1; },
-        clearTimeout() {},
+        setTimeout(callback, delay) {
+            const id = nextTimerId++;
+            timers.set(id, { callback, delay: Number(delay || 0) });
+            return id;
+        },
+        clearTimeout(id) { timers.delete(id); },
         setInterval() { return 1; },
         clearInterval() {},
         Lampa,
@@ -119,14 +125,21 @@ function harness() {
         timelineListeners,
         rch_nws: context.rch_nws,
         setActive(movie) { active = movie; },
-        setClock(value) { clock = value; }
+        setClock(value) { clock = value; },
+        fireTimeouts(delay) {
+            const selected = Array.from(timers.entries()).filter((entry) => entry[1].delay === delay);
+            selected.forEach(([id, timer]) => {
+                if (!timers.delete(id)) return;
+                timer.callback();
+            });
+        }
     };
 }
 
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.1.2-online-resolver-session-fix-20260902');
+assert.equal(h.api.version, 'v6.1.3-torrent-hash-fallback-20260902');
 
 {
     const result = t.normalizeRoad(
@@ -190,6 +203,57 @@ assert.equal(h.api.version, 'v6.1.2-online-resolver-session-fix-20260902');
     const selection = t.resolverSelection('https://lampac.fun/lite/zetflix/video?id=1&t=Fox+Life', {});
     assert.deepEqual(JSON.parse(JSON.stringify(selection)), { provider: 'zetflix', translation: 'fox life' });
     assert.equal(t.selectionMatches(selection, { provider: 'zetflix', translation: 'tvshows' }), false);
+}
+
+{
+    let hashSuccess;
+    const results = [];
+    let calls = 0;
+    h.Lampa.Torserver = {
+        hash(_object, success) { calls++; hashSuccess = success; }
+    };
+    t.ensureTorrent({ title: 'Saved', torrent: { hash: 'saved-hash', magnet: 'magnet:?xt=urn:btih:saved-hash' } }, {}, (hash) => results.push(hash));
+    assert.equal(calls, 1, 'saved hash must not skip the registration attempt');
+    assert.deepEqual(results, [], 'registration gets a short chance to return a current hash');
+    h.fireTimeouts(2000);
+    assert.deepEqual(results, ['saved-hash'], 'a suppressed Torserver callback must fall back to the saved hash');
+    hashSuccess({ hash: 'late-hash' });
+    assert.deepEqual(results, ['saved-hash'], 'a late success must not trigger a second launch');
+}
+
+{
+    let hashSuccess;
+    const results = [];
+    h.Lampa.Torserver = {
+        hash(_object, success) { hashSuccess = success; }
+    };
+    t.ensureTorrent({ title: 'Fresh', torrent: { hash: 'saved-hash', magnet: 'magnet:?xt=urn:btih:saved-hash' } }, {}, (hash) => results.push(hash));
+    hashSuccess({ hash: 'fresh-hash' });
+    h.fireTimeouts(2000);
+    assert.deepEqual(results, ['fresh-hash'], 'success before the deadline must win and cancel fallback');
+}
+
+{
+    const results = [];
+    h.Lampa.Torserver = {
+        hash(_object, _success, fail) { fail(new Error('offline')); }
+    };
+    t.ensureTorrent({ title: 'Failure', torrent: { hash: 'saved-hash', magnet: 'magnet:?xt=urn:btih:saved-hash' } }, {}, (hash) => results.push(hash));
+    h.fireTimeouts(2000);
+    assert.deepEqual(results, ['saved-hash'], 'registration failure must use the saved hash exactly once');
+}
+
+{
+    let hashSuccess;
+    const results = [];
+    h.Lampa.Torserver = {
+        hash(_object, success) { hashSuccess = success; }
+    };
+    t.ensureTorrent({ title: 'No fallback', torrent: { hash: '', magnet: 'magnet:?xt=urn:btih:new-hash' } }, {}, (hash) => results.push(hash));
+    h.fireTimeouts(2000);
+    assert.deepEqual(results, [], 'an absent saved hash must not create an invalid timed fallback');
+    hashSuccess({ hash: 'new-hash' });
+    assert.deepEqual(results, ['new-hash']);
 }
 
 {
@@ -282,4 +346,4 @@ assert.equal(h.api.version, 'v6.1.2-online-resolver-session-fix-20260902');
     assert.equal(saved.online.selection.translation, 'dvo');
 }
 
-console.log('ContinueWatching v6.1.2: 16 fixtures passed');
+console.log('ContinueWatching v6.1.3: 20 fixtures passed');

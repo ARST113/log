@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.1.2-online-resolver-session-fix-20260902';
+    var VERSION = 'v6.1.3-torrent-hash-fallback-20260902';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -11,6 +11,7 @@
     var EXTERNAL_WINDOW = 5000;
     var COMPLETION_PERCENT_TOLERANCE = 8;
     var COMPLETION_JUMP_TOLERANCE = 45;
+    var TORRENT_HASH_FALLBACK = 2000;
 
     if (!window.Lampa) return;
     if (window.__CW_V6_VERSION__ === VERSION) return;
@@ -946,13 +947,22 @@
     function ensureTorrent(record, movie, callback) {
         var t = record && record.torrent;
         if (!t) return callback('');
-        if (!t.magnet || !Lampa.Torserver || !Lampa.Torserver.hash) return callback(t.hash || '');
+        var saved = str(t.hash || '');
+        if (!t.magnet || !Lampa.Torserver || !Lampa.Torserver.hash) return callback(saved);
+        var settled = false;
+        var timer = saved ? setTimeout(function () { finish(saved); }, TORRENT_HASH_FALLBACK) : null;
+        function finish(hash) {
+            if (settled) return;
+            settled = true;
+            if (timer) clearTimeout(timer);
+            callback(str(hash || saved || ''));
+        }
         try {
             Lampa.Torserver.hash({
                 title: record.title || movieTitle(movie), link: t.magnet,
                 poster: record.poster || '', data: { lampa: true, movie: movie }
-            }, function (x) { callback(str(x && x.hash || t.hash || '')); }, function () { callback(t.hash || ''); });
-        } catch (e) { callback(t.hash || ''); }
+            }, function (x) { finish(x && x.hash); }, function () { finish(saved); });
+        } catch (e) { finish(saved); }
     }
     function rebuildTorrent(record, movie, hash) {
         var t = record.torrent || {}, list = [];
@@ -1257,6 +1267,7 @@
                 selectionMatches: selectionMatches,
                 onlineResolverForRecord: onlineResolverForRecord,
                 localizeResolver: localizeResolver,
+                ensureTorrent: ensureTorrent,
                 buttonStateKey: buttonStateKey,
                 cardKey: cardKey,
                 getMovieFromData: getMovieFromData
