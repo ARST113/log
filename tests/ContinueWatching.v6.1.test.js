@@ -115,7 +115,8 @@ function harness() {
         },
         setTimeout(callback, delay) {
             const id = nextTimerId++;
-            timers.set(id, { callback, delay: Number(delay || 0) });
+            const normalized = Number(delay || 0);
+            timers.set(id, { callback, delay: normalized, due: clock + normalized });
             return id;
         },
         clearTimeout(id) { timers.delete(id); },
@@ -147,6 +148,22 @@ function harness() {
         },
         setActive(movie) { active = movie; },
         setClock(value) { clock = value; },
+        schedule(callback, delay) { return context.setTimeout(callback, delay); },
+        advance(milliseconds) {
+            const target = clock + Number(milliseconds || 0);
+            while (true) {
+                const due = Array.from(timers.entries())
+                    .filter((entry) => entry[1].due <= target)
+                    .sort((a, b) => a[1].due - b[1].due || a[0] - b[0])[0];
+                if (!due) break;
+                const [id, timer] = due;
+                if (!timers.delete(id)) continue;
+                clock = timer.due;
+                timer.callback();
+            }
+            clock = target;
+        },
+        now() { return clock; },
         fireTimeouts(delay) {
             const selected = Array.from(timers.entries()).filter((entry) => entry[1].delay === delay);
             selected.forEach(([id, timer]) => {
@@ -160,7 +177,29 @@ function harness() {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.1.6-online-rch-retry-20260902');
+assert.equal(h.api.version, 'v6.1.7-online-launch-budget-20260902');
+
+function seedDelayedOnline(env, id) {
+    const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const resolver = (episode) => 'https://lampac.fun/lite/zetflix/video?id=' + id + '&s=1&e=' + episode + '&t=Original';
+    env.storage.continue_watch_v6_7 ||= {};
+    env.storage.continue_watch_v6_7[recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: env.now(),
+        season: 1, episode: 1, episode_title: 'E1', timeline_hash: 'd' + id + '-1',
+        time: 75, duration: 3000, percent: 3, current_index: 0,
+        online: {
+            index: 0, resolver_url: resolver(1), selection: { provider: 'zetflix', translation: 'original' },
+            items: [1, 2, 3].map((episode) => ({
+                title: 'E' + episode, season: 1, episode, hash: 'd' + id + '-' + episode,
+                resolver_url: resolver(episode), selection: { provider: 'zetflix', translation: 'original' }, meta: {}
+            }))
+        }
+    };
+    env.setActive(movie);
+    return { movie, resolver, recordKey };
+}
 
 {
     const result = t.normalizeRoad(
@@ -478,7 +517,7 @@ assert.equal(h.api.version, 'v6.1.6-online-rch-retry-20260902');
 
     assert.equal(h.androidLaunches.length, before + 1, 'resolved window must launch current exactly once');
     assert.deepEqual(calls.map((entry) => entry.episode), [2, 3, 4, 1], 'current resolves once, then next two and previous resolve sequentially');
-    assert.deepEqual(calls.slice(1).map((entry) => entry.timeout), [9000, 9000, 9000]);
+    assert.deepEqual(calls.slice(1).map((entry) => entry.timeout), [15000, 15000, 15000]);
     assert.equal(calls[1].headers['X-Series'], 'e3', 'each neighbor must use its own saved resolver headers');
     const payload = h.androidLaunches[h.androidLaunches.length - 1].parsed;
     assert.deepEqual(payload.playlist.map((item) => item.episode), [1, 2, 3, 4]);
@@ -835,16 +874,167 @@ assert.equal(h.api.version, 'v6.1.6-online-rch-retry-20260902');
     const before = h.androidLaunches.length;
     h.api.launch();
     assert.equal(h.androidLaunches.length, before, 'current waits only while the bounded neighbor request is pending');
-    h.fireTimeouts(9000);
-    assert.equal(h.androidLaunches.length, before + 1, 'hard 9 s neighbor deadline must release current exactly once');
+    h.fireTimeouts(15000);
+    assert.equal(h.androidLaunches.length, before + 1, 'hard 15 s candidate deadline must release current exactly once');
     lateReady();
     assert.equal(requests, 1, 'a late handshake callback must not retry after the hard deadline');
     assert.equal(h.androidLaunches.length, before + 1, 'a late handshake callback must not duplicate or extend the launch');
-    h.fireTimeouts(18000);
+    h.fireTimeouts(30000);
     assert.equal(h.androidLaunches.length, before + 1, 'cleared global deadline must not duplicate the launch');
     assert.deepEqual(h.androidLaunches[h.androidLaunches.length - 1].parsed.playlist.map((item) => item.episode), [1]);
     h.setRequestHandler(null);
     h.setRchHook(null);
+}
+
+{
+    const env = harness();
+    seedDelayedOnline(env, 790);
+    const startedAt = env.now();
+    const requests = [];
+    env.setRequestHandler(({ url, ok, timeout }) => {
+        const episode = Number(new URL(url).searchParams.get('e'));
+        requests.push({ episode, at: env.now() - startedAt, timeout });
+        env.schedule(() => ok({
+            url: 'https://media.example/d790-' + episode + '.m3u8',
+            headers: { Referer: 'https://metadata.example/d790-' + episode }
+        }), 12000);
+    });
+    env.api.launch();
+    assert.equal(env.androidLaunches.length, 0);
+    env.advance(11999);
+    assert.equal(env.androidLaunches.length, 0, 'current resolver remains pending before 12 s');
+    env.advance(1);
+    assert.deepEqual(requests.map((entry) => entry.episode), [1, 2], 'E2 starts immediately after current resolves');
+    assert.deepEqual(requests.map((entry) => entry.at), [0, 12000]);
+    assert.deepEqual(requests.map((entry) => entry.timeout), [15000, 15000]);
+    env.advance(11999);
+    assert.equal(env.androidLaunches.length, 0, 'E2 remains pending before its 12 s response');
+    env.advance(1);
+    assert.equal(env.now() - startedAt, 24000);
+    assert.equal(env.androidLaunches.length, 1, 'current@12 s plus E2@12 s launches once at 24 s');
+    assert.deepEqual(requests.map((entry) => entry.episode), [1, 2], 'E3 must not start with only 6 s left');
+    const payload = env.androidLaunches[0].parsed;
+    assert.deepEqual(payload.playlist.map((item) => item.episode), [1, 2]);
+    assert.equal(payload.playlist[1].headers.Referer, 'https://metadata.example/d790-2');
+}
+
+{
+    const env = harness();
+    seedDelayedOnline(env, 791);
+    const startedAt = env.now();
+    const requests = [];
+    env.setRequestHandler(({ url, ok, timeout }) => {
+        const episode = Number(new URL(url).searchParams.get('e'));
+        requests.push({ episode, at: env.now() - startedAt, timeout });
+        if (episode === 1) env.schedule(() => ok({ url: 'https://media.example/d791-1.m3u8' }), 12000);
+    });
+    env.api.launch();
+    assert.deepEqual(requests.map((entry) => entry.episode), [1]);
+    env.advance(12000);
+    assert.deepEqual(requests.map((entry) => entry.episode), [1, 2]);
+    env.advance(14999);
+    assert.equal(env.androidLaunches.length, 0);
+    env.advance(1);
+    assert.equal(env.androidLaunches.length, 1, 'E2 candidate timeout must release current exactly once');
+    assert.equal(env.now() - startedAt, 27000);
+    assert.deepEqual(requests.map((entry) => entry.episode), [1, 2], 'timed-out E2 must stop contiguous resolution before E3');
+    assert.deepEqual(env.androidLaunches[0].parsed.playlist.map((item) => item.episode), [1]);
+}
+
+{
+    const env = harness();
+    seedDelayedOnline(env, 792);
+    const startedAt = env.now();
+    const requests = [];
+    let lateActive = true;
+    let handshakeCalls = 0;
+    env.setRchHook((_response, ready, isActive) => {
+        handshakeCalls++;
+        assert.equal(isActive(), true, 'RCH starts inside the candidate budget');
+        env.schedule(() => {
+            lateActive = isActive();
+            ready();
+        }, 5000);
+        return true;
+    });
+    env.setRequestHandler(({ url, ok }) => {
+        const episode = Number(new URL(url).searchParams.get('e'));
+        requests.push({ episode, at: env.now() - startedAt });
+        if (episode === 1) env.schedule(() => ok({ url: 'https://media.example/d792-1.m3u8' }), 12000);
+        else if (episode === 2) env.schedule(() => ok({ rch: true, nws: 'wss://lampac.fun/rch' }), 14000);
+        else throw new Error('late RCH must not reach E3');
+    });
+    env.api.launch();
+    env.advance(30000);
+    assert.equal(env.androidLaunches.length, 1, 'candidate/global deadline path launches current once');
+    assert.equal(handshakeCalls, 1);
+    assert.deepEqual(requests.map((entry) => entry.episode), [1, 2]);
+    assert.deepEqual(env.androidLaunches[0].parsed.playlist.map((item) => item.episode), [1]);
+    env.advance(1000);
+    assert.equal(lateActive, false, 'handshake callback after the absolute 30 s launch deadline is inactive');
+    assert.equal(env.androidLaunches.length, 1, 'late RCH ready callback cannot duplicate or mutate launch');
+    assert.deepEqual(requests.map((entry) => entry.episode), [1, 2], 'late RCH ready callback cannot retry');
+}
+
+{
+    const env = harness();
+    const seeded = seedDelayedOnline(env, 793);
+    const startedAt = env.now();
+    const savedRecord = env.storage.continue_watch_v6_7[seeded.recordKey];
+    savedRecord.online.direct_url = 'https://media.example/d793-1-fallback.m3u8';
+    savedRecord.online.items[0].direct_url = 'https://media.example/d793-1-fallback.m3u8';
+    const requests = [];
+    let currentOk;
+    let episode2Ok;
+    env.setRequestHandler(({ url, ok, timeout }) => {
+        const episode = Number(new URL(url).searchParams.get('e'));
+        requests.push({ episode, at: env.now() - startedAt, timeout });
+        if (episode === 1) currentOk = ok;
+        else if (episode === 2) episode2Ok = ok;
+        else throw new Error('E3 must remain optional inside the final sub-15 s budget');
+    });
+    env.api.launch();
+    env.setClock(startedAt + 15001);
+    currentOk({ url: 'https://media.example/d793-1-too-late.m3u8' });
+    assert.deepEqual(requests.map((entry) => entry.episode), [1, 2], 'mandatory E2 starts with the remaining 14999 ms');
+    assert.equal(requests[1].timeout, 14999, 'E2 candidate is capped by the absolute launch deadline');
+    assert.equal(env.androidLaunches.length, 0);
+    env.setClock(startedAt + 29900);
+    episode2Ok({ url: 'https://media.example/d793-2.m3u8' });
+    assert.equal(env.androidLaunches.length, 1);
+    assert.deepEqual(requests.map((entry) => entry.episode), [1, 2], 'optional E3 is not started with 100 ms remaining');
+    assert.equal(env.androidLaunches[0].parsed.url, 'https://media.example/d793-1-fallback.m3u8');
+    assert.deepEqual(env.androidLaunches[0].parsed.playlist.map((item) => item.episode), [1, 2]);
+    env.setClock(startedAt + 31000);
+    episode2Ok({ url: 'https://media.example/d793-2-late.m3u8' });
+    env.advance(0);
+    assert.equal(env.androidLaunches.length, 1, 'late duplicate E2 callback cannot relaunch or mutate the queue');
+}
+
+{
+    const env = harness();
+    const seeded = seedDelayedOnline(env, 794);
+    const startedAt = env.now();
+    const savedRecord = env.storage.continue_watch_v6_7[seeded.recordKey];
+    savedRecord.online.direct_url = 'https://media.example/d794-1-fallback.m3u8';
+    savedRecord.online.items[0].direct_url = 'https://media.example/d794-1-fallback.m3u8';
+    const requests = [];
+    let currentOk;
+    env.setRequestHandler(({ url, ok }) => {
+        requests.push(Number(new URL(url).searchParams.get('e')));
+        currentOk = ok;
+    });
+    env.api.launch();
+    env.setClock(startedAt + 30001);
+    currentOk({ url: 'https://media.example/d794-1-after-deadline.m3u8' });
+    assert.equal(env.androidLaunches.length, 1, 'stalled event loop must finalize the stored current fallback exactly once');
+    assert.deepEqual(requests, [1], 'no neighbor starts at or after the absolute launch deadline');
+    assert.equal(env.androidLaunches[0].parsed.url, 'https://media.example/d794-1-fallback.m3u8');
+    assert.deepEqual(env.androidLaunches[0].parsed.playlist.map((item) => item.episode), [1]);
+    currentOk({ rch: true, nws: 'wss://lampac.fun/rch' });
+    env.advance(0);
+    assert.equal(env.androidLaunches.length, 1, 'late success/RCH and delayed timer tasks cannot duplicate launch');
+    assert.deepEqual(requests, [1]);
 }
 
 {
@@ -885,4 +1075,4 @@ assert.equal(h.api.version, 'v6.1.6-online-rch-retry-20260902');
     h.setRequestHandler(null);
 }
 
-console.log('ContinueWatching v6.1.6: 30 fixtures passed');
+console.log('ContinueWatching v6.1.7: 35 fixtures passed');

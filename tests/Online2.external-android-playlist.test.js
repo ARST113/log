@@ -23,8 +23,91 @@ assert.equal(api.globalTimeout, 15000);
 assert.equal(api.previous, 1);
 assert.equal(api.next, 2);
 assert(source.includes("item.season && Lampa.Platform.is('android') && Lampa.Storage.field('player') !== 'inner'"));
-assert(source.includes('window.Online2RchHandshake = function(response, ready)'), 'Online2 must expose the narrow RCH compatibility hook');
+assert(source.includes('window.Online2RchHandshake = function(response, ready, isActive)'), 'Online2 must expose the guarded narrow RCH compatibility hook');
 assert(source.includes('rchRun(response, function()'), 'the hook must pass the full response to the existing RCH owner');
+
+const rchLifecycleSource = source.slice(
+  source.indexOf('  function rchActive'),
+  source.indexOf('  // --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ACCOUNT ---')
+);
+
+function rchLifecycleHarness(withNativeClient) {
+  const counters = { close: 0, create: 0, connect: 0, registry: 0, ready: 0, putScript: 0 };
+  let loaded;
+  let connected;
+  const lifecycleContext = {
+    window: {
+      nwsClient: {
+        'lampac.fun': { socket: { close() { counters.close++; } } }
+      },
+      rch_nws: {
+        'lampac.fun': { Registry(_client, callback) { counters.registry++; callback(); } }
+      }
+    },
+    Lampa: {
+      Utils: {
+        putScript(_urls, _noop, _flag, callback) { counters.putScript++; loaded = callback; }
+      }
+    }
+  };
+  if (withNativeClient) {
+    lifecycleContext.NativeWsClient = function NativeWsClient() {
+      counters.create++;
+      this.on = function(name, callback) { if (name === 'Connected') connected = callback; };
+      this.connect = function() { counters.connect++; };
+    };
+  }
+  vm.runInNewContext(`(function () { var hostkey = 'lampac.fun'; ${rchLifecycleSource} })();`, lifecycleContext);
+  return {
+    counters,
+    window: lifecycleContext.window,
+    load() { loaded(); },
+    connected() { connected('connection-id'); }
+  };
+}
+
+{
+  const lifecycle = rchLifecycleHarness(true);
+  const accepted = lifecycle.window.Online2RchHandshake(
+    { rch: true, nws: 'wss://lampac.fun/rch' },
+    () => { lifecycle.counters.ready++; },
+    () => false
+  );
+  assert.equal(accepted, false, 'already-expired handshake is rejected');
+  assert.deepEqual(lifecycle.counters, { close: 0, create: 0, connect: 0, registry: 0, ready: 0, putScript: 0 },
+    'expired handshake must not close/create a socket or invoke Registry/ready');
+}
+
+{
+  const lifecycle = rchLifecycleHarness(false);
+  let active = true;
+  const accepted = lifecycle.window.Online2RchHandshake(
+    { rch: true, nws: 'wss://lampac.fun/rch' },
+    () => { lifecycle.counters.ready++; },
+    () => active
+  );
+  assert.equal(accepted, true);
+  assert.equal(lifecycle.counters.putScript, 1);
+  active = false;
+  lifecycle.load();
+  assert.deepEqual(lifecycle.counters, { close: 0, create: 0, connect: 0, registry: 0, ready: 0, putScript: 1 },
+    'expiry during script load must prevent late rchInvoke lifecycle mutations');
+}
+
+{
+  const lifecycle = rchLifecycleHarness(true);
+  let active = true;
+  lifecycle.window.Online2RchHandshake(
+    { rch: true, nws: 'wss://lampac.fun/rch' },
+    () => { lifecycle.counters.ready++; },
+    () => active
+  );
+  assert.deepEqual(lifecycle.counters, { close: 1, create: 1, connect: 1, registry: 0, ready: 0, putScript: 0 });
+  active = false;
+  lifecycle.connected();
+  assert.equal(lifecycle.counters.registry, 0, 'expired Connected event must not invoke Registry');
+  assert.equal(lifecycle.counters.ready, 0, 'expired Connected event must not invoke ready');
+}
 
 const builderSource = source.slice(
   source.indexOf('this.buildExternalAndroidPlaylist'),
