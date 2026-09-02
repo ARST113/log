@@ -179,7 +179,7 @@ function harness() {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.1.9-builtin-lazy-resolvers-20260902');
+assert.equal(h.api.version, 'v6.1.10-online-series-index-20260902');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -1136,7 +1136,7 @@ function seedDelayedOnline(env, id) {
     h.setRequestHandler(({ url, ok }) => {
         const episode = Number(new URL(url).searchParams.get('e'));
         resolverCalls.push(episode);
-        if (episode !== 1) throw new Error('unsupported schema must stop before E2/E3 network calls');
+        if (episode !== 1) throw new Error('non-synthetic movie resolver must stop before E2/E3 network calls');
         ok({ url: 'https://media.example/lazy-801-e1.m3u8' });
     });
     const before = h.androidLaunches.length;
@@ -1621,6 +1621,229 @@ function seedDelayedOnline(env, id) {
 }
 
 {
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 9920, media_type: 'tv', title: 'Captured movie resolver', original_name: 'Captured movie resolver' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const currentUrl = 'https://lampac.fun/proxy/captured-9920-e1.m3u8';
+    const currentResolver = 'https://lampac.fun/lite/provider/movie?id=9920&s=1&e=1&t=Original';
+    const cells = [
+        { title: 'E1', url: currentUrl, season: 1, episode: 1, timeline: { hash: 'captured-9920-1' } },
+        { title: 'E2', url: function lazyResolver() {}, season: 1, episode: 2, timeline: { hash: 'captured-9920-2' } }
+    ];
+    env.setActive(movie);
+    env.setClock(7_150_000);
+    env.listeners.request_secuses[0]({ params: { url: currentResolver, headers: {} }, data: { url: currentUrl } });
+    env.Lampa.Player.play(Object.assign({}, cells[0], { card: movie, movie, isonline: true, playlist: undefined }));
+    env.Lampa.Player.playlist(cells);
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'captured-9920-1', road: { time: 90, duration: 3000, percent: 3, updated: 7_150_100 }
+    }));
+    const saved = env.storage[storageKey][recordKey];
+    assert.equal(saved.online.direct_url, '', 'transient current URL must not become the fallback');
+    assert.equal(new URL(saved.online.resolver_url).pathname, '/lite/provider/movie');
+    assert.equal(new URL(saved.online.items[0].resolver_url).pathname, '/lite/provider/movie');
+    assert.equal(saved.online.items[1].resolver_url, '', 'movie endpoint remains ineligible for neighbor synthesis');
+    const calls = [];
+    env.setRequestHandler(({ url, ok }) => {
+        calls.push(Number(new URL(url).searchParams.get('e')));
+        ok({ url: 'https://media.example/captured-9920-e1.m3u8' });
+    });
+    const before = env.androidLaunches.length;
+    env.api.launch();
+    assert.deepEqual(calls, [1], 'valid card-bound non-synthetic current resolver must still be requested');
+    assert.equal(env.androidLaunches.length, before + 1);
+    assert.deepEqual(env.androidLaunches[env.androidLaunches.length - 1].parsed.playlist.map((item) => item.episode), [1]);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 814, media_type: 'tv', title: 'GOT internal episode switch', original_name: 'Game of Thrones' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const resolver = (episode) => 'https://lampac.fun/lite/zetflix/video?id=814&s=1&e=' + episode + '&t=Fox+Life';
+    const selection = { provider: 'zetflix', translation: 'fox life' };
+    const defs = Array.from({ length: 10 }, (_value, index) => ({
+        title: index ? 'Episode ' + (index + 1) : 'Winter Is Coming',
+        season: 1, episode: index + 1, hash: 'got-switch-814-' + (index + 1),
+        resolver_url: resolver(index + 1), selection, meta: {}
+    }));
+    env.storage[storageKey] = {};
+    env.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 7_200_000,
+        season: 1, episode: 1, episode_title: 'Winter Is Coming', timeline_hash: 'got-switch-814-1',
+        time: 25, duration: 3600, percent: 1, current_index: 0,
+        online: { index: 0, resolver_url: resolver(1), selection, items: defs }
+    };
+    env.setActive(movie);
+    env.setClock(7_200_100);
+    const resolverCalls = [];
+    env.setRequestHandler(({ url, ok }) => {
+        const episode = Number(new URL(url).searchParams.get('e'));
+        resolverCalls.push(episode);
+        ok({ url: 'https://media.example/got-switch-814-e' + episode + '.m3u8' });
+    });
+    env.api.launch();
+    assert.deepEqual(resolverCalls, [1, 2, 3]);
+    resolverCalls.length = 0;
+
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'got-switch-814-2', road: { time: 30, duration: 3600, percent: 1, updated: 7_200_200 }
+    }));
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'got-switch-814-2', road: { time: 42, duration: 3600, percent: 1, updated: 7_200_300 }
+    }));
+    const saved = env.storage[storageKey][recordKey];
+    assert.equal(saved.season, 1);
+    assert.equal(saved.episode, 2);
+    assert.equal(saved.time, 42);
+    assert.equal(saved.timeline_hash, 'got-switch-814-2');
+    assert.equal(saved.current_index, 1, 'timeline E2 must map to the full definition index instead of stale session E1');
+    assert.equal(saved.online.index, 1);
+    assert.equal(new URL(saved.online.resolver_url).searchParams.get('e'), '2', 'top resolver must follow the active E2 descriptor');
+    assert.equal(new URL(saved.online.items[1].resolver_url).searchParams.get('e'), '2');
+
+    const before = env.androidLaunches.length;
+    env.api.launch();
+    assert.equal(resolverCalls[0], 2, 'repeat Continue must resolve E2 first, never stale E1');
+    assert.equal(env.androidLaunches.length, before + 1);
+    const payload = env.androidLaunches[env.androidLaunches.length - 1].parsed;
+    assert.equal(payload.episode, 2);
+    assert.equal(payload.time, 42);
+    assert.equal(payload.playlist[payload.playlist_index].episode, 2);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 815, media_type: 'tv', title: 'Corrupt online index migration', original_name: 'Corrupt online index migration' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const resolver = (episode) => 'https://lampac.fun/lite/zetflix/video?id=815&s=1&e=' + episode + '&t=Fox+Life';
+    const items = [1, 2, 3].map((episode) => ({
+        title: 'E' + episode, season: 1, episode, hash: 'corrupt-815-' + episode,
+        resolver_url: resolver(episode), selection: { provider: 'zetflix', translation: 'fox life' }, meta: {}
+    }));
+    env.storage[storageKey] = {};
+    env.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 7_300_000,
+        season: 1, episode: 2, episode_title: 'E2', timeline_hash: 'corrupt-815-2',
+        time: 42, duration: 3600, percent: 1, current_index: 0,
+        online: {
+            index: 0, resolver_url: resolver(1), selection: { provider: 'zetflix', translation: 'fox life' }, items
+        }
+    };
+    env.setActive(movie);
+    const calls = [];
+    env.setRequestHandler(({ url, ok }) => {
+        const episode = Number(new URL(url).searchParams.get('e'));
+        calls.push(episode);
+        ok({ url: 'https://media.example/corrupt-815-e' + episode + '.m3u8' });
+    });
+    env.api.launch();
+    assert.equal(calls[0], 2, 'timeline hash must migrate a stale numeric index to E2 before resolver selection');
+    const payload = env.androidLaunches[env.androidLaunches.length - 1].parsed;
+    assert.equal(payload.episode, 2);
+    assert.equal(payload.time, 42);
+    assert.equal(payload.playlist[payload.playlist_index].episode, 2);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 816, media_type: 'tv', title: 'Mismatched current resolver', original_name: 'Mismatched current resolver' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const resolverE1 = 'https://lampac.fun/lite/zetflix/video?id=816&s=1&e=1&t=Fox+Life';
+    env.storage[storageKey] = {};
+    env.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 7_310_000,
+        season: 1, episode: 2, episode_title: 'E2', timeline_hash: 'mismatch-816-2',
+        time: 42, duration: 3600, percent: 1, current_index: 0,
+        online: {
+            index: 0, resolver_url: resolverE1, selection: { provider: 'zetflix', translation: 'fox life' },
+            items: [
+                { title: 'E1', season: 1, episode: 1, hash: 'mismatch-816-1', resolver_url: resolverE1, selection: { provider: 'zetflix', translation: 'fox life' }, meta: {} },
+                { title: 'E2', season: 1, episode: 2, hash: 'mismatch-816-2', resolver_url: resolverE1, selection: { provider: 'zetflix', translation: 'fox life' }, meta: {} }
+            ]
+        }
+    };
+    env.setActive(movie);
+    let requests = 0;
+    env.setRequestHandler(() => { requests++; throw new Error('E1 resolver must not be used for active E2'); });
+    env.api.launch();
+    assert.equal(requests, 0, 'mismatched item and top resolver coordinates must fail closed');
+    assert.equal(env.androidLaunches.length, 0, 'no stale E1 URL may be launched as E2');
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 817, media_type: 'tv', title: 'Opaque top ownership', original_name: 'Opaque top ownership' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const selection = { provider: 'provider', translation: 'original' };
+    env.storage[storageKey] = {};
+    env.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 7_320_000,
+        season: 1, episode: 2, episode_title: 'E2', timeline_hash: 'opaque-817-2',
+        time: 42, duration: 3600, percent: 1, current_index: 0,
+        online: {
+            index: 0,
+            resolver_url: 'https://lampac.fun/lite/provider/video?token=e1-only&t=Original',
+            direct_url: 'https://media.example/opaque-817-e1-stale.m3u8',
+            selection,
+            items: [
+                { title: 'E1', season: 1, episode: 1, hash: 'opaque-817-1', selection, meta: {} },
+                { title: 'E2', season: 1, episode: 2, hash: 'opaque-817-2', selection, meta: {} }
+            ]
+        }
+    };
+    env.setActive(movie);
+    let requests = 0;
+    env.setRequestHandler(() => { requests++; throw new Error('stale opaque top resolver must not be requested'); });
+    env.api.launch();
+    assert.equal(requests, 0, 'migrated E2 cannot borrow an opaque resolver owned by saved index E1');
+    assert.equal(env.androidLaunches.length, 0, 'migrated E2 cannot borrow stale top direct URL owned by E1');
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 818, media_type: 'tv', title: 'Active selection ownership', original_name: 'Active selection ownership' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const original = { provider: 'zetflix', translation: 'original' };
+    const fox = { provider: 'zetflix', translation: 'fox life' };
+    const resolver = (episode, voice) => 'https://lampac.fun/lite/zetflix/video?id=818&s=1&e=' + episode + '&t=' + encodeURIComponent(voice);
+    env.storage[storageKey] = {};
+    env.storage[storageKey][recordKey] = {
+        v: 6, card_key: cardKey, source: 'online', activity_at: 7_330_000,
+        season: 1, episode: 2, episode_title: 'E2 Fox', timeline_hash: 'selection-owner-818-2',
+        time: 42, duration: 3600, percent: 1, current_index: 0,
+        online: {
+            index: 0, resolver_url: resolver(1, 'Original'), selection: original,
+            items: [
+                { title: 'E1 Original', season: 1, episode: 1, hash: 'selection-owner-818-1', resolver_url: resolver(1, 'Original'), selection: original, meta: {} },
+                { title: 'E2 Fox', season: 1, episode: 2, hash: 'selection-owner-818-2', resolver_url: resolver(2, 'Fox Life'), selection: fox, meta: {} }
+            ]
+        }
+    };
+    env.setActive(movie);
+    const calls = [];
+    env.setRequestHandler(({ url, ok }) => {
+        const parsed = new URL(url);
+        calls.push({ episode: Number(parsed.searchParams.get('e')), translation: parsed.searchParams.get('t') });
+        ok({ url: 'https://media.example/selection-owner-818-e2.m3u8' });
+    });
+    env.api.launch();
+    assert.deepEqual(calls[0], { episode: 2, translation: 'Fox Life' }, 'active E2 selection must override stale top E1 selection after index migration');
+    assert.equal(env.androidLaunches[0].parsed.episode, 2);
+}
+
+{
     const storageKey = 'continue_watch_v6_7';
     const movie = { id: 782, media_type: 'tv', title: 'Nested resolver output', original_name: 'Nested resolver output' };
     const cardKey = t.cardKey(movie);
@@ -1658,4 +1881,4 @@ function seedDelayedOnline(env, id) {
     h.setRequestHandler(null);
 }
 
-console.log('ContinueWatching v6.1.9: 47 fixtures passed');
+console.log('ContinueWatching v6.1.10: 53 fixtures passed');
