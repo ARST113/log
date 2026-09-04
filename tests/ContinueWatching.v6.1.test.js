@@ -319,7 +319,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.14-live-card-pull-20260904');
+assert.equal(h.api.version, 'v6.2.15-browser-timeline-prime-20260904');
 
 assert.deepEqual(
     t.normalizeSegments('{"duration_ms":2696000,"skip":[{"start":62,"end":152}],"ad":[{"start":0,"end":12}]}', 3697),
@@ -799,6 +799,37 @@ function seedDelayedOnline(env, id) {
         'remote activity timestamp must remain authoritative during local hydration');
     assert.equal(env.storage[storageKey][recordKey].activity_at, 2_000_075,
         'synthetic timeline hydration must not create a newer Continue record');
+}
+
+{
+    const env = harness({ androidTimelineRefresh: true });
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 7787, media_type: 'tv', title: 'Clean browser resume', original_name: 'Clean browser resume' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    env.storage[storageKey] = {
+        [recordKey]: {
+            v: 6, card_key: cardKey, source: 'online', activity_at: 2_000_085,
+            season: 1, episode: 3, episode_title: 'E3', timeline_hash: 'clean-browser-e3',
+            time: 92, duration: 2880, percent: 3, current_index: 0,
+            online: {
+                index: 0,
+                items: [{ title: 'E3', season: 1, episode: 3, hash: 'clean-browser-e3', direct_url: 'https://media.example/clean-browser-e3.m3u8', meta: {} }]
+            }
+        }
+    };
+    env.setActive(movie);
+    env.api.launch();
+    assert.equal(env.androidLaunches[0].nativePositionMs, 92000,
+        'a clean web client must hydrate its empty local Timeline from the Lampac Continue record before playback');
+    assert.equal(env.timelineUpdates.length, 1,
+        'browser Continue must prime the selected episode Timeline exactly once');
+    assert.equal(env.timelineUpdates[0].received, true,
+        'browser Timeline hydration must remain local and must not echo to CUB');
+    assert.equal(env.local.continue_watch_v6_outbox_7, undefined,
+        'browser Timeline hydration must not create a Lampac outbox entry');
+    assert.equal(env.storageSyncCalls(), 0,
+        'browser Timeline hydration marked received must not invoke CUB Storage.sync');
 }
 
 {
@@ -3987,4 +4018,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.14 regression fixtures: PASS');
+console.log('ContinueWatching v6.2.15 regression fixtures: PASS');
