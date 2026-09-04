@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.13-persistent-lampac-key-20260904';
+    var VERSION = 'v6.2.14-live-card-pull-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -12,6 +12,7 @@
     var REMOTE_PATH = 'continuewatch';
     var REMOTE_TIMEOUT = 8000;
     var REMOTE_DEBOUNCE = 650;
+    var REMOTE_FRESH_WINDOW = 1500;
     var MIN_TIME = 5;
     var SYNC_MAX = 9000;
     var EXTERNAL_SETTLE = 1500;
@@ -51,6 +52,10 @@
         remoteIdentityKey: null,
         remoteGetOk: 0,
         remoteSetOk: 0,
+        remoteFreshAt: 0,
+        remoteFreshKey: '',
+        remotePullFlight: null,
+        pendingLaunch: null,
         lampacMemoryToken: '',
         lampacMemoryScope: '',
         lampacMemoryAccount: '',
@@ -607,7 +612,7 @@
         };
     }
     function remoteContextCurrent(context) {
-        return !!context && context.generation === state.remoteGeneration && context.profile === profileId() &&
+        return runtimeCurrent() && !!context && context.generation === state.remoteGeneration && context.profile === profileId() &&
             context.identityKey === identityFingerprint(lampacIdentity());
     }
     function detectRemoteIdentityChange() {
@@ -619,12 +624,14 @@
         if (state.remoteIdentityKey === nextIdentityKey) return false;
         state.remoteIdentityKey = nextIdentityKey;
         state.remoteGeneration += 1;
+        invalidateRemoteFresh();
         seedOutboxFromStore();
         syncRemote('identity-script');
         refreshUI();
         return true;
     }
     function markRemote(action, status) {
+        if (!runtimeCurrent()) return;
         if (status === 'ok') {
             if (action === 'get') state.remoteGetOk += 1;
             if (action === 'set') state.remoteSetOk += 1;
@@ -801,6 +808,62 @@
             callback(true, document);
         }, context.getUrl);
     }
+    function remoteFreshContextKey(context) {
+        return [context.generation, context.profile, context.identityKey].map(str).join('\u001f');
+    }
+    function callRemoteFresh(callback, ok, status) {
+        try { callback(!!ok, status || (ok ? 'ok' : 'error')); } catch (e) {}
+    }
+    function invalidateRemoteFresh() {
+        state.remoteFreshAt = 0;
+        state.remoteFreshKey = '';
+        var flight = state.remotePullFlight;
+        if (!flight) return false;
+        state.remotePullFlight = null;
+        var callbacks = flight.callbacks.slice();
+        flight.callbacks.length = 0;
+        callbacks.forEach(function (queued) { callRemoteFresh(queued, false, 'stale'); });
+        return true;
+    }
+    function requestRemoteFresh(callback, force) {
+        callback = typeof callback === 'function' ? callback : function () {};
+        var context = remoteContext();
+        if (!remoteAvailable(context.identity)) {
+            callRemoteFresh(callback, false, 'disabled');
+            return false;
+        }
+        var key = remoteFreshContextKey(context);
+        if (!force && state.remoteFreshKey === key && now() - state.remoteFreshAt <= REMOTE_FRESH_WINDOW) {
+            callRemoteFresh(callback, true, 'fresh');
+            return true;
+        }
+        var currentFlight = state.remotePullFlight;
+        if (currentFlight && currentFlight.key === key) {
+            currentFlight.callbacks.push(callback);
+            return true;
+        }
+        if (currentFlight) {
+            invalidateRemoteFresh();
+            return requestRemoteFresh(callback, force);
+        }
+        var flight = { key: key, context: context, callbacks: [callback] };
+        state.remotePullFlight = flight;
+        pullRemote(function (ok) {
+            if (state.remotePullFlight !== flight) return;
+            state.remotePullFlight = null;
+            var current = remoteContextCurrent(context);
+            if (ok && current) {
+                state.remoteFreshKey = key;
+                state.remoteFreshAt = now();
+            }
+            var callbacks = flight.callbacks.slice();
+            flight.callbacks.length = 0;
+            callbacks.forEach(function (queued) {
+                callRemoteFresh(queued, ok && current, current ? (ok ? 'ok' : 'error') : 'stale');
+            });
+        });
+        return true;
+    }
     function pushRemote(records, callback, requestUrl) {
         var document = { schema: REMOTE_SCHEMA, updated_at: now(), records: remoteProjectionMaps(records) };
         remoteRequest('set', JSON.stringify(document), function (response) {
@@ -819,7 +882,11 @@
     }
     function scheduleRemoteSync(reason) {
         if (state.remoteTimer) clearTimeout(state.remoteTimer);
-        state.remoteTimer = setTimeout(function () { state.remoteTimer = null; syncRemote(reason || 'debounce'); }, REMOTE_DEBOUNCE);
+        state.remoteTimer = setTimeout(function () {
+            state.remoteTimer = null;
+            if (!runtimeCurrent()) return;
+            syncRemote(reason || 'debounce');
+        }, REMOTE_DEBOUNCE);
     }
     function syncRemote(reason) {
         var context = remoteContext();
@@ -881,6 +948,7 @@
     }
     function readOutbox() { return readOutboxByKey(outboxKey()); }
     function writeOutbox(v) {
+        if (!runtimeCurrent()) return;
         try {
             var keys = Object.keys(v || {});
             if (keys.length > 120) {
@@ -893,6 +961,7 @@
         } catch (e) {}
     }
     function queueOutbox(record) {
+        if (!runtimeCurrent()) return;
         if (!record || !record.card_key) return;
         var portableRecord = deepCopy(record) || clone(record);
         sanitizeRecordResolvers(portableRecord);
@@ -906,10 +975,12 @@
         writeOutbox(out);
     }
     function writeStoreByKey(key, v) {
+        if (!runtimeCurrent()) return;
         try { Lampa.Storage.set(key, v); } catch (e) {}
     }
     function writeStore(v) { writeStoreByKey(storageKey(), v); }
     function flushOutbox(forceWrite) {
+        if (!runtimeCurrent()) return false;
         var out = readOutbox();
         if (!Object.keys(out).length) { refreshUI(); if (forceWrite) scheduleRemoteSync('outbox'); return false; }
         var all = store();
@@ -940,10 +1011,16 @@
         return changed;
     }
     function scheduleSyncFlush() {
+        if (!runtimeCurrent()) return;
         if (state.syncFlushTimer) clearTimeout(state.syncFlushTimer);
-        state.syncFlushTimer = setTimeout(function () { state.syncFlushTimer = null; flushOutbox(true); }, 6500);
+        state.syncFlushTimer = setTimeout(function () {
+            state.syncFlushTimer = null;
+            if (!runtimeCurrent()) return;
+            flushOutbox(true);
+        }, 6500);
     }
     function seedOutboxFromStore() {
+        if (!runtimeCurrent()) return;
         var all = store();
         Object.keys(all || {}).forEach(function (key) {
             var r = all[key];
@@ -996,6 +1073,7 @@
             recordItemCount(record) < recordItemCount(old));
     }
     function saveRecord(record) {
+        if (!runtimeCurrent()) return false;
         if (!record || !record.card_key) return false;
         sanitizeRecordResolvers(record);
         compactRecord(record);
@@ -1515,6 +1593,7 @@
     }
 
     function writePending(session) {
+        if (!runtimeCurrent()) return;
         if (!session || session.source !== 'torrent') return;
         var d = torrentDescriptor(session);
         if (!d) return;
@@ -1554,14 +1633,15 @@
             return p;
         } catch (e) { return null; }
     }
-    function savePending(p) { try { localStorage.setItem(pendingKey(), JSON.stringify(p)); } catch (e) {} }
-    function clearPending() { try { localStorage.removeItem(pendingKey()); } catch (e) {} }
+    function savePending(p) { if (!runtimeCurrent()) return; try { localStorage.setItem(pendingKey(), JSON.stringify(p)); } catch (e) {} }
+    function clearPending() { if (!runtimeCurrent()) return; try { localStorage.removeItem(pendingKey()); } catch (e) {} }
     function pendingItem(p, hash) {
         if (!p || !p.torrent || !p.torrent.items) return null;
         for (var i = 0; i < p.torrent.items.length; i++) if (str(p.torrent.items[i].hash) === str(hash)) return { item: p.torrent.items[i], index: i };
         return null;
     }
     function appendPendingEvent(hash, road) {
+        if (!runtimeCurrent()) return false;
         var p = readPending();
         if (!p || !pendingItem(p, hash)) return false;
         p.events = Array.isArray(p.events) ? p.events : [];
@@ -1572,8 +1652,9 @@
         return true;
     }
     function scheduleReconcile() {
+        if (!runtimeCurrent()) return;
         if (state.settleTimer) clearTimeout(state.settleTimer);
-        state.settleTimer = setTimeout(reconcilePending, EXTERNAL_SETTLE);
+        state.settleTimer = setTimeout(function () { if (runtimeCurrent()) reconcilePending(); }, EXTERNAL_SETTLE);
     }
     function pendingSession(p) {
         if (!p || !p.torrent) return null;
@@ -1601,6 +1682,7 @@
         };
     }
     function reconcilePending() {
+        if (!runtimeCurrent()) return false;
         var p = readPending();
         if (!p || !p.torrent || !p.torrent.items) return false;
         var candidates = [];
@@ -1648,6 +1730,7 @@
     }
 
     function onTimeline(event) {
+        if (!runtimeCurrent()) return;
         var d = event && event.data ? event.data : event;
         if (!d || !d.hash || !d.road) return;
         if (state.timelinePrimeDepth) return;
@@ -1700,6 +1783,7 @@
     }
     function isPlayable(url) { return /^https?:\/\//i.test(url) && (/\/proxy(?:-dash)?\//i.test(url) || /\.(m3u8?|mpd|mp4|mkv|webm|mov|ts)(?:$|[?#])/i.test(url)); }
     function captureResolver(event) {
+        if (!runtimeCurrent()) return;
         if (!event || !event.params || !event.params.url) return;
         var data = event.data;
         if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
@@ -2097,12 +2181,18 @@
         var timer = setTimeout(function () { finish(null); }, limit);
         function finish(result) {
             if (settled) return;
+            if (!runtimeCurrent()) {
+                settled = true;
+                if (timer) clearTimeout(timer);
+                return;
+            }
             if (result && now() >= deadline) result = null;
             settled = true;
             if (timer) clearTimeout(timer);
             callback(result);
         }
         function request() {
+            if (!runtimeCurrent()) return finish(null);
             if (settled || now() >= deadline) return finish(null);
             var n = new Lampa.Reguest();
             try { n.timeout(Math.max(1, deadline - now())); } catch (e) {}
@@ -2119,10 +2209,10 @@
                         var ready = false;
                         try {
                             var accepted = handshake(d, function () {
-                                if (ready || settled) return;
+                                if (ready || settled || !runtimeCurrent()) return;
                                 ready = true;
                                 request();
-                            }, function () { return !settled && now() < deadline; });
+                            }, function () { return runtimeCurrent() && !settled && now() < deadline; });
                             if (accepted === false && !ready) finish(null);
                         } catch (e3) { finish(null); }
                         return;
@@ -2193,6 +2283,11 @@
 
         function finish() {
             if (done) return;
+            if (!runtimeCurrent()) {
+                done = true;
+                if (globalTimer) clearTimeout(globalTimer);
+                return;
+            }
             done = true;
             if (globalTimer) clearTimeout(globalTimer);
             var windowList = list.slice(first, forward + 1);
@@ -2282,6 +2377,11 @@
         var timer = saved ? setTimeout(function () { finish(saved); }, TORRENT_HASH_FALLBACK) : null;
         function finish(hash) {
             if (settled) return;
+            if (!runtimeCurrent()) {
+                settled = true;
+                if (timer) clearTimeout(timer);
+                return;
+            }
             settled = true;
             if (timer) clearTimeout(timer);
             callback(str(hash || saved || ''));
@@ -2321,8 +2421,15 @@
         });
         return list;
     }
+    function launchContextCurrent(movie) {
+        if (!runtimeCurrent()) return false;
+        var active = currentActivityMovie();
+        return !!active && cardKey(active) === cardKey(movie);
+    }
     function launchTorrent(movie, record) {
+        if (!launchContextCurrent(movie)) return;
         ensureTorrent(record, movie, function (hash) {
+            if (!launchContextCurrent(movie)) return;
             var list = rebuildTorrent(record, movie, hash);
             if (!list.length) return noty('Не удалось восстановить торрент-плейлист');
             var idx = Math.max(0, Math.min(list.length - 1, num(record.current_index)));
@@ -2351,11 +2458,13 @@
         });
     }
     function launchOnline(movie, record) {
+        if (!launchContextCurrent(movie)) return;
         diagnosticMarkerAttr('data-cw-launch-stage', 'launch-online');
         diagnosticMarkerAttr('data-cw-launch-version', VERSION);
         var launchDeadline = now() + ONLINE_LAUNCH_DEADLINE;
         onlineNoty('CONTINUE S' + num(record.season) + 'E' + num(record.episode) + ' ' + formatTime(record.time));
         resolveOnline(record, movie, function (resolved) {
+            if (!launchContextCurrent(movie)) return;
             var online = record.online || {};
             var defs = Array.isArray(online.items) && online.items.length ? online.items : [{
                 title: record.episode_title || record.title, season: record.season, episode: record.episode,
@@ -2412,6 +2521,7 @@
             if (resolved && resolved.data) applyMeta(d, playbackMeta(resolved.data));
             list[idx] = deepCopy(d) || clone(d);
             prepareOnlineWindow(defs, list, idx, d.online_selection, launchDeadline, function (prepared) {
+                if (!launchContextCurrent(movie)) return;
                 diagnosticMarkerAttr('data-cw-launch-stage', 'playlist-prepared');
                 d.playlist_index = prepared.index; d.start_index = prepared.index;
                 if (prepared.list[prepared.index]) prepared.list[prepared.index].start_index = prepared.index;
@@ -2448,6 +2558,34 @@
         if (r.source === 'online' && r.online) return launchOnline(movie, r);
         noty('Неизвестный источник продолжения');
     }
+    function launchFresh(movie) {
+        var key = cardKey(movie);
+        if (!key) { launch(movie); return false; }
+        if (state.pendingLaunch && state.pendingLaunch.key === key) return false;
+        var ticket = { key: key, movie: movie, retries: 0 };
+        state.pendingLaunch = ticket;
+        function afterPull(_ok, status) {
+            if (state.pendingLaunch !== ticket) return;
+            if (!runtimeCurrent()) {
+                state.pendingLaunch = null;
+                return;
+            }
+            var active = currentActivityMovie();
+            if (!active || cardKey(active) !== ticket.key) {
+                state.pendingLaunch = null;
+                return;
+            }
+            if (status === 'stale' && ticket.retries < 2) {
+                ticket.retries += 1;
+                requestRemoteFresh(afterPull, true);
+                return;
+            }
+            state.pendingLaunch = null;
+            launch(movie);
+        }
+        requestRemoteFresh(afterPull, false);
+        return false;
+    }
     function noty(s) { try { if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(s); } catch (e) {} }
 
     function patchTorrent() {
@@ -2465,6 +2603,7 @@
         state.torrentPatched = true;
     }
     function hydrateOnlinePlaylist(input) {
+        if (!runtimeCurrent()) return false;
         var session = state.session;
         if (!session || session.source !== 'online') return false;
         var hadPlaylist = !!session.playlist.length;
@@ -2515,6 +2654,7 @@
         return true;
     }
     function capturePlayerSession(data) {
+        if (!runtimeCurrent()) return null;
         data = data || {};
         if (state.playerCaptureData === data && now() - state.playerCaptureAt < 1000) return state.session;
         state.playerCaptureData = data;
@@ -2536,6 +2676,7 @@
         if (!state.playerListenerPatched && Lampa.Player.listener && Lampa.Player.listener.follow) {
             try {
                 Lampa.Player.listener.follow('create', function (event) {
+                    if (!runtimeCurrent()) return;
                     capturePlayerSession(event && event.data ? event.data : event);
                 });
                 state.playerListenerPatched = true;
@@ -2544,6 +2685,7 @@
         if (!state.playerExternalListenerPatched && Lampa.Player.listener && Lampa.Player.listener.follow) {
             try {
                 Lampa.Player.listener.follow('external', function (event) {
+                    if (!runtimeCurrent()) return;
                     if (!isAndroidPlatform()) return;
                     var session = capturePlayerSession(event && event.data ? event.data : event);
                     if (!session) return;
@@ -2556,7 +2698,7 @@
         if (!state.playerPatched && typeof Lampa.Player.play === 'function') {
             var old = Lampa.Player.play;
             Lampa.Player.play = function (data) {
-                capturePlayerSession(data || {});
+                if (runtimeCurrent()) capturePlayerSession(data || {});
                 return old.apply(this, arguments);
             };
             Lampa.Player.__cw6_patched = VERSION;
@@ -2565,7 +2707,9 @@
         if (!state.playerPlaylistPatched && typeof Lampa.Player.playlist === 'function') {
             var oldPlaylist = Lampa.Player.playlist;
             Lampa.Player.playlist = function (list) {
-                try { hydrateOnlinePlaylist(list); } catch (e) { try { console.warn('[CW6] playlist capture failed', e); } catch (ee) {} }
+                if (runtimeCurrent()) {
+                    try { hydrateOnlinePlaylist(list); } catch (e) { try { console.warn('[CW6] playlist capture failed', e); } catch (ee) {} }
+                }
                 return oldPlaylist.apply(this, arguments);
             };
             Lampa.Player.__cw6_playlist_patched = VERSION;
@@ -2743,7 +2887,7 @@
             state.buttonLaunchAt = now();
             diagnosticMarkerAttr('data-cw-launch-stage', stage);
             diagnosticMarkerAttr('data-cw-launch-version', VERSION);
-            launch(movie); return false;
+            launchFresh(movie); return false;
         }
         function go(e) {
             if (e) {
@@ -2793,7 +2937,7 @@
                 diagnosticMarkerAttr('data-cw-launch-stage', 'capture-click');
                 diagnosticMarkerAttr('data-cw-launch-version', VERSION);
                 var movie = currentActivityMovie() || state.lastMovie;
-                if (movie) launch(movie);
+                if (movie) launchFresh(movie);
                 return false;
             };
             window.addEventListener('pointerdown', pointerHandler, true);
@@ -2844,6 +2988,7 @@
     }
 
     function install() {
+        if (!runtimeCurrent()) return;
         if (state.installed) return;
         state.installed = true;
         state.remoteIdentityKey = identityFingerprint(lampacIdentity());
@@ -2855,6 +3000,7 @@
         try {
             if (Lampa.Storage && Lampa.Storage.listener && Lampa.Storage.listener.follow) {
                 Lampa.Storage.listener.follow('change', function (e) {
+                    if (!runtimeCurrent()) return;
                     if (!e) return;
                     if (e.name === storageKey()) refreshUI();
                     if (e.name === 'plugins' || e.name === 'account_plugins') {
@@ -2863,28 +3009,37 @@
                     if (e.name === 'account' || e.name === 'account_email' || e.name === 'lampac_unic_id' || e.name === 'lampac_profile_id') {
                         state.remoteIdentityKey = identityFingerprint(lampacIdentity());
                         state.remoteGeneration += 1;
-                        setTimeout(function () { seedOutboxFromStore(); flushOutbox(true); syncRemote('identity'); refreshUI(); }, 5500);
+                        invalidateRemoteFresh();
+                        setTimeout(function () {
+                            if (!runtimeCurrent()) return;
+                            seedOutboxFromStore(); flushOutbox(true); syncRemote('identity'); refreshUI();
+                        }, 5500);
                     }
                 });
             }
         } catch (eStorage) {}
         try {
             Lampa.Listener.follow('full', function (e) {
+                if (!runtimeCurrent()) return;
                 var m = eventMovie(e) || currentActivityMovie();
                 var root = cardRoot(e && e.body);
                 if (m) state.lastMovie = m;
+                if (m && e && e.type === 'start') {
+                    if (state.pendingLaunch && state.pendingLaunch.key !== cardKey(m)) state.pendingLaunch = null;
+                    requestRemoteFresh(function () { if (runtimeCurrent()) refreshUI(m, root); }, true);
+                }
                 setTimeout(function () { refreshUI(m, root); }, 100);
                 setTimeout(function () { refreshUI(m, root); }, 500);
             });
         } catch (e3) {}
-        try { window.addEventListener('focus', function () { scheduleReconcile(); syncRemote('focus'); refreshUI(); }); } catch (e4) {}
-        try { document.addEventListener('visibilitychange', function () { if (document.visibilityState !== 'hidden') { scheduleReconcile(); syncRemote('visibility'); refreshUI(); } }); } catch (e5) {}
+        try { window.addEventListener('focus', function () { if (!runtimeCurrent()) return; scheduleReconcile(); syncRemote('focus'); refreshUI(); }); } catch (e4) {}
+        try { document.addEventListener('visibilitychange', function () { if (!runtimeCurrent()) return; if (document.visibilityState !== 'hidden') { scheduleReconcile(); syncRemote('visibility'); refreshUI(); } }); } catch (e5) {}
         try { if (window.__CW6_REFRESH_INTERVAL__) clearInterval(window.__CW6_REFRESH_INTERVAL__); } catch (eInterval) {}
-        window.__CW6_REFRESH_INTERVAL__ = setInterval(function () { patchTorrent(); patchPlayer(); detectRemoteIdentityChange(); refreshUI(); }, 1800);
-        setTimeout(reconcilePending, 1000);
+        window.__CW6_REFRESH_INTERVAL__ = setInterval(function () { if (!runtimeCurrent()) return; patchTorrent(); patchPlayer(); detectRemoteIdentityChange(); refreshUI(); }, 1800);
+        setTimeout(function () { if (runtimeCurrent()) reconcilePending(); }, 1000);
         syncRemote('install');
-        setTimeout(function () { flushOutbox(true); syncRemote('recovery'); refreshUI(); }, 7500);
-        setTimeout(function () { flushOutbox(true); syncRemote('recovery'); refreshUI(); }, 17000);
+        setTimeout(function () { if (!runtimeCurrent()) return; flushOutbox(true); syncRemote('recovery'); refreshUI(); }, 7500);
+        setTimeout(function () { if (!runtimeCurrent()) return; flushOutbox(true); syncRemote('recovery'); refreshUI(); }, 17000);
 
         window.ContinueWatchV6 = {
             version: VERSION,
@@ -2919,6 +3074,8 @@
                 lampacStorageUrl: lampacStorageUrl,
                 mergeRecordMaps: mergeRecordMaps,
                 pullRemote: pullRemote,
+                requestRemoteFresh: requestRemoteFresh,
+                launchFresh: launchFresh,
                 pushRemote: pushRemote,
                 syncRemote: syncRemote
             };

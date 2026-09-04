@@ -319,7 +319,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.13-persistent-lampac-key-20260904');
+assert.equal(h.api.version, 'v6.2.14-live-card-pull-20260904');
 
 assert.deepEqual(
     t.normalizeSegments('{"duration_ms":2696000,"skip":[{"start":62,"end":152}],"ad":[{"start":0,"end":12}]}', 3697),
@@ -3130,6 +3130,367 @@ function syncRecord(env, id, activityAt, itemCount) {
 
 {
     const env = harness({
+        scripts: ['https://lampac.fun/sync/js/nast'],
+        androidPlatform: true,
+        player: 'android'
+    });
+    const local = syncRecord(env, 940, 3_400_000, 3);
+    local.value.season = 1;
+    local.value.episode = 2;
+    local.value.episode_title = 'E2';
+    local.value.timeline_hash = local.value.online.items[1].hash;
+    local.value.time = 50.571;
+    local.value.duration = 2880.405;
+    local.value.percent = 1;
+    local.value.current_index = 1;
+    local.value.online.index = 1;
+    local.value.online.resolver_url = local.value.online.items[1].resolver_url;
+    env.storage.continue_watch_v6_7 = { [local.key]: JSON.parse(JSON.stringify(local.value)) };
+    env.setActive(local.movie);
+
+    const remote = JSON.parse(JSON.stringify(local.value));
+    remote.activity_at = 3_400_100;
+    remote.season = 1;
+    remote.episode = 3;
+    remote.episode_title = 'E3';
+    remote.timeline_hash = remote.online.items[2].hash;
+    remote.time = 92.272333;
+    remote.percent = 3;
+    remote.current_index = 2;
+    remote.online.index = 2;
+    remote.online.resolver_url = remote.online.items[2].resolver_url;
+    let postCount = 0;
+    let resolverCount = 0;
+    let heldGet = null;
+    env.setRequestHandler(({ url, post, ok }) => {
+        if (post) {
+            postCount += 1;
+            return ok({ success: true });
+        }
+        if (new URL(url).pathname !== '/storage/get') {
+            resolverCount += 1;
+            return ok({ url: 'https://media.example/live-card-e3.m3u8' });
+        }
+        if (!heldGet) {
+            heldGet = { ok };
+            return;
+        }
+        return ok({
+            schema: 1,
+            updated_at: 3_400_100,
+            records: { [local.key]: remote }
+        });
+    });
+
+    const beforeOpen = env.requests.length;
+    const fullListener = (env.listeners.full || [])[env.listeners.full.length - 1];
+    fullListener({ type: 'start', data: { movie: local.movie } });
+    const openRequests = env.requests.slice(beforeOpen);
+    assert.equal(openRequests.filter((request) => !request.post).length, 1,
+        'opening a card must immediately start a read-only Lampac freshness pull');
+    assert.ok(heldGet, 'the card freshness GET must be observable while it is in flight');
+
+    const clickListeners = env.listeners['window:click'] || [];
+    const clickEvent = {
+        target: { closest(selector) { return selector === '.cw6-button' ? {} : null; } },
+        preventDefault() {},
+        stopPropagation() {},
+        stopImmediatePropagation() {}
+    };
+    clickListeners[clickListeners.length - 1](clickEvent);
+    env.advance(1_000);
+    clickListeners[clickListeners.length - 1](clickEvent);
+    assert.equal(resolverCount, 0,
+        'Continue must not resolve the stale local episode while the card pull is in flight');
+    assert.equal(env.androidLaunches.length, 0,
+        'Continue must wait for the in-flight Lampac response before launching');
+
+    heldGet.ok({
+        schema: 1,
+        updated_at: 3_400_100,
+        records: { [local.key]: remote }
+    });
+    assert.equal(postCount, 0,
+        'a newer remote card record must not be written back during card hydration');
+    assert.equal(env.api.record().episode, 3);
+    assert.equal(env.api.record().current_index, 2);
+    assert.equal(env.api.record().time, 92.272333,
+        'the visible client must replace its stale local Continue position before launch');
+    assert.ok(resolverCount > 0, 'the hydrated episode must resolve only after the remote response');
+    assert.equal(env.androidLaunches.length, 1,
+        'repeated Continue clicks during one freshness pull must produce exactly one launch');
+    assert.equal(env.androidLaunches[0].parsed.episode, 3);
+    assert.equal(env.androidLaunches[0].parsed.time, 92.272333);
+
+    const afterStart = env.requests.length;
+    fullListener({ type: 'build', data: { movie: local.movie } });
+    fullListener({ type: 'complite', data: { movie: local.movie } });
+    env.advance(650);
+    assert.equal(env.requests.length, afterStart,
+        'non-start full lifecycle events must not create a Lampac GET storm');
+}
+
+{
+    const env = harness({
+        scripts: ['https://lampac.fun/sync/js/arx.lamp'],
+        androidPlatform: true,
+        player: 'android'
+    });
+    const local = syncRecord(env, 947, 3_600_000, 2);
+    env.storage.continue_watch_v6_7 = { [local.key]: JSON.parse(JSON.stringify(local.value)) };
+    env.setActive(local.movie);
+    const remoteTol = JSON.parse(JSON.stringify(local.value));
+    remoteTol.activity_at = 3_600_100;
+    remoteTol.episode = 2;
+    remoteTol.episode_title = 'E2';
+    remoteTol.timeline_hash = remoteTol.online.items[1].hash;
+    remoteTol.time = 77;
+    remoteTol.current_index = 1;
+    remoteTol.online.index = 1;
+    remoteTol.online.resolver_url = remoteTol.online.items[1].resolver_url;
+    let heldArxGet = null;
+    let tolGets = 0;
+    env.setRequestHandler(({ url, post, ok }) => {
+        if (post) return ok({ success: true });
+        const parsed = new URL(url);
+        if (parsed.pathname !== '/storage/get') return ok({ url: 'https://media.example/key-switch-e2.m3u8' });
+        const token = parsed.searchParams.get('token');
+        if (token === 'arx.lamp' && !heldArxGet) { heldArxGet = ok; return; }
+        if (token === 'tol') {
+            tolGets += 1;
+            return ok({ schema: 1, updated_at: 3_600_100, records: { [local.key]: remoteTol } });
+        }
+        return ok({ schema: 1, updated_at: 0, records: {} });
+    });
+    const fullListener = (env.listeners.full || [])[env.listeners.full.length - 1];
+    fullListener({ type: 'start', data: { movie: local.movie } });
+    assert.ok(heldArxGet, 'the old-key card GET must be in flight before the key switch');
+    const clickListeners = env.listeners['window:click'] || [];
+    clickListeners[clickListeners.length - 1]({
+        target: { closest(selector) { return selector === '.cw6-button' ? {} : null; } },
+        preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {}
+    });
+    env.storage.plugins = [{ url: 'https://lampac.fun/sync/js/tol', status: 1 }];
+    env.dispatchStorageChange('plugins');
+    assert.ok(tolGets >= 1,
+        'changing the Lampac key must immediately replace an obsolete in-flight card pull');
+    assert.equal(env.androidLaunches.length, 1,
+        'a Continue click waiting on the old key must resume from the newly selected key');
+    assert.equal(env.androidLaunches[0].parsed.episode, 2);
+    assert.equal(env.androidLaunches[0].parsed.time, 77);
+    heldArxGet({ schema: 1, updated_at: 3_600_200, records: {} });
+    assert.equal(env.androidLaunches.length, 1,
+        'the eventual old-key response must not produce a second launch');
+}
+
+{
+    const env = harness({
+        scripts: ['https://lampac.fun/sync/js/nast'],
+        androidPlatform: true,
+        player: 'android'
+    });
+    const cardA = syncRecord(env, 948, 3_610_000, 1);
+    const cardB = syncRecord(env, 949, 3_610_100, 1);
+    env.storage.continue_watch_v6_7 = {
+        [cardA.key]: JSON.parse(JSON.stringify(cardA.value)),
+        [cardB.key]: JSON.parse(JSON.stringify(cardB.value))
+    };
+    env.setActive(cardA.movie);
+    let heldGet = null;
+    env.setRequestHandler(({ url, post, ok }) => {
+        if (post) return ok({ success: true });
+        if (new URL(url).pathname !== '/storage/get') return ok({ url: 'https://media.example/stale-card.m3u8' });
+        if (!heldGet) { heldGet = ok; return; }
+        return ok({ schema: 1, updated_at: 3_610_100, records: {} });
+    });
+    const fullListener = (env.listeners.full || [])[env.listeners.full.length - 1];
+    fullListener({ type: 'start', data: { movie: cardA.movie } });
+    const clickListeners = env.listeners['window:click'] || [];
+    clickListeners[clickListeners.length - 1]({
+        target: { closest(selector) { return selector === '.cw6-button' ? {} : null; } },
+        preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {}
+    });
+    env.setActive(cardB.movie);
+    fullListener({ type: 'start', data: { movie: cardB.movie } });
+    heldGet({ schema: 1, updated_at: 3_610_100, records: {} });
+    assert.equal(env.androidLaunches.length, 0,
+        'a delayed freshness response must not launch a card the user has already left');
+}
+
+{
+    const env = harness({
+        scripts: ['https://lampac.fun/sync/js/nast'],
+        androidPlatform: true,
+        player: 'android'
+    });
+    const card = syncRecord(env, 950, 3_620_000, 1);
+    env.storage.continue_watch_v6_7 = { [card.key]: JSON.parse(JSON.stringify(card.value)) };
+    env.setActive(card.movie);
+    let heldGet = null;
+    env.setRequestHandler(({ url, post, ok }) => {
+        if (post) return ok({ success: true });
+        if (new URL(url).pathname !== '/storage/get') return ok({ url: 'https://media.example/left-card.m3u8' });
+        if (!heldGet) { heldGet = ok; return; }
+        return ok({ schema: 1, updated_at: 0, records: {} });
+    });
+    const fullListener = (env.listeners.full || [])[env.listeners.full.length - 1];
+    fullListener({ type: 'start', data: { movie: card.movie } });
+    const clickListeners = env.listeners['window:click'] || [];
+    clickListeners[clickListeners.length - 1]({
+        target: { closest(selector) { return selector === '.cw6-button' ? {} : null; } },
+        preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {}
+    });
+    env.setActive(null);
+    env.advance(8_000);
+    assert.equal(env.androidLaunches.length, 0,
+        'a freshness timeout must not launch after the user has left the card for the menu');
+    heldGet({ schema: 1, updated_at: 3_620_100, records: {} });
+    assert.equal(env.androidLaunches.length, 0,
+        'a late response must remain inert after the user has left the card');
+}
+
+{
+    const env = harness({ androidPlatform: true, playerTorrent: 'android' });
+    const movie = { id: 951, media_type: 'tv', title: 'Stale timeline runtime', original_name: 'Stale timeline runtime' };
+    const item = {
+        torrent_hash: 'stale-runtime-torrent', file_name: 'S01E01.mkv', file_index: 0,
+        season: 1, episode: 1,
+        url: 'http://127.0.0.1:8090/stream/S01E01.mkv?link=stale-runtime-torrent&index=0&play',
+        timeline: { hash: 'stale-runtime-e1', time: 0, duration: 3000, percent: 0 }
+    };
+    env.setActive(movie);
+    env.Lampa.Player.play(Object.assign({}, item, {
+        card: movie, movie, playlist: [item], playlist_index: 0
+    }));
+    const staleTimelineListener = env.timelineListeners[0];
+    const pendingKey = 'continue_watch_v6_pending_7';
+    const outboxKey = 'continue_watch_v6_outbox_7';
+    const pendingBefore = env.local[pendingKey];
+    const storeBefore = JSON.stringify(env.storage.continue_watch_v6_7 || {});
+    const outboxBefore = env.local[outboxKey];
+    env.reloadPlugin('v6.2.14-stale-timeline-probe');
+    staleTimelineListener({
+        hash: 'stale-runtime-e1',
+        road: { time: 42, duration: 3000, percent: 1, updated: 3_630_100 }
+    });
+    env.advance(1_500);
+    assert.equal(env.local[pendingKey], pendingBefore,
+        'a Timeline listener retained from an old runtime must not append or clear pending progress');
+    assert.equal(JSON.stringify(env.storage.continue_watch_v6_7 || {}), storeBefore,
+        'a Timeline listener retained from an old runtime must not mutate the current local store');
+    assert.equal(env.local[outboxKey], outboxBefore,
+        'a Timeline listener retained from an old runtime must not mutate the current outbox');
+}
+
+{
+    const env = harness({ androidPlatform: true, player: 'android' });
+    const online = syncRecord(env, 952, 3_640_000, 1);
+    env.storage.continue_watch_v6_7 = { [online.key]: JSON.parse(JSON.stringify(online.value)) };
+    env.setActive(online.movie);
+    let heldResolver = null;
+    env.setRequestHandler(({ ok }) => { if (!heldResolver) heldResolver = ok; });
+    env.api.launch();
+    assert.ok(heldResolver, 'the old runtime online resolver must remain in flight for the reload regression');
+    env.reloadPlugin('v6.2.14-stale-online-launch-probe');
+    heldResolver({ url: 'https://media.example/stale-runtime-online.m3u8' });
+    assert.equal(env.androidLaunches.length, 0,
+        'an online resolver callback owned by the previous runtime must not open the player');
+}
+
+{
+    const env = harness({ androidPlatform: true, playerTorrent: 'android' });
+    const movie = { id: 953, media_type: 'tv', title: 'Stale torrent launch', original_name: 'Stale torrent launch' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    env.storage.continue_watch_v6_7 = {
+        [recordKey]: {
+            v: 6, card_key: cardKey, source: 'torrent', activity_at: 3_650_000,
+            season: 1, episode: 1, episode_title: 'E1', timeline_hash: 'stale-torrent-e1',
+            time: 60, duration: 3000, percent: 2, current_index: 0,
+            torrent: {
+                hash: 'saved-stale-hash', magnet: 'magnet:?xt=urn:btih:stale-runtime', index: 0,
+                items: [{
+                    file_id: 0, file_name: 'S01E01.mkv', title: 'E1', season: 1, episode: 1,
+                    hash: 'stale-torrent-e1', meta: {}
+                }]
+            }
+        }
+    };
+    let heldHash = null;
+    env.Lampa.Torserver = {
+        hash(_params, ok) { heldHash = ok; },
+        stream(fileName, hash, fileId) { return 'http://127.0.0.1:8090/stream/' + fileName + '?link=' + hash + '&index=' + fileId; },
+        toPlayUrl(url) { return url; }
+    };
+    env.setActive(movie);
+    env.api.launch();
+    assert.ok(heldHash, 'the old runtime torrent hash resolver must remain in flight for the reload regression');
+    env.reloadPlugin('v6.2.14-stale-torrent-launch-probe');
+    heldHash({ hash: 'resolved-stale-hash' });
+    assert.equal(env.androidLaunches.length, 0,
+        'a torrent hash callback owned by the previous runtime must not open the player');
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
+    const local = syncRecord(env, 944, 9_000_000, 2);
+    local.value.episode = 2;
+    local.value.time = 240;
+    local.value.current_index = 1;
+    local.value.online.index = 1;
+    local.value.timeline_hash = local.value.online.items[1].hash;
+    const remote = syncRecord(env, 944, 8_000_000, 2);
+    remote.value.episode = 1;
+    remote.value.time = 30;
+    env.storage.continue_watch_v6_7 = { [local.key]: JSON.parse(JSON.stringify(local.value)) };
+    env.setActive(local.movie);
+    let getCount = 0;
+    let postCount = 0;
+    env.setRequestHandler(({ post, ok }) => {
+        if (post) { postCount += 1; return ok({ success: true }); }
+        getCount += 1;
+        return ok({ schema: 1, updated_at: 8_000_000, records: { [remote.key]: remote.value } });
+    });
+    const fullListener = (env.listeners.full || [])[env.listeners.full.length - 1];
+    fullListener({ type: 'start', data: { movie: local.movie } });
+    assert.equal(getCount, 1, 'card hydration must perform exactly one Lampac GET');
+    assert.equal(postCount, 0,
+        'opening a card must remain read-only even when the local clock makes stale local data look newer');
+    assert.equal(env.api.record().episode, 2);
+    assert.equal(env.api.record().time, 240);
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    const local = syncRecord(env, 945, 3_500_000, 1);
+    const staleRuntimeRemote = syncRecord(env, 946, 3_500_100, 1);
+    env.storage.continue_watch_v6_7 = { [local.key]: JSON.parse(JSON.stringify(local.value)) };
+    let heldGet = null;
+    env.setRequestHandler(({ post, ok }) => {
+        if (post) return ok({ success: true });
+        if (!heldGet) { heldGet = ok; return; }
+        return ok({ schema: 1, updated_at: 0, records: {} });
+    });
+    env.api.testing.syncRemote('old-runtime-in-flight');
+    assert.ok(heldGet, 'the old runtime GET must remain in flight for the hot-reload regression');
+    env.reloadPlugin('v6.2.14-hot-reload-inflight-probe');
+    const requestCountAfterReload = env.requests.length;
+    const postCountAfterReload = env.requests.filter((request) => request.post).length;
+    heldGet({
+        schema: 1,
+        updated_at: 3_500_100,
+        records: { [staleRuntimeRemote.key]: staleRuntimeRemote.value }
+    });
+    assert.deepEqual(Object.keys(env.storage.continue_watch_v6_7), [local.key],
+        'an in-flight GET owned by the previous runtime must not mutate local Continue data');
+    assert.equal(env.requests.filter((request) => request.post).length, postCountAfterReload,
+        'an in-flight GET owned by the previous runtime must not add a POST after hot reload');
+    assert.equal(env.requests.length, requestCountAfterReload,
+        'retiring the old runtime must not add a request while its stale callback unwinds');
+}
+
+{
+    const env = harness({
         scripts: ['https://lampac.fun/sync/js/arx.lamp'],
         androidPlatform: true,
         player: 'android'
@@ -3626,4 +3987,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.13 regression fixtures: PASS');
+console.log('ContinueWatching v6.2.14 regression fixtures: PASS');
