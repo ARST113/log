@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.1-lampac-key-sync-20260904';
+    var VERSION = 'v6.2.2-lampac-key-sync-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -288,7 +288,7 @@
             var request = new Lampa.Reguest();
             try { request.timeout(REMOTE_TIMEOUT); } catch (e) {}
             request.native(requestUrl || lampacStorageUrl(action), function (data) { finish(data); }, function () { finish(null); },
-                action === 'set', action === 'set' ? body : undefined);
+                action === 'set' ? body : false);
         } catch (e2) { finish(null); }
     }
     function parseRemoteDocument(value) {
