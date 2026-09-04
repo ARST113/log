@@ -325,7 +325,8 @@
             var normalized = str(childKey).toLowerCase();
             if (normalized === 'token' || normalized === 'account_email' || normalized === 'uid' ||
                 normalized === 'nws_id' || normalized === 'aesgcmkey' || normalized === 'headers' ||
-                normalized === 'resolver_headers' || normalized === 'rch' || normalized === 'rch_body') {
+                normalized === 'authorization' || normalized === 'account' || normalized === 'resolver_headers' ||
+                normalized === 'rch' || normalized === 'rch_body') {
                 delete value[childKey];
                 return;
             }
@@ -1293,7 +1294,8 @@
         try {
             u.searchParams.forEach(function (_value, key) {
                 var normalized = str(key).toLowerCase();
-                if (normalized === 'account_email' || normalized === 'uid' || normalized === 'nws_id') remove.push(key);
+                if (normalized === 'authorization' || normalized === 'account' || normalized === 'headers' ||
+                    normalized === 'account_email' || normalized === 'uid' || normalized === 'nws_id') remove.push(key);
             });
             remove.forEach(function (key) { u.searchParams.delete(key); });
         } catch (e) {}
@@ -1304,7 +1306,9 @@
         try {
             u.searchParams.forEach(function (_value, key) {
                 var normalized = str(key).toLowerCase();
-                if (normalized === 'token' || normalized === 'aesgcmkey') remove.push(key);
+                if (normalized === 'token' || normalized === 'aesgcmkey' || normalized === 'authorization' ||
+                    normalized === 'account' || normalized === 'headers' || normalized === 'account_email' ||
+                    normalized === 'uid' || normalized === 'nws_id') remove.push(key);
             });
             remove.forEach(function (key) { u.searchParams.delete(key); });
         } catch (e) {}
