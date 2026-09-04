@@ -1,10 +1,15 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.1.10-online-series-index-20260902';
+    var VERSION = 'v6.2.0-lampac-storage-sync-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
+    var LAMPAC_BASE = 'https://lampac.fun';
+    var REMOTE_SCHEMA = 1;
+    var REMOTE_PATH = 'continuewatch';
+    var REMOTE_TIMEOUT = 8000;
+    var REMOTE_DEBOUNCE = 650;
     var MIN_TIME = 5;
     var SYNC_MAX = 9000;
     var EXTERNAL_SETTLE = 1500;
@@ -31,8 +36,10 @@
         playerPlaylistPatched: false,
         torrentPatched: false,
         installed: false,
-        syncKeys: {},
         syncFlushTimer: null,
+        remoteBusy: false,
+        remoteQueued: false,
+        remoteTimer: null,
         controllerNode: null,
         controllerState: '',
         onlineLaunchSeed: null
@@ -186,26 +193,213 @@
         return m || state.lastMovie;
     }
     function profileId() {
+        try {
+            var configured = str(Lampa.Storage.get('lampac_profile_id', '')).trim();
+            if (configured) return configured;
+        } catch (e0) {}
         var a = null;
         try { a = Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.account; } catch (e) {}
         try { if (!a) a = Lampa.Storage.get('account', {}); } catch (e2) {}
         if (a && a.profile && a.profile.id !== undefined && a.profile.id !== null && a.profile.id !== '') return str(a.profile.id);
-        return 'guest';
+        return 'default';
     }
+    function remoteProfileId() { return profileId(); }
     function storageKey() { return STORAGE_BASE + '_' + profileId(); }
     function pendingKey() { return PENDING_BASE + '_' + profileId(); }
     function outboxKey() { return OUTBOX_BASE + '_' + profileId(); }
-    function ensureSync() {
-        if (profileId() === 'guest') return;
-        var key = storageKey();
-        if (state.syncKeys[key]) return;
+    function discoverLampacToken() {
+        var scripts = [];
+        try { scripts = document && document.scripts ? document.scripts : []; } catch (e) {}
+        for (var i = 0; i < scripts.length; i++) {
+            try {
+                var src = str(scripts[i] && scripts[i].src);
+                var u = new URL(src, location.href);
+                if (str(u.hostname).toLowerCase() !== 'lampac.fun') continue;
+                var pathMatch = u.pathname.match(/^\/sync\/js\/([^/]+)$/i);
+                var token = pathMatch ? decodeURIComponent(pathMatch[1]) :
+                    (u.pathname === '/sync.js' ? str(u.searchParams.get('token') || '') : '');
+                token = str(token).trim();
+                if (token) return token;
+            } catch (e2) {}
+        }
+        return '';
+    }
+    function lampacIdentity() {
+        var identity = { token: discoverLampacToken(), account_email: '', uid: '', profile_id: remoteProfileId() };
+        try { identity.account_email = str(Lampa.Storage.get('account_email', '')).trim(); } catch (e) {}
+        try { identity.uid = str(Lampa.Storage.get('lampac_unic_id', '')).trim(); } catch (e2) {}
+        return identity;
+    }
+    function lampacStorageUrl(action) {
+        var identity = lampacIdentity();
+        var u = new URL('/storage/' + (action === 'set' ? 'set' : 'get'), LAMPAC_BASE);
+        u.searchParams.set('path', REMOTE_PATH);
+        u.searchParams.set('pathfile', STORAGE_BASE + '_' + remoteProfileId());
+        u.searchParams.set('profile_id', identity.profile_id);
+        if (identity.token) u.searchParams.set('token', identity.token);
+        if (identity.account_email) u.searchParams.set('account_email', identity.account_email);
+        if (identity.uid) u.searchParams.set('uid', identity.uid);
+        return u.toString();
+    }
+    function remoteAvailable() {
+        var identity = lampacIdentity();
+        return !!(identity.token || identity.account_email || identity.uid);
+    }
+    function remoteRequest(action, body, callback) {
+        var settled = false;
+        var timer = null;
+        function finish(value) {
+            if (settled) return;
+            settled = true;
+            if (timer) clearTimeout(timer);
+            callback(value);
+        }
+        if (!remoteAvailable() || !Lampa.Reguest) return finish(null);
+        timer = setTimeout(function () { finish(null); }, REMOTE_TIMEOUT);
         try {
-            Lampa.Storage.sync(key, 'object_object');
-            state.syncKeys[key] = true;
-        } catch (e) {}
+            var request = new Lampa.Reguest();
+            try { request.timeout(REMOTE_TIMEOUT); } catch (e) {}
+            request.native(lampacStorageUrl(action), function (data) { finish(data); }, function () { finish(null); },
+                action === 'set', action === 'set' ? body : undefined);
+        } catch (e2) { finish(null); }
+    }
+    function parseRemoteDocument(value) {
+        if (typeof value === 'string') {
+            try { value = JSON.parse(value); } catch (e) { return null; }
+        }
+        if (!value || typeof value !== 'object') return null;
+        if (value.success === false) return value.msg === 'outFile' ? { schema: REMOTE_SCHEMA, updated_at: 0, records: {} } : null;
+        if (value.data !== undefined) {
+            value = value.data;
+            if (typeof value === 'string') { try { value = JSON.parse(value); } catch (e2) { return null; } }
+        }
+        if (!value || typeof value !== 'object' || value.schema !== REMOTE_SCHEMA || !value.records ||
+            typeof value.records !== 'object' || Array.isArray(value.records)) return null;
+        return { schema: REMOTE_SCHEMA, updated_at: num(value.updated_at), records: value.records };
+    }
+    function portableRecord(record) {
+        var copy = deepCopy(record);
+        if (!copy || !copy.card_key) return null;
+        sanitizeRecordResolvers(copy);
+        function stripRemoteFields(entry) {
+            if (!entry || typeof entry !== 'object') return;
+            delete entry.direct_url;
+            delete entry.proxy_url;
+            delete entry.resolver_headers;
+            delete entry.rch;
+            delete entry.rch_body;
+        }
+        function stripNestedCredentials(value) {
+            if (!value || typeof value !== 'object') return;
+            Object.keys(value).forEach(function (key) {
+                var normalized = str(key).toLowerCase();
+                if (normalized === 'token' || normalized === 'account_email' || normalized === 'uid' ||
+                    normalized === 'nws_id' || normalized === 'aesgcmkey' || normalized === 'headers' ||
+                    normalized === 'resolver_headers' || normalized === 'rch' || normalized === 'rch_body') {
+                    delete value[key];
+                    return;
+                }
+                stripNestedCredentials(value[key]);
+            });
+        }
+        stripRemoteFields(copy.online);
+        if (copy.online && Array.isArray(copy.online.items)) copy.online.items.forEach(stripRemoteFields);
+        stripRemoteFields(copy.torrent);
+        if (copy.torrent && Array.isArray(copy.torrent.items)) copy.torrent.items.forEach(stripRemoteFields);
+        stripNestedCredentials(copy);
+        compactRecord(copy);
+        return copy;
+    }
+    function chooseMergedRecord(oldRecord, candidate) {
+        if (!oldRecord) return candidate;
+        if (num(candidate.activity_at) > num(oldRecord.activity_at)) return candidate;
+        if (num(candidate.activity_at) < num(oldRecord.activity_at)) return oldRecord;
+        if (rejectEqualTimeDowngrade(oldRecord, candidate)) return oldRecord;
+        if (rejectEqualTimeDowngrade(candidate, oldRecord)) return candidate;
+        return candidate;
+    }
+    function mergeRecordMaps() {
+        var merged = {};
+        for (var i = 0; i < arguments.length; i++) {
+            var map = arguments[i] || {};
+            Object.keys(map).forEach(function (key) {
+                var candidate = portableRecord(map[key]);
+                if (!candidate) return;
+                merged[key] = chooseMergedRecord(merged[key], candidate);
+            });
+        }
+        return merged;
+    }
+    function pullRemote(callback) {
+        remoteRequest('get', null, function (response) {
+            var document = parseRemoteDocument(response);
+            if (!document) return callback(false, null);
+            var merged = mergeRecordMaps(document.records, store(), readOutbox());
+            writeStore(merged);
+            refreshUI();
+            callback(true, document);
+        });
+    }
+    function pushRemote(records, callback) {
+        var document = { schema: REMOTE_SCHEMA, updated_at: now(), records: mergeRecordMaps(records) };
+        remoteRequest('set', JSON.stringify(document), function (response) {
+            if (typeof response === 'string') { try { response = JSON.parse(response); } catch (e) { response = null; } }
+            callback(!!response && !(response.success === false), document);
+        });
+    }
+    function recordMapsEqual(a, b) {
+        var left = mergeRecordMaps(a), right = mergeRecordMaps(b);
+        var leftKeys = Object.keys(left).sort(), rightKeys = Object.keys(right).sort();
+        if (leftKeys.length !== rightKeys.length) return false;
+        for (var i = 0; i < leftKeys.length; i++) {
+            if (leftKeys[i] !== rightKeys[i] || json(left[leftKeys[i]]) !== json(right[rightKeys[i]])) return false;
+        }
+        return true;
+    }
+    function scheduleRemoteSync(reason) {
+        if (state.remoteTimer) clearTimeout(state.remoteTimer);
+        state.remoteTimer = setTimeout(function () { state.remoteTimer = null; syncRemote(reason || 'debounce'); }, REMOTE_DEBOUNCE);
+    }
+    function syncRemote(reason) {
+        if (!remoteAvailable()) return false;
+        if (state.remoteBusy) { state.remoteQueued = true; return false; }
+        state.remoteBusy = true;
+        var attempts = 0;
+        function finish() {
+            state.remoteBusy = false;
+            if (!state.remoteQueued) return;
+            state.remoteQueued = false;
+            scheduleRemoteSync('queued');
+        }
+        function apply(document) {
+            var merged = mergeRecordMaps(document.records, store(), readOutbox());
+            writeStore(merged);
+            refreshUI();
+            return merged;
+        }
+        function verifyAfterPush() {
+            remoteRequest('get', null, function (response) {
+                var verified = parseRemoteDocument(response);
+                if (!verified) return finish();
+                var merged = apply(verified);
+                if (recordMapsEqual(verified.records, merged) || attempts >= 3) return finish();
+                writeAttempt(verified);
+            });
+        }
+        function writeAttempt(remote) {
+            var merged = apply(remote);
+            if (recordMapsEqual(remote.records, merged)) return finish();
+            attempts += 1;
+            pushRemote(merged, function (ok) { if (!ok) return finish(); verifyAfterPush(); });
+        }
+        remoteRequest('get', null, function (response) {
+            var remote = parseRemoteDocument(response);
+            if (!remote) return finish();
+            writeAttempt(remote);
+        });
+        return true;
     }
     function store() {
-        ensureSync();
         try {
             var v = Lampa.Storage.get(storageKey(), {});
             return v && typeof v === 'object' ? v : {};
@@ -231,7 +425,7 @@
         } catch (e) {}
     }
     function queueOutbox(record) {
-        if (!record || !record.card_key || profileId() === 'guest') return;
+        if (!record || !record.card_key) return;
         var portableRecord = deepCopy(record) || clone(record);
         sanitizeRecordResolvers(portableRecord);
         var out = readOutbox();
@@ -247,10 +441,8 @@
         try { Lampa.Storage.set(storageKey(), v); } catch (e) {}
     }
     function flushOutbox(forceWrite) {
-        if (profileId() === 'guest') return false;
-        ensureSync();
         var out = readOutbox();
-        if (!Object.keys(out).length) { refreshUI(); return false; }
+        if (!Object.keys(out).length) { refreshUI(); if (forceWrite) scheduleRemoteSync('outbox'); return false; }
         var all = store();
         var changed = false;
         var outboxChanged = false;
@@ -275,6 +467,7 @@
         if (outboxChanged) writeOutbox(out);
         if (changed || forceWrite) writeStore(all);
         refreshUI();
+        scheduleRemoteSync('outbox');
         return changed;
     }
     function scheduleSyncFlush() {
@@ -282,7 +475,6 @@
         state.syncFlushTimer = setTimeout(function () { state.syncFlushTimer = null; flushOutbox(true); }, 6500);
     }
     function seedOutboxFromStore() {
-        if (profileId() === 'guest') return;
         var all = store();
         Object.keys(all || {}).forEach(function (key) {
             var r = all[key];
@@ -1015,7 +1207,7 @@
         try {
             u.searchParams.forEach(function (_value, key) {
                 var normalized = str(key).toLowerCase();
-                if (normalized === 'account_email' || normalized === 'uid' || normalized === 'nws_id') remove.push(key);
+                if (normalized === 'token' || normalized === 'account_email' || normalized === 'uid' || normalized === 'nws_id' || normalized === 'aesgcmkey') remove.push(key);
             });
             remove.forEach(function (key) { u.searchParams.delete(key); });
         } catch (e) {}
@@ -1760,23 +1952,19 @@
     function install() {
         if (state.installed) return;
         state.installed = true;
-        ensureSync(); injectStyle(); seedOutboxFromStore();
+        injectStyle(); seedOutboxFromStore();
         try { $('.button--continue-watch-native-just,.button--continue-watch-ddd,.continue-watch-ddd-source').remove(); } catch (eOld) {}
         patchTorrent(); patchPlayer();
         try { Lampa.Timeline.listener.follow('update', onTimeline); } catch (e) {}
         try { Lampa.Listener.follow('request_secuses', captureResolver); } catch (e2) {}
         try {
-            Lampa.Listener.follow('worker_storage', function (e) {
-                if (!e || e.type !== 'insert' || e.name !== storageKey()) return;
-                setTimeout(function () { flushOutbox(true); refreshUI(); }, 180);
-            });
-        } catch (eSync) {}
-        try {
             if (Lampa.Storage && Lampa.Storage.listener && Lampa.Storage.listener.follow) {
                 Lampa.Storage.listener.follow('change', function (e) {
                     if (!e) return;
                     if (e.name === storageKey()) refreshUI();
-                    if (e.name === 'account') setTimeout(function () { ensureSync(); seedOutboxFromStore(); flushOutbox(true); refreshUI(); }, 5500);
+                    if (e.name === 'account' || e.name === 'account_email' || e.name === 'lampac_unic_id' || e.name === 'lampac_profile_id') {
+                        setTimeout(function () { seedOutboxFromStore(); flushOutbox(true); syncRemote('identity'); refreshUI(); }, 5500);
+                    }
                 });
             }
         } catch (eStorage) {}
@@ -1789,12 +1977,13 @@
                 setTimeout(function () { refreshUI(m, root); }, 500);
             });
         } catch (e3) {}
-        try { window.addEventListener('focus', function () { scheduleReconcile(); refreshUI(); }); } catch (e4) {}
-        try { document.addEventListener('visibilitychange', function () { if (document.visibilityState !== 'hidden') { scheduleReconcile(); refreshUI(); } }); } catch (e5) {}
+        try { window.addEventListener('focus', function () { scheduleReconcile(); syncRemote('focus'); refreshUI(); }); } catch (e4) {}
+        try { document.addEventListener('visibilitychange', function () { if (document.visibilityState !== 'hidden') { scheduleReconcile(); syncRemote('visibility'); refreshUI(); } }); } catch (e5) {}
         setInterval(function () { patchTorrent(); patchPlayer(); refreshUI(); }, 1800);
         setTimeout(reconcilePending, 1000);
-        setTimeout(function () { ensureSync(); flushOutbox(true); refreshUI(); }, 7500);
-        setTimeout(function () { ensureSync(); flushOutbox(true); refreshUI(); }, 17000);
+        syncRemote('install');
+        setTimeout(function () { flushOutbox(true); syncRemote('recovery'); refreshUI(); }, 7500);
+        setTimeout(function () { flushOutbox(true); syncRemote('recovery'); refreshUI(); }, 17000);
 
         window.ContinueWatchV6 = {
             version: VERSION,
@@ -1818,7 +2007,15 @@
                 ensureTorrent: ensureTorrent,
                 buttonStateKey: buttonStateKey,
                 cardKey: cardKey,
-                getMovieFromData: getMovieFromData
+                getMovieFromData: getMovieFromData,
+                discoverLampacToken: discoverLampacToken,
+                lampacIdentity: lampacIdentity,
+                remoteProfileId: remoteProfileId,
+                lampacStorageUrl: lampacStorageUrl,
+                mergeRecordMaps: mergeRecordMaps,
+                pullRemote: pullRemote,
+                pushRemote: pushRemote,
+                syncRemote: syncRemote
             };
         }
     }
