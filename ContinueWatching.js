@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.11-window-capture-20260904';
+    var VERSION = 'v6.2.12-native-resume-segments-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -35,6 +35,7 @@
         uiTimer: null,
         playerPatched: false,
         playerListenerPatched: false,
+        playerExternalListenerPatched: false,
         playerPlaylistPatched: false,
         playerCaptureData: null,
         playerCaptureAt: 0,
@@ -51,6 +52,7 @@
         controllerNode: null,
         controllerState: '',
         onlineLaunchSeed: null,
+        timelinePrimeDepth: 0,
         buttonLaunchAt: -10000
     };
 
@@ -102,6 +104,77 @@
         });
         if (meta.thumbnail) { target.thumbnail = meta.thumbnail; if (!target.img) target.img = meta.thumbnail; }
         return target;
+    }
+    function finiteSegmentNumber(value) {
+        var parsed = Number(value);
+        return !isNaN(parsed) && parsed !== Infinity && parsed !== -Infinity ? parsed : null;
+    }
+    function segmentPair(value) {
+        var start = null, end = null;
+        if (Array.isArray(value) && value.length >= 2) {
+            start = finiteSegmentNumber(value[0]); end = finiteSegmentNumber(value[1]);
+        } else if (value && typeof value === 'object') {
+            start = finiteSegmentNumber(value.start !== undefined ? value.start : value.from);
+            end = finiteSegmentNumber(value.end !== undefined ? value.end : value.to);
+        }
+        if (start === null || end === null || start < 0 || end <= start) return null;
+        return { start: start, end: end };
+    }
+    function appendSegmentValues(target, value) {
+        var direct = segmentPair(value);
+        if (direct) { target.push(direct); return; }
+        if (Array.isArray(value)) value.forEach(function (entry) {
+            var pair = segmentPair(entry);
+            if (pair) target.push(pair);
+        });
+    }
+    function normalizeSegments(value, durationSeconds) {
+        if (typeof value === 'string') {
+            try { value = JSON.parse(value); } catch (e) { return null; }
+        }
+        if (!value || typeof value !== 'object') return null;
+        var skip = [], ad = [];
+        if (Array.isArray(value)) {
+            value.forEach(function (entry) {
+                var pair = segmentPair(entry);
+                if (!pair) return;
+                var kind = str(entry && (entry.type || entry.kind || entry.category)).toLowerCase();
+                if (/^(?:ad|ads|advert|advertisement|commercial)$/.test(kind)) ad.push(pair);
+                else if (!kind || /^(?:skip|intro|recap|credits?|opening|ending|outro)$/.test(kind)) skip.push(pair);
+            });
+        } else {
+            appendSegmentValues(skip, value.skip);
+            appendSegmentValues(ad, value.ad);
+            appendSegmentValues(ad, value.ads);
+            appendSegmentValues(ad, value.advert);
+            appendSegmentValues(ad, value.advertisement);
+            appendSegmentValues(ad, value.commercial);
+            ['intro','recap','credit','credits','opening','ending','outro'].forEach(function (key) {
+                appendSegmentValues(skip, value[key]);
+            });
+        }
+        if (!skip.length && !ad.length) return null;
+        var result = { skip: skip, ad: ad };
+        var referenceDurationMs = finiteSegmentNumber(value.duration_ms);
+        var durationMs = referenceDurationMs !== null && referenceDurationMs > 0
+            ? referenceDurationMs
+            : (num(durationSeconds) > 0 ? Math.round(num(durationSeconds) * 1000) : null);
+        if (durationMs !== null && durationMs > 0) result.duration_ms = Math.round(durationMs);
+        if (result.duration_ms !== undefined) return { duration_ms: result.duration_ms, skip: result.skip, ad: result.ad };
+        return result;
+    }
+    function normalizeLaunchSegments(data) {
+        function normalizeItem(item) {
+            if (!item || typeof item !== 'object') return;
+            var duration = item.timeline && item.timeline.duration !== undefined ? item.timeline.duration : item.duration;
+            var normalized = normalizeSegments(item.segments, duration);
+            if (normalized) item.segments = normalized;
+            else delete item.segments;
+        }
+        normalizeItem(data);
+        normalizeItem(data && data.currentItem);
+        (data && data.playlist || []).forEach(normalizeItem);
+        return data;
     }
     function json(v) { try { return JSON.stringify(v); } catch (e) { return ''; } }
     function clamp(v, a, b) { v = num(v); return Math.max(a, Math.min(b, v)); }
@@ -782,6 +855,28 @@
         out.percent = clamp(out.percent, 0, 100);
         return out;
     }
+    function primeResumeTimeline(record, hash, road) {
+        if (!isAndroidPlatform() || !hash || !road || num(road.time) <= 0 ||
+            !Lampa.Timeline || typeof Lampa.Timeline.update !== 'function') return false;
+        var local = timelineView(hash) || {};
+        var stamp = num(record && record.activity_at);
+        if (num(local.updated) > stamp) return false;
+        var percent = num(road.percent);
+        if (!percent && num(road.duration) > 0) percent = Math.round(num(road.time) / num(road.duration) * 100);
+        percent = clamp(percent, 0, 100);
+        if (Math.abs(num(local.time) - num(road.time)) < 0.001 &&
+            Math.abs(num(local.duration) - num(road.duration)) < 0.001 &&
+            num(local.percent) === percent && num(local.updated) === stamp) return false;
+        state.timelinePrimeDepth += 1;
+        try {
+            Lampa.Timeline.update({
+                hash: str(hash), time: num(road.time), duration: num(road.duration),
+                percent: percent, received: true, updated: stamp
+            });
+            return true;
+        } catch (e) { return false; }
+        finally { state.timelinePrimeDepth -= 1; }
+    }
     function reconcileRecordTimeline(record) {
         if (!record) return record;
         var out = deepCopy(record) || clone(record);
@@ -890,9 +985,22 @@
         if (data.isonline) return 'online';
         return 'other';
     }
-    function isJustExternal() {
+    function isAndroidPlatform() {
         try {
-            return Lampa.Platform && Lampa.Platform.is && Lampa.Platform.is('android') && str(Lampa.Storage.field('player_torrent')) === 'android';
+            return !!(Lampa.Platform && Lampa.Platform.is && Lampa.Platform.is('android'));
+        } catch (e) { return false; }
+    }
+    function isJustExternal(data, resolvedSource) {
+        try {
+            if (!isAndroidPlatform()) return false;
+            data = data && typeof data === 'object' ? data : {};
+            var source = resolvedSource || sourceOf(data);
+            var launchPlayer = str(data.launch_player).toLowerCase();
+            if (launchPlayer === 'inner' || launchPlayer === 'lampa') return false;
+            if (launchPlayer === 'android') return true;
+            var playerField = source === 'torrent' ? 'player_torrent' : 'player';
+            if (str(Lampa.Storage.field(playerField)).toLowerCase() === 'android') return true;
+            return !!(source === 'torrent' && Lampa.Torserver && typeof Lampa.Torserver.gstWork === 'function' && !Lampa.Torserver.gstWork());
         } catch (e) { return false; }
     }
 
@@ -949,7 +1057,7 @@
             active_meta: playbackMeta(data),
             created_at: now(),
             initial_time: num(data.time || data.position || (data.timeline && data.timeline.time)),
-            external: isJustExternal(),
+            external: isJustExternal(data, source),
             last_road: null
         };
         if (source === 'torrent') {
@@ -1308,6 +1416,7 @@
     function onTimeline(event) {
         var d = event && event.data ? event.data : event;
         if (!d || !d.hash || !d.road) return;
+        if (state.timelinePrimeDepth) return;
         var hash = str(d.hash), road = d.road || {};
         var idx = findSessionItem(hash);
         var pending = readPending();
@@ -1325,7 +1434,7 @@
             });
         }
 
-        if (isJustExternal() && appendPendingEvent(hash, road)) return;
+        if (state.session && state.session.source === 'torrent' && state.session.external && appendPendingEvent(hash, road)) return;
 
         if (idx < 0) {
             if (appendPendingEvent(hash, road)) return;
@@ -2000,6 +2109,8 @@
             item.torrent_hash = hash || record.torrent.hash || 'continue_watch_v6';
             item.continue_watch_v6 = true;
             try {
+                normalizeLaunchSegments(item);
+                primeResumeTimeline(record, activeTimeline.hash, resumeRoad);
                 Lampa.Player.play(item);
                 if (Lampa.Player.playlist) Lampa.Player.playlist(list);
             } catch (e) { noty('Ошибка запуска торрента: ' + (e.message || e)); }
@@ -2082,8 +2193,10 @@
                         activity_at: num(record.activity_at),
                         online: deepCopy(online) || {}
                     };
+                    normalizeLaunchSegments(d);
                     markOnlineLaunchDiagnostic('before', record, d, prepared, u, activeDirect, topDirect, resolved);
                     diagnosticMarkerAttr('data-cw-launch-stage', 'player-before');
+                    primeResumeTimeline(record, onlineTimeline.hash, resumeRoad);
                     Lampa.Player.play(d);
                     markOnlineLaunchDiagnostic('after', record, d, prepared, u, activeDirect, topDirect, resolved);
                     diagnosticMarkerAttr('data-cw-launch-stage', 'player-after');
@@ -2176,7 +2289,7 @@
             var session = buildSession(data);
             if (session) {
                 state.session = session;
-                if (session.source === 'torrent' && isJustExternal()) writePending(session);
+                if (session.source === 'torrent' && session.external) writePending(session);
             }
             return session;
         } catch (e) {
@@ -2193,6 +2306,18 @@
                 });
                 state.playerListenerPatched = true;
             } catch (eListener) {}
+        }
+        if (!state.playerExternalListenerPatched && Lampa.Player.listener && Lampa.Player.listener.follow) {
+            try {
+                Lampa.Player.listener.follow('external', function (event) {
+                    if (!isAndroidPlatform()) return;
+                    var session = capturePlayerSession(event && event.data ? event.data : event);
+                    if (!session) return;
+                    session.external = true;
+                    if (session.source === 'torrent') writePending(session);
+                });
+                state.playerExternalListenerPatched = true;
+            } catch (eExternalListener) {}
         }
         if (!state.playerPatched && typeof Lampa.Player.play === 'function') {
             var old = Lampa.Player.play;
@@ -2540,6 +2665,8 @@
         if (window.__CONTINUE_WATCH_TEST_MODE__) {
             window.ContinueWatchV6.testing = {
                 normalizeRoad: normalizeRoad,
+                normalizeSegments: normalizeSegments,
+                isJustExternal: isJustExternal,
                 guardRoadInPlace: guardRoadInPlace,
                 mergeRecordRoad: mergeRecordRoad,
                 resolverSelection: resolverSelection,
