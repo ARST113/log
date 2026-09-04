@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.7-lampac-key-sync-20260904';
+    var VERSION = 'v6.2.8-lampac-key-sync-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -1796,9 +1796,14 @@
     }
     function resolveOnline(record, movie, callback, launchDeadline) {
         var resolver = onlineResolverForRecord(record, movie);
-        if (!resolver) return callback(null);
+        if (!resolver) {
+            diagnosticMarkerAttr('data-cw-launch-stage', 'resolver-none');
+            return callback(null);
+        }
+        diagnosticMarkerAttr('data-cw-launch-stage', 'resolver-request');
         onlineNoty('RESOLVE ' + shortUrl(resolver.url));
         resolveOnlineCandidate(resolver, function (resolved) {
+            diagnosticMarkerAttr('data-cw-launch-stage', resolved ? 'resolver-ok' : 'resolver-fail');
             onlineNoty(resolved ? 'RESOLVE OK ' + shortUrl(resolved.url) : 'RESOLVE FAIL');
             if (resolved) resolved.resolver_origin = resolver.origin || 'unknown';
             callback(resolved);
@@ -2000,6 +2005,8 @@
         });
     }
     function launchOnline(movie, record) {
+        diagnosticMarkerAttr('data-cw-launch-stage', 'launch-online');
+        diagnosticMarkerAttr('data-cw-launch-version', VERSION);
         var launchDeadline = now() + ONLINE_LAUNCH_DEADLINE;
         onlineNoty('CONTINUE S' + num(record.season) + 'E' + num(record.episode) + ' ' + formatTime(record.time));
         resolveOnline(record, movie, function (resolved) {
@@ -2009,7 +2016,10 @@
                 hash: record.timeline_hash, direct_url: online.direct_url || '', meta: {}
             }];
             var idx = onlineRecordIndex(record);
-            if (idx < 0) return noty('Не удалось однозначно определить серию');
+            if (idx < 0) {
+                diagnosticMarkerAttr('data-cw-launch-stage', 'index-fail');
+                return noty('Не удалось однозначно определить серию');
+            }
             var list = defs.map(function (it, i) {
                 var h = it.hash || timelineHash(movie, it.season, it.episode);
                 var road = timelineView(h) || {};
@@ -2032,7 +2042,10 @@
             var activeDirect = directOnlineUrl(activeDef);
             var topDirect = allowTopFallback ? directOnlineUrl({ direct_url: online.direct_url }) : '';
             var u = resolved && resolved.url ? resolved.url : (activeDirect || topDirect);
-            if (!u) return noty('Не удалось получить свежую ссылку серии');
+            if (!u) {
+                diagnosticMarkerAttr('data-cw-launch-stage', 'url-fail');
+                return noty('Не удалось получить свежую ссылку серии');
+            }
             var live = timelineView(record.timeline_hash) || {};
             var resumeRoad = mergeRecordRoad(record, live);
             var time = resumeRoad.time;
@@ -2053,6 +2066,7 @@
             if (resolved && resolved.data) applyMeta(d, playbackMeta(resolved.data));
             list[idx] = deepCopy(d) || clone(d);
             prepareOnlineWindow(defs, list, idx, d.online_selection, launchDeadline, function (prepared) {
+                diagnosticMarkerAttr('data-cw-launch-stage', 'playlist-prepared');
                 d.playlist_index = prepared.index; d.start_index = prepared.index;
                 if (prepared.list[prepared.index]) prepared.list[prepared.index].start_index = prepared.index;
                 d.currentItem = deepCopy(prepared.list[prepared.index]) || clone(prepared.list[prepared.index]);
@@ -2068,9 +2082,12 @@
                         online: deepCopy(online) || {}
                     };
                     markOnlineLaunchDiagnostic('before', record, d, prepared, u, activeDirect, topDirect, resolved);
+                    diagnosticMarkerAttr('data-cw-launch-stage', 'player-before');
                     Lampa.Player.play(d);
                     markOnlineLaunchDiagnostic('after', record, d, prepared, u, activeDirect, topDirect, resolved);
+                    diagnosticMarkerAttr('data-cw-launch-stage', 'player-after');
                     if (Lampa.Player.playlist) Lampa.Player.playlist(prepared.list);
+                    diagnosticMarkerAttr('data-cw-launch-stage', 'playlist-set');
                 } catch (e) { noty('Ошибка запуска online'); }
                 finally { state.onlineLaunchSeed = null; }
             });
@@ -2248,10 +2265,26 @@
         var shape = safeResolverShape(url || '');
         return shape ? 'S' + shape.season + 'E' + shape.episode : (url ? 'opaque' : 'none');
     }
+    function resolverLooseCoordinateLabel(url) {
+        if (!url) return 'none';
+        try {
+            var u = new URL(str(url), location.href);
+            var shortS = u.searchParams.getAll('s'), shortE = u.searchParams.getAll('e');
+            var longS = u.searchParams.getAll('season'), longE = u.searchParams.getAll('episode');
+            var shortPair = shortS.length === 1 && shortE.length === 1 && !longS.length && !longE.length;
+            var longPair = longS.length === 1 && longE.length === 1 && !shortS.length && !shortE.length;
+            if (!shortPair && !longPair) return 'opaque';
+            var season = positiveInteger(u.searchParams.get(shortPair ? 's' : 'season'));
+            var episode = positiveInteger(u.searchParams.get(shortPair ? 'e' : 'episode'));
+            return season && episode ? 'S' + season + 'E' + episode : 'opaque';
+        } catch (e) { return 'invalid'; }
+    }
     function diagnosticMarkerAttr(name, value) {
         try {
             var marker = document.getElementById('cw6-style');
             if (marker && marker.setAttribute) marker.setAttribute(name, str(value));
+            var root = document.documentElement;
+            if (root && root.setAttribute) root.setAttribute(name, str(value));
         } catch (e) {}
     }
     function diagnosticUrlShape(url) {
@@ -2334,6 +2367,8 @@
             b.attr('data-cw-item-se', 'S' + num(selectedSE.season) + 'E' + num(selectedSE.episode));
             b.attr('data-cw-item-resolver-se', resolverCoordinateLabel(selectedItem.resolver_url || selectedItem.direct_url));
             b.attr('data-cw-top-resolver-se', resolverCoordinateLabel(r.online.resolver_url || r.online.direct_url));
+            b.attr('data-cw-item-resolver-loose-se', resolverLooseCoordinateLabel(selectedItem.resolver_url));
+            b.attr('data-cw-top-resolver-loose-se', resolverLooseCoordinateLabel(r.online.resolver_url));
             b.attr('data-cw-item-resolver-kind', itemResolverShape.kind);
             b.attr('data-cw-item-resolver-fields', itemResolverShape.fields);
             b.attr('data-cw-top-resolver-kind', topResolverShape.kind);
@@ -2346,7 +2381,11 @@
         var lock = 0;
         function go(e) {
             if (e) { try { e.preventDefault(); e.stopPropagation(); } catch (x) {} }
-            if (now() - lock < 800) return false; lock = now(); launch(movie); return false;
+            if (now() - lock < 800) return false;
+            lock = now();
+            diagnosticMarkerAttr('data-cw-launch-stage', 'button-go');
+            diagnosticMarkerAttr('data-cw-launch-version', VERSION);
+            launch(movie); return false;
         }
         b.on('hover:enter.cw6', go).on('click.cw6', go);
         if (!isPhone()) b.on('mousedown.cw6 pointerdown.cw6', function (e) { if (!e.pointerType || e.pointerType === 'mouse') { e.preventDefault(); e.stopPropagation(); } });
