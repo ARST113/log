@@ -317,7 +317,7 @@
     function remoteProjectionRecord(record) {
         var copy = copyRecord(record);
         if (!copy) return null;
-        sanitizeRecordResolvers(copy);
+        sanitizeRemoteRecordResolvers(copy);
         function stripNestedCredentials(value, key) {
             if (typeof value === 'string') {
                 if (key !== 'resolver_url' && /^(?:https?:)?\/\//i.test(value)) return undefined;
@@ -1265,12 +1265,33 @@
             return u.toString();
         } catch (e) { return url; }
     }
+    function portableRemoteResolver(url) {
+        url = str(url);
+        if (!url) return '';
+        try {
+            var u = new URL(url, location.href);
+            stripLocalResolverParams(u);
+            stripRemoteResolverParams(u);
+            return u.toString();
+        } catch (e) { return url; }
+    }
     function stripLocalResolverParams(u) {
         var remove = [];
         try {
             u.searchParams.forEach(function (_value, key) {
                 var normalized = str(key).toLowerCase();
-                if (normalized === 'token' || normalized === 'account_email' || normalized === 'uid' || normalized === 'nws_id' || normalized === 'aesgcmkey') remove.push(key);
+                if (normalized === 'account_email' || normalized === 'uid' || normalized === 'nws_id') remove.push(key);
+            });
+            remove.forEach(function (key) { u.searchParams.delete(key); });
+        } catch (e) {}
+        return u;
+    }
+    function stripRemoteResolverParams(u) {
+        var remove = [];
+        try {
+            u.searchParams.forEach(function (_value, key) {
+                var normalized = str(key).toLowerCase();
+                if (normalized === 'token' || normalized === 'aesgcmkey') remove.push(key);
             });
             remove.forEach(function (key) { u.searchParams.delete(key); });
         } catch (e) {}
@@ -1298,6 +1319,18 @@
         sanitize(online);
         (online.items || []).forEach(sanitize);
         return changed;
+    }
+    function sanitizeRemoteRecordResolvers(record) {
+        var online = record && record.online;
+        if (!online) return false;
+        function sanitize(entry) {
+            if (!entry) return;
+            entry.resolver_url = entry.resolver_url ? portableRemoteResolver(entry.resolver_url) : '';
+            entry.resolver_headers = portableResolverHeaders(entry.resolver_headers);
+        }
+        sanitize(online);
+        (online.items || []).forEach(sanitize);
+        return true;
     }
     function positiveInteger(value) {
         var text = str(value).trim();

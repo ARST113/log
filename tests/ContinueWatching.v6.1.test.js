@@ -1113,6 +1113,42 @@ function seedDelayedOnline(env, id) {
 }
 
 {
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 108978, media_type: 'tv', title: 'Sherlock', original_name: 'Sherlock' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const resolver = 'https://lampac.fun/lite/hdvb/video?id=108978&s=1&e=1&t=HDVB&token=hdvb-session-token';
+    const media = 'https://media.example/sherlock-s1e1.m3u8';
+    const episode = {
+        title: 'S1 E1', url: media, season: 1, episode: 1,
+        timeline: { hash: 'sherlock-108978-1' }
+    };
+
+    env.setActive(movie);
+    env.listeners.request_secuses.forEach((listener) => listener({
+        params: { url: resolver }, data: { url: media }
+    }));
+    env.Lampa.Player.play(Object.assign({}, episode, { card: movie, movie, isonline: true, playlist: [episode], playlist_index: 0 }));
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'sherlock-108978-1', road: { time: 343, duration: 5280, percent: 6, updated: 4_100_100 }
+    }));
+
+    const saved = env.storage[storageKey][recordKey];
+    assert.equal(new URL(saved.online.resolver_url).searchParams.get('token'), 'hdvb-session-token',
+        'same-device Sherlock resume must retain the HDVB resolver token locally');
+
+    env.setRequestHandler(({ url, ok, fail }) => {
+        if (new URL(url).searchParams.get('token') !== 'hdvb-session-token') return fail();
+        ok({ url: 'https://media.example/sherlock-s1e1-fresh.m3u8' });
+    });
+    env.api.launch();
+    assert.equal(env.androidLaunches.length, 2,
+        'direct Continue must resolve the saved HDVB episode into a fresh Android player link');
+    assert.equal(env.androidLaunches[1].parsed.url, 'https://media.example/sherlock-s1e1-fresh.m3u8');
+}
+
+{
     const storageKey = 'continue_watch_v6_7';
     const movie = { id: 801, media_type: 'tv', title: 'Unsupported resolver schema', original_name: 'Unsupported resolver schema' };
     const cardKey = h.api.testing.cardKey(movie);
@@ -2010,7 +2046,7 @@ function syncRecord(env, id, activityAt, itemCount) {
     const env = harness({ scripts: ['https://lampac.fun/sync/js/nast'] });
     const local = syncRecord(env, 920, 3_200_000, 2);
     local.value.online.direct_url = 'https://media.example/transient-proxy/video.m3u8';
-    local.value.online.resolver_url += '&account_email=source%40example.test&uid=source-device&nws_id=source-rch';
+    local.value.online.resolver_url += '&account_email=source%40example.test&uid=source-device&nws_id=source-rch&token=source-resolver-token&aesgcmkey=source-resolver-aes';
     local.value.online.resolver_headers = { 'X-Kit-AesGcm': 'secret', Authorization: 'Bearer private' };
     local.value.online.items[0].meta.segments = [{
         duration: 4, type: 'video/mp2t', url: 'https://segment.example/part-1.ts',
@@ -2048,6 +2084,8 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(JSON.stringify(firstBody).includes('source@example.test'), false);
     assert.equal(JSON.stringify(firstBody).includes('source-device'), false);
     assert.equal(JSON.stringify(firstBody).includes('source-rch'), false);
+    assert.equal(JSON.stringify(firstBody).includes('source-resolver-token'), false, 'remote body must not retain resolver query credentials');
+    assert.equal(JSON.stringify(firstBody).includes('source-resolver-aes'), false, 'remote body must not retain resolver AES query credentials');
     assert.equal(JSON.stringify(firstBody).includes('Bearer private'), false);
     assert.equal(JSON.stringify(firstBody).includes('Bearer nested-private'), false);
     assert.equal(JSON.stringify(firstBody).includes('source-rch-body'), false);
@@ -2058,6 +2096,7 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(JSON.stringify(firstBody).includes('signed.example'), false, 'remote body must not retain scalar signed URL maps');
     assert.equal(env.storage.continue_watch_v6_7[local.key].online.direct_url, 'https://media.example/transient-proxy/video.m3u8', 'remote sync must not strip same-device direct playback URLs from the local store');
     assert.equal(env.storage.continue_watch_v6_7[local.key].online.resolver_headers.Authorization, 'Bearer private', 'remote sync must not strip same-device resolver headers from the local store');
+    assert.equal(new URL(env.storage.continue_watch_v6_7[local.key].online.resolver_url).searchParams.get('token'), 'source-resolver-token', 'remote sync must not strip same-device resolver tokens from the local store');
     assert.equal(posts.length, 2, 'a verification document missing the local record must produce one merged repair POST');
     const repair = JSON.parse(posts[1].params);
     assert.ok(repair.records[local.key]);
