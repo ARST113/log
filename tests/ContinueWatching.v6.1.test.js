@@ -40,6 +40,7 @@ function harness(options = {}) {
     const listeners = {};
     const timelineListeners = [];
     const timers = new Map();
+    const intervals = [];
     const androidLaunches = [];
     const playlistCalls = [];
     const scriptUrls = Array.isArray(options.scripts) ? options.scripts.slice() : [];
@@ -128,7 +129,7 @@ function harness(options = {}) {
             return id;
         },
         clearTimeout(id) { timers.delete(id); },
-        setInterval() { return 1; },
+        setInterval(callback, delay) { intervals.push({ callback, delay: Number(delay || 0) }); return intervals.length; },
         clearInterval() {},
         Lampa,
         $: jqueryStub()
@@ -187,6 +188,9 @@ function harness(options = {}) {
                 if (!timers.delete(id)) return;
                 timer.callback();
             });
+        },
+        fireIntervals(delay) {
+            intervals.filter((entry) => delay === undefined || entry.delay === Number(delay)).forEach((entry) => entry.callback());
         }
     };
 }
@@ -194,7 +198,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.2-lampac-key-sync-20260904');
+assert.equal(h.api.version, 'v6.2.3-lampac-key-sync-20260904');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -2102,6 +2106,31 @@ function seedDelayedOnline(env, id) {
     assert.equal(browserUrl.searchParams.has('profile_id'), false);
     assert.notEqual(phone.api.sync().key, browser.api.sync().key,
         'local stores remain isolated even though the Lampac key selects one shared remote namespace');
+}
+
+{
+    const env = harness();
+    env.setRequestHandler(({ post, ok }) => ok(post ? { success: true } : { success: false, msg: 'outFile' }));
+    assert.equal(env.requests.length, 0, 'remote sync is disabled before a Lampac key script exists');
+    env.setScripts(['https://lampac.fun/sync/js/arx.lamp']);
+    env.fireIntervals(1800);
+    assert.ok(env.requests.some((request) => !request.post && new URL(request.url).pathname === '/storage/get'),
+        'adding a Lampac key script after plugin install must automatically trigger a remote GET');
+    assert.ok(env.requests.some((request) => request.post && new URL(request.url).pathname === '/storage/set'),
+        'a missing key-selected document must then be initialized with a JSON POST');
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    let stored = '';
+    env.setRequestHandler(({ post, ok }) => {
+        if (post) { stored = post; return ok({ success: true }); }
+        return ok({ success: true, data: stored });
+    });
+    env.api.testing.syncRemote('repair-empty-file');
+    const repaired = JSON.parse(stored);
+    assert.equal(repaired.schema, 1, 'a zero-length Storage file must be repaired into a schema-1 document');
+    assert.deepEqual(repaired.records, {});
 }
 
 function syncRecord(env, id, activityAt, itemCount) {

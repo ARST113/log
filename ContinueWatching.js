@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.2-lampac-key-sync-20260904';
+    var VERSION = 'v6.2.3-lampac-key-sync-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -42,6 +42,7 @@
         remoteQueued: false,
         remoteTimer: null,
         remoteGeneration: 0,
+        remoteIdentityKey: null,
         controllerNode: null,
         controllerState: '',
         onlineLaunchSeed: null
@@ -273,6 +274,20 @@
         return !!context && context.generation === state.remoteGeneration && context.profile === profileId() &&
             context.identityKey === identityFingerprint(lampacIdentity());
     }
+    function detectRemoteIdentityChange() {
+        var nextIdentityKey = identityFingerprint(lampacIdentity());
+        if (state.remoteIdentityKey === null) {
+            state.remoteIdentityKey = nextIdentityKey;
+            return false;
+        }
+        if (state.remoteIdentityKey === nextIdentityKey) return false;
+        state.remoteIdentityKey = nextIdentityKey;
+        state.remoteGeneration += 1;
+        seedOutboxFromStore();
+        syncRemote('identity-script');
+        refreshUI();
+        return true;
+    }
     function remoteRequest(action, body, callback, requestUrl) {
         var settled = false;
         var timer = null;
@@ -296,10 +311,13 @@
             try { value = JSON.parse(value); } catch (e) { return null; }
         }
         if (!value || typeof value !== 'object') return null;
-        if (value.success === false) return value.msg === 'outFile' ? { schema: REMOTE_SCHEMA, updated_at: 0, records: {} } : null;
+        if (value.success === false) return value.msg === 'outFile' ? { schema: REMOTE_SCHEMA, updated_at: 0, records: {}, needs_write: true } : null;
         if (value.data !== undefined) {
             value = value.data;
-            if (typeof value === 'string') { try { value = JSON.parse(value); } catch (e2) { return null; } }
+            if (typeof value === 'string') {
+                if (!value.trim()) return { schema: REMOTE_SCHEMA, updated_at: 0, records: {}, needs_write: true };
+                try { value = JSON.parse(value); } catch (e2) { return null; }
+            }
         }
         if (!value || typeof value !== 'object' || value.schema !== REMOTE_SCHEMA || !value.records ||
             typeof value.records !== 'object' || Array.isArray(value.records)) return null;
@@ -457,7 +475,7 @@
         function writeAttempt(remote) {
             if (stale()) return finish();
             var merged = apply(remote);
-            if (recordMapsEqual(remote.records, merged)) return finish();
+            if (!remote.needs_write && recordMapsEqual(remote.records, merged)) return finish();
             attempts += 1;
             pushRemote(merged, function (ok) { if (stale() || !ok) return finish(); verifyAfterPush(); }, context.setUrl);
         }
@@ -2120,6 +2138,7 @@
     function install() {
         if (state.installed) return;
         state.installed = true;
+        state.remoteIdentityKey = identityFingerprint(lampacIdentity());
         injectStyle(); seedOutboxFromStore();
         try { $('.button--continue-watch-native-just,.button--continue-watch-ddd,.continue-watch-ddd-source').remove(); } catch (eOld) {}
         patchTorrent(); patchPlayer();
@@ -2131,6 +2150,7 @@
                     if (!e) return;
                     if (e.name === storageKey()) refreshUI();
                     if (e.name === 'account' || e.name === 'account_email' || e.name === 'lampac_unic_id' || e.name === 'lampac_profile_id') {
+                        state.remoteIdentityKey = identityFingerprint(lampacIdentity());
                         state.remoteGeneration += 1;
                         setTimeout(function () { seedOutboxFromStore(); flushOutbox(true); syncRemote('identity'); refreshUI(); }, 5500);
                     }
@@ -2148,7 +2168,7 @@
         } catch (e3) {}
         try { window.addEventListener('focus', function () { scheduleReconcile(); syncRemote('focus'); refreshUI(); }); } catch (e4) {}
         try { document.addEventListener('visibilitychange', function () { if (document.visibilityState !== 'hidden') { scheduleReconcile(); syncRemote('visibility'); refreshUI(); } }); } catch (e5) {}
-        setInterval(function () { patchTorrent(); patchPlayer(); refreshUI(); }, 1800);
+        setInterval(function () { patchTorrent(); patchPlayer(); detectRemoteIdentityChange(); refreshUI(); }, 1800);
         setTimeout(reconcilePending, 1000);
         syncRemote('install');
         setTimeout(function () { flushOutbox(true); syncRemote('recovery'); refreshUI(); }, 7500);
