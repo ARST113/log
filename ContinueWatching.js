@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.3-lampac-key-sync-20260904';
+    var VERSION = 'v6.2.4-lampac-key-sync-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -34,7 +34,10 @@
         settleTimer: null,
         uiTimer: null,
         playerPatched: false,
+        playerListenerPatched: false,
         playerPlaylistPatched: false,
+        playerCaptureData: null,
+        playerCaptureAt: 0,
         torrentPatched: false,
         installed: false,
         syncFlushTimer: null,
@@ -43,6 +46,8 @@
         remoteTimer: null,
         remoteGeneration: 0,
         remoteIdentityKey: null,
+        remoteGetOk: 0,
+        remoteSetOk: 0,
         controllerNode: null,
         controllerState: '',
         onlineLaunchSeed: null
@@ -219,22 +224,45 @@
     function storageKey() { return storageKeyForProfile(profileId()); }
     function pendingKey() { return pendingKeyForProfile(profileId()); }
     function outboxKey() { return outboxKeyForProfile(profileId()); }
+    function lampacTokenFromUrl(value) {
+        try {
+            var u = new URL(str(value), location.href);
+            if (str(u.hostname).toLowerCase() !== 'lampac.fun') return '';
+            var pathMatch = u.pathname.match(/^\/sync\/js\/([^/]+)$/i);
+            var token = pathMatch ? decodeURIComponent(pathMatch[1]) :
+                (u.pathname === '/sync.js' ? str(u.searchParams.get('token') || '') : '');
+            return str(token).trim();
+        } catch (e) { return ''; }
+    }
+    function registeredLampacToken() {
+        var plugins = [];
+        try { plugins = Lampa.Storage.get('plugins', []); } catch (e) {}
+        if (typeof plugins === 'string') {
+            try { plugins = JSON.parse(plugins); } catch (e2) { plugins = []; }
+        }
+        if (!Array.isArray(plugins)) return '';
+        for (var i = 0; i < plugins.length; i++) {
+            var plugin = plugins[i];
+            var enabled = true;
+            var url = plugin;
+            if (plugin && typeof plugin === 'object') {
+                url = plugin.url;
+                enabled = plugin.status === true || str(plugin.status) === '1';
+            }
+            if (!enabled) continue;
+            var token = lampacTokenFromUrl(url);
+            if (token) return token;
+        }
+        return '';
+    }
     function discoverLampacToken() {
         var scripts = [];
         try { scripts = document && document.scripts ? document.scripts : []; } catch (e) {}
         for (var i = 0; i < scripts.length; i++) {
-            try {
-                var src = str(scripts[i] && scripts[i].src);
-                var u = new URL(src, location.href);
-                if (str(u.hostname).toLowerCase() !== 'lampac.fun') continue;
-                var pathMatch = u.pathname.match(/^\/sync\/js\/([^/]+)$/i);
-                var token = pathMatch ? decodeURIComponent(pathMatch[1]) :
-                    (u.pathname === '/sync.js' ? str(u.searchParams.get('token') || '') : '');
-                token = str(token).trim();
-                if (token) return token;
-            } catch (e2) {}
+            var token = lampacTokenFromUrl(scripts[i] && scripts[i].src);
+            if (token) return token;
         }
-        return '';
+        return registeredLampacToken();
     }
     function lampacIdentity() {
         return { token: discoverLampacToken(), profile_id: remoteProfileId() };
@@ -288,23 +316,46 @@
         refreshUI();
         return true;
     }
+    function markRemote(action, status) {
+        if (status === 'ok') {
+            if (action === 'get') state.remoteGetOk += 1;
+            if (action === 'set') state.remoteSetOk += 1;
+        }
+        try {
+            var marker = document.getElementById('cw6-style');
+            if (!marker || !marker.setAttribute) return;
+            marker.setAttribute('data-cw-version', VERSION);
+            marker.setAttribute('data-cw-remote-state', action + '-' + status);
+            marker.setAttribute('data-cw-remote-gets', str(state.remoteGetOk));
+            marker.setAttribute('data-cw-remote-sets', str(state.remoteSetOk));
+        } catch (e) {}
+    }
+    function remoteResponseStatus(value) {
+        var parsed = value;
+        if (typeof parsed === 'string') {
+            try { parsed = JSON.parse(parsed); } catch (e) { return 'invalid'; }
+        }
+        return parsed && typeof parsed === 'object' && parsed.success === false ? 'rejected' : 'ok';
+    }
     function remoteRequest(action, body, callback, requestUrl) {
         var settled = false;
         var timer = null;
-        function finish(value) {
+        function finish(value, status) {
             if (settled) return;
             settled = true;
             if (timer) clearTimeout(timer);
+            markRemote(action, status || 'error');
             callback(value);
         }
-        if ((!requestUrl && !remoteAvailable()) || !Lampa.Reguest) return finish(null);
-        timer = setTimeout(function () { finish(null); }, REMOTE_TIMEOUT);
+        if ((!requestUrl && !remoteAvailable()) || !Lampa.Reguest) return finish(null, 'disabled');
+        markRemote(action, 'start');
+        timer = setTimeout(function () { finish(null, 'timeout'); }, REMOTE_TIMEOUT);
         try {
             var request = new Lampa.Reguest();
             try { request.timeout(REMOTE_TIMEOUT); } catch (e) {}
-            request.native(requestUrl || lampacStorageUrl(action), function (data) { finish(data); }, function () { finish(null); },
+            request.native(requestUrl || lampacStorageUrl(action), function (data) { finish(data, remoteResponseStatus(data)); }, function () { finish(null, 'error'); },
                 action === 'set' ? body : false);
-        } catch (e2) { finish(null); }
+        } catch (e2) { finish(null, 'error'); }
     }
     function parseRemoteDocument(value) {
         if (typeof value === 'string') {
@@ -780,16 +831,33 @@
         if (m) return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10) };
         return { season: s || 0, episode: e || 0, fallback: fallbackIndex };
     }
-    function playlistIndex(data, playlist, currentUrl) {
+    function identifiedPlaylistIndex(data, playlist, currentUrl) {
         data = data || {}; playlist = playlist || [];
-        var idx = data.playlist_index !== undefined ? num(data.playlist_index) : (data.start_index !== undefined ? num(data.start_index) : -1);
-        if (idx >= 0 && idx < playlist.length) return idx;
-        var dh = data.timeline && data.timeline.hash ? str(data.timeline.hash) : '';
+        var current = data.currentItem || {};
+        var dh = data.timeline && data.timeline.hash ? str(data.timeline.hash) :
+            (current.timeline && current.timeline.hash ? str(current.timeline.hash) : '');
         for (var i = 0; i < playlist.length; i++) {
             if (dh && playlist[i].timeline && str(playlist[i].timeline.hash) === dh) return i;
-            var u = cleanUrl(playlist[i].url || playlist[i].uri || playlist[i].src || '');
-            if (u && currentUrl && u === currentUrl) return i;
         }
+        var target = explicitItemSE(current) || explicitItemSE(data);
+        if (target) {
+            for (var j = 0; j < playlist.length; j++) {
+                var candidate = explicitItemSE(playlist[j]);
+                if (candidate && candidate.season === target.season && candidate.episode === target.episode) return j;
+            }
+        }
+        for (var k = 0; k < playlist.length; k++) {
+            var u = cleanUrl(playlist[k].url || playlist[k].uri || playlist[k].src || '');
+            if (u && currentUrl && u === currentUrl) return k;
+        }
+        return -1;
+    }
+    function playlistIndex(data, playlist, currentUrl) {
+        data = data || {}; playlist = playlist || [];
+        var identified = identifiedPlaylistIndex(data, playlist, currentUrl);
+        if (identified >= 0) return identified;
+        var idx = data.playlist_index !== undefined ? num(data.playlist_index) : (data.start_index !== undefined ? num(data.start_index) : -1);
+        if (idx >= 0 && idx < playlist.length) return idx;
         return 0;
     }
     function normalizePlaylist(list) {
@@ -812,13 +880,17 @@
         data = data || {};
         var movie = getMovieFromData(data);
         if (!movie || !cardKey(movie)) return null;
+        var previousSession = state.session;
         var source = sourceOf(data);
-        if (source === 'other') return null;
         var url = cleanUrl(data.url || data.uri || data.src || '');
+        var inheritedOnline = source === 'other' && previousSession && previousSession.source === 'online' &&
+            previousSession.card_key === cardKey(movie) && identifiedPlaylistIndex(data, previousSession.playlist, url) >= 0;
+        if (inheritedOnline) source = 'online';
+        if (source === 'other') return null;
         var list = normalizePlaylist(data.playlist || []);
 
-        if (!list.length && state.session && state.session.card_key === cardKey(movie) && state.session.source === source) {
-            list = state.session.playlist.map(function (x) { return clone(x); });
+        if (!list.length && previousSession && previousSession.card_key === cardKey(movie) && previousSession.source === source) {
+            list = previousSession.playlist.map(function (x) { return clone(x); });
         }
         var idx = playlistIndex(data, list, url);
         var item = list[idx] || data.currentItem || data;
@@ -875,6 +947,13 @@
                 session.online_seed_activity = num(onlineSeed.activity_at);
                 session.online_seed_descriptor = deepCopy(onlineSeed.online) || {};
                 session.online_selection = onlineSelection(onlineSeed.online);
+            } else if (inheritedOnline && previousSession) {
+                session.online_full_defs = deepCopy(previousSession.online_full_defs) || [];
+                session.online_full_index = num(previousSession.online_full_index);
+                session.online_window_index = num(previousSession.online_window_index);
+                session.online_seed_activity = num(previousSession.online_seed_activity);
+                session.online_seed_descriptor = deepCopy(previousSession.online_seed_descriptor) || {};
+                session.online_selection = clone(previousSession.online_selection || {});
             }
             onlineNoty('PLAY S' + session.season + 'E' + session.episode + ' resolver=' + (session.resolver ? 'YES' : 'NO'));
         }
@@ -2008,18 +2087,37 @@
         session.hash = str(current.timeline && current.timeline.hash || exactHash(current, session.movie, session.season, session.episode) || session.hash);
         return true;
     }
+    function capturePlayerSession(data) {
+        data = data || {};
+        if (state.playerCaptureData === data && now() - state.playerCaptureAt < 1000) return state.session;
+        state.playerCaptureData = data;
+        state.playerCaptureAt = now();
+        try {
+            var session = buildSession(data);
+            if (session) {
+                state.session = session;
+                if (session.source === 'torrent' && isJustExternal()) writePending(session);
+            }
+            return session;
+        } catch (e) {
+            try { console.warn('[CW6] capture failed', e); } catch (ee) {}
+            return null;
+        }
+    }
     function patchPlayer() {
         if (!Lampa.Player) return;
+        if (!state.playerListenerPatched && Lampa.Player.listener && Lampa.Player.listener.follow) {
+            try {
+                Lampa.Player.listener.follow('create', function (event) {
+                    capturePlayerSession(event && event.data ? event.data : event);
+                });
+                state.playerListenerPatched = true;
+            } catch (eListener) {}
+        }
         if (!state.playerPatched && typeof Lampa.Player.play === 'function') {
             var old = Lampa.Player.play;
             Lampa.Player.play = function (data) {
-                try {
-                    var s = buildSession(data || {});
-                    if (s) {
-                        state.session = s;
-                        if (s.source === 'torrent' && isJustExternal()) writePending(s);
-                    }
-                } catch (e) { try { console.warn('[CW6] capture failed', e); } catch (ee) {} }
+                capturePlayerSession(data || {});
                 return old.apply(this, arguments);
             };
             Lampa.Player.__cw6_patched = VERSION;
@@ -2039,6 +2137,7 @@
     function injectStyle() {
         var st = document.getElementById('cw6-style');
         if (!st) { st = document.createElement('style'); st.id = 'cw6-style'; document.head.appendChild(st); }
+        try { if (st.setAttribute) st.setAttribute('data-cw-version', VERSION); } catch (e) {}
         st.textContent =
             '.button--continue-watch-native-just{opacity:1!important;pointer-events:auto!important;cursor:pointer!important;position:relative!important}' +
             '.button--continue-watch-native-just .continue-watch-native-just-icon{flex-shrink:0;pointer-events:none!important}' +
@@ -2149,6 +2248,9 @@
                 Lampa.Storage.listener.follow('change', function (e) {
                     if (!e) return;
                     if (e.name === storageKey()) refreshUI();
+                    if (e.name === 'plugins') {
+                        detectRemoteIdentityChange();
+                    }
                     if (e.name === 'account' || e.name === 'account_email' || e.name === 'lampac_unic_id' || e.name === 'lampac_profile_id') {
                         state.remoteIdentityKey = identityFingerprint(lampacIdentity());
                         state.remoteGeneration += 1;
