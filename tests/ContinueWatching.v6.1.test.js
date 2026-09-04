@@ -234,7 +234,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.6-lampac-key-sync-20260904');
+assert.equal(h.api.version, 'v6.2.7-lampac-key-sync-20260904');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -2920,4 +2920,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.6: identity, episode-switch, and 53 prior fixtures passed');
+console.log('ContinueWatching v6.2.7: identity, episode-switch, and 53 prior fixtures passed');

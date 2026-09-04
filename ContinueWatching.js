@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.6-lampac-key-sync-20260904';
+    var VERSION = 'v6.2.7-lampac-key-sync-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -1714,8 +1714,8 @@
             expected = selectionKey(o.selection) ? o.selection : resolverSelection(o.resolver_url || '', {});
         }
         var candidates = [
-            { url: item.resolver_url || '', headers: item.resolver_headers || {}, top: false },
-            { url: o.resolver_url || '', headers: o.resolver_headers || {}, top: true }
+            { url: item.resolver_url || '', headers: item.resolver_headers || {}, top: false, origin: 'item' },
+            { url: o.resolver_url || '', headers: o.resolver_headers || {}, top: true, origin: 'top' }
         ];
         for (var i = 0; i < candidates.length; i++) {
             if (!candidates[i].url) continue;
@@ -1739,7 +1739,7 @@
                 episode: target.episode,
                 selection: topShape.selection
             });
-            if (rebuilt) return { url: rebuilt.url, headers: o.resolver_headers || rebuilt.headers || {}, selection: rebuilt.selection || topShape.selection };
+            if (rebuilt) return { url: rebuilt.url, headers: o.resolver_headers || rebuilt.headers || {}, selection: rebuilt.selection || topShape.selection, origin: 'rebuilt' };
         }
         return null;
     }
@@ -1800,6 +1800,7 @@
         onlineNoty('RESOLVE ' + shortUrl(resolver.url));
         resolveOnlineCandidate(resolver, function (resolved) {
             onlineNoty(resolved ? 'RESOLVE OK ' + shortUrl(resolved.url) : 'RESOLVE FAIL');
+            if (resolved) resolved.resolver_origin = resolver.origin || 'unknown';
             callback(resolved);
         }, launchDeadline);
     }
@@ -2028,8 +2029,9 @@
             });
             var activeDef = defs[idx] || {};
             var allowTopFallback = idx === normalizedOnlineIndex(online);
-            var u = resolved && resolved.url ? resolved.url : (directOnlineUrl(activeDef) ||
-                (allowTopFallback ? directOnlineUrl({ direct_url: online.direct_url }) : ''));
+            var activeDirect = directOnlineUrl(activeDef);
+            var topDirect = allowTopFallback ? directOnlineUrl({ direct_url: online.direct_url }) : '';
+            var u = resolved && resolved.url ? resolved.url : (activeDirect || topDirect);
             if (!u) return noty('Не удалось получить свежую ссылку серии');
             var live = timelineView(record.timeline_hash) || {};
             var resumeRoad = mergeRecordRoad(record, live);
@@ -2065,7 +2067,9 @@
                         activity_at: num(record.activity_at),
                         online: deepCopy(online) || {}
                     };
+                    markOnlineLaunchDiagnostic('before', record, d, prepared, u, activeDirect, topDirect, resolved);
                     Lampa.Player.play(d);
+                    markOnlineLaunchDiagnostic('after', record, d, prepared, u, activeDirect, topDirect, resolved);
                     if (Lampa.Player.playlist) Lampa.Player.playlist(prepared.list);
                 } catch (e) { noty('Ошибка запуска online'); }
                 finally { state.onlineLaunchSeed = null; }
@@ -2244,6 +2248,69 @@
         var shape = safeResolverShape(url || '');
         return shape ? 'S' + shape.season + 'E' + shape.episode : (url ? 'opaque' : 'none');
     }
+    function diagnosticMarkerAttr(name, value) {
+        try {
+            var marker = document.getElementById('cw6-style');
+            if (marker && marker.setAttribute) marker.setAttribute(name, str(value));
+        } catch (e) {}
+    }
+    function diagnosticUrlShape(url) {
+        url = str(url).trim();
+        if (!url) return { kind: 'none', fields: 'none' };
+        try {
+            var u = new URL(url, location.href);
+            var path = str(u.pathname).toLowerCase();
+            var kind = /^\/lite\/[^/]+\/(?:video|serial|movie|episodes?)(?:\/|$)/i.test(path) ? 'lite-resolver' :
+                (/\/proxy(?:-dash)?\//i.test(path) ? 'proxy' :
+                    (/\.(?:m3u8?|mpd|mp4|mkv|webm|mov|ts)$/i.test(path) ? 'direct-media' : 'other-http'));
+            var allowed = ['s','e','season','episode','serial','id','tmdb_id','kinopoisk_id','imdb_id','t','translation','voice','voiceover','dub'];
+            var fields = [];
+            allowed.forEach(function (key) { if (u.searchParams.has(key)) fields.push(key); });
+            return { kind: kind, fields: fields.length ? fields.sort().join(',') : 'none' };
+        } catch (e) { return { kind: 'invalid', fields: 'none' }; }
+    }
+    function sameDiagnosticUrl(a, b) {
+        a = cleanUrl(a); b = cleanUrl(b);
+        return a && b ? (a === b ? 'yes' : 'no') : 'na';
+    }
+    function qualityDiagnostic(data, beforeUrl, activeDirect, topDirect) {
+        var quality = data && data.quality;
+        if (!quality || typeof quality !== 'object' || Array.isArray(quality)) return { count: 0, before: 'na', item: 'na', top: 'na' };
+        var urls = [];
+        Object.keys(quality).forEach(function (key) {
+            var value = quality[key];
+            var url = typeof value === 'string' ? value : (value && typeof value.url === 'string' ? value.url : '');
+            if (url) urls.push(cleanUrl(url));
+        });
+        function owns(url) { return url ? (urls.indexOf(cleanUrl(url)) >= 0 ? 'yes' : 'no') : 'na'; }
+        return { count: urls.length, before: owns(beforeUrl), item: owns(activeDirect), top: owns(topDirect) };
+    }
+    function markOnlineLaunchDiagnostic(stage, record, data, prepared, beforeUrl, activeDirect, topDirect, resolved) {
+        var prefix = 'data-cw-launch-' + stage + '-';
+        var current = data && data.currentItem || {};
+        var selected = prepared && prepared.list && prepared.list[prepared.index] || {};
+        var dataSE = explicitItemSE(data) || {};
+        var currentSE = explicitItemSE(current) || {};
+        var selectedSE = explicitItemSE(selected) || {};
+        var shape = diagnosticUrlShape(data && data.url);
+        var quality = qualityDiagnostic(data, beforeUrl, activeDirect, topDirect);
+        diagnosticMarkerAttr(prefix + 'se', 'S' + num(dataSE.season) + 'E' + num(dataSE.episode));
+        diagnosticMarkerAttr(prefix + 'index', str(data && data.playlist_index) + '/' + str(data && data.start_index));
+        diagnosticMarkerAttr(prefix + 'current-se', 'S' + num(currentSE.season) + 'E' + num(currentSE.episode));
+        diagnosticMarkerAttr(prefix + 'selected-se', 'S' + num(selectedSE.season) + 'E' + num(selectedSE.episode));
+        diagnosticMarkerAttr(prefix + 'playlist-length', prepared && prepared.list ? prepared.list.length : 0);
+        diagnosticMarkerAttr(prefix + 'url-kind', shape.kind);
+        diagnosticMarkerAttr(prefix + 'url-fields', shape.fields);
+        diagnosticMarkerAttr(prefix + 'url-vs-before', sameDiagnosticUrl(data && data.url, beforeUrl));
+        diagnosticMarkerAttr(prefix + 'url-vs-item-direct', sameDiagnosticUrl(data && data.url, activeDirect));
+        diagnosticMarkerAttr(prefix + 'url-vs-top-direct', sameDiagnosticUrl(data && data.url, topDirect));
+        diagnosticMarkerAttr(prefix + 'quality-count', quality.count);
+        diagnosticMarkerAttr(prefix + 'quality-has-before', quality.before);
+        diagnosticMarkerAttr(prefix + 'quality-has-item-direct', quality.item);
+        diagnosticMarkerAttr(prefix + 'quality-has-top-direct', quality.top);
+        diagnosticMarkerAttr('data-cw-launch-source', resolved && resolved.url ? 'resolved-' + str(resolved.resolver_origin || 'unknown') : (activeDirect ? 'item-direct' : (topDirect ? 'top-direct' : 'none')));
+        diagnosticMarkerAttr('data-cw-launch-record-se', 'S' + num(record && record.season) + 'E' + num(record && record.episode));
+    }
     function makeButton(movie, r) {
         var road = recordRoad(r);
         var sub = $('<div>').text(subtitle(r, road)).html();
@@ -2257,12 +2324,24 @@
             var resolvedIndex = onlineRecordIndex(r);
             var selectedItem = resolvedIndex >= 0 && r.online.items ? r.online.items[resolvedIndex] || {} : {};
             var selectedSE = explicitItemSE(selectedItem) || {};
+            var itemResolverShape = diagnosticUrlShape(selectedItem.resolver_url || '');
+            var topResolverShape = diagnosticUrlShape(r.online.resolver_url || '');
+            var itemDirectShape = diagnosticUrlShape(selectedItem.direct_url || '');
+            var topDirectShape = diagnosticUrlShape(r.online.direct_url || '');
             b.attr('data-cw-current-index', str(r.current_index));
             b.attr('data-cw-online-index', str(r.online.index));
             b.attr('data-cw-resolved-index', str(resolvedIndex));
             b.attr('data-cw-item-se', 'S' + num(selectedSE.season) + 'E' + num(selectedSE.episode));
             b.attr('data-cw-item-resolver-se', resolverCoordinateLabel(selectedItem.resolver_url || selectedItem.direct_url));
             b.attr('data-cw-top-resolver-se', resolverCoordinateLabel(r.online.resolver_url || r.online.direct_url));
+            b.attr('data-cw-item-resolver-kind', itemResolverShape.kind);
+            b.attr('data-cw-item-resolver-fields', itemResolverShape.fields);
+            b.attr('data-cw-top-resolver-kind', topResolverShape.kind);
+            b.attr('data-cw-top-resolver-fields', topResolverShape.fields);
+            b.attr('data-cw-item-direct-kind', itemDirectShape.kind);
+            b.attr('data-cw-top-direct-kind', topDirectShape.kind);
+            b.attr('data-cw-item-top-resolver-same', sameDiagnosticUrl(selectedItem.resolver_url, r.online.resolver_url));
+            b.attr('data-cw-item-top-direct-same', sameDiagnosticUrl(selectedItem.direct_url, r.online.direct_url));
         }
         var lock = 0;
         function go(e) {
