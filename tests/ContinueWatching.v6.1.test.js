@@ -183,6 +183,10 @@ function harness(options = {}) {
         $
     };
     context.addEventListener = function (name, callback) { (listeners['window:' + name] ||= []).push(callback); };
+    context.removeEventListener = function (name, callback) {
+        const key = 'window:' + name;
+        listeners[key] = (listeners[key] || []).filter((listener) => listener !== callback);
+    };
     context.window = context;
     context.window.appready = true;
     context.window.__CONTINUE_WATCH_TEST_MODE__ = true;
@@ -261,7 +265,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.10-lampac-key-sync-20260904');
+assert.equal(h.api.version, 'v6.2.11-window-capture-20260904');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -596,18 +600,23 @@ function seedDelayedOnline(env, id) {
         }
     };
     env.setActive(movie);
-    const pointerListeners = env.listeners['document:pointerdown'] || [];
-    const clickListeners = env.listeners['document:click'] || [];
-    assert.ok(pointerListeners.length, 'plugin must install an early desktop pointer handler for its own Continue button');
-    assert.ok(clickListeners.length, 'plugin must install a capture click handler for its own Continue button');
+    const pointerListeners = env.listeners['window:pointerdown'] || [];
+    const clickListeners = env.listeners['window:click'] || [];
+    assert.ok(pointerListeners.length, 'plugin must install a window-level pointer handler before document competitors');
+    assert.ok(clickListeners.length, 'plugin must install a window-level click handler before document competitors');
     const pointerStopped = { prevent: 0, propagation: 0, immediate: 0 };
-    pointerListeners[pointerListeners.length - 1]({
+    const pointerEvent = {
         pointerType: 'mouse',
         target: { closest(selector) { return selector === '.cw6-button' ? {} : null; } },
         preventDefault() { pointerStopped.prevent += 1; },
         stopPropagation() { pointerStopped.propagation += 1; },
         stopImmediatePropagation() { pointerStopped.immediate += 1; }
-    });
+    };
+    pointerListeners[pointerListeners.length - 1](pointerEvent);
+    let competingPointerLaunches = 0;
+    if (!pointerStopped.immediate) competingPointerLaunches += 1;
+    assert.equal(competingPointerLaunches, 0,
+        'window pointer capture must stop an earlier-registered document handler before it can open E1');
     assert.deepEqual(pointerStopped, { prevent: 1, propagation: 1, immediate: 1 });
     assert.equal(env.androidLaunches.length, 0, 'pointerdown must block competitors without launching before click');
     const stopped = { prevent: 0, propagation: 0, immediate: 0 };
@@ -631,7 +640,7 @@ function seedDelayedOnline(env, id) {
 
 {
     const env = harness({ phone: true });
-    const pointerListeners = env.listeners['document:pointerdown'] || [];
+    const pointerListeners = env.listeners['window:pointerdown'] || [];
     const stopped = { prevent: 0, propagation: 0, immediate: 0 };
     const event = {
         pointerType: 'mouse',
@@ -652,12 +661,14 @@ function seedDelayedOnline(env, id) {
     const staleFullListener = (env.listeners.full || [])[0];
     assert.equal(typeof staleFullListener, 'function');
     assert.equal(env.activeIntervalCount(1800), 1);
-    const reloaded = env.reloadPlugin('v6.2.10-hot-reload-probe');
+    const reloaded = env.reloadPlugin('v6.2.11-hot-reload-probe');
     assert.equal(env.activeIntervalCount(1800), 1,
         'hot reload must retire the previous refresh loop before installing the new version');
     ['click', 'pointerdown', 'mousedown'].forEach((name) => {
-        assert.equal((env.listeners['document:' + name] || []).length, 1,
+        assert.equal((env.listeners['window:' + name] || []).length, 1,
             'hot reload must leave exactly one ' + name + ' capture handler');
+        assert.equal((env.listeners['document:' + name] || []).length, 0,
+            'current capture handlers must not share document with earlier competitors');
     });
     const stateKey = reloaded.testing.buttonStateKey(
         { id: 1, media_type: 'movie' },
@@ -3073,4 +3084,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.10 regression fixtures: PASS');
+console.log('ContinueWatching v6.2.11 regression fixtures: PASS');

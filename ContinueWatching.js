@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.10-lampac-key-sync-20260904';
+    var VERSION = 'v6.2.11-window-capture-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -2400,11 +2400,20 @@
     function installButtonClickCapture() {
         try {
             var previous = window.__CW6_CLICK_CAPTURE_HANDLER__;
-            if (previous && document.removeEventListener) document.removeEventListener('click', previous, true);
+            if (previous) {
+                if (document.removeEventListener) document.removeEventListener('click', previous, true);
+                if (window.removeEventListener) window.removeEventListener('click', previous, true);
+            }
             var previousPointer = window.__CW6_POINTER_CAPTURE_HANDLER__;
-            if (previousPointer && document.removeEventListener) {
-                document.removeEventListener('pointerdown', previousPointer, true);
-                document.removeEventListener('mousedown', previousPointer, true);
+            if (previousPointer) {
+                if (document.removeEventListener) {
+                    document.removeEventListener('pointerdown', previousPointer, true);
+                    document.removeEventListener('mousedown', previousPointer, true);
+                }
+                if (window.removeEventListener) {
+                    window.removeEventListener('pointerdown', previousPointer, true);
+                    window.removeEventListener('mousedown', previousPointer, true);
+                }
             }
             var pointerHandler = function (event) {
                 if (isPhone() || (event && event.pointerType && event.pointerType !== 'mouse')) return;
@@ -2428,9 +2437,9 @@
                 if (movie) launch(movie);
                 return false;
             };
-            document.addEventListener('pointerdown', pointerHandler, true);
-            document.addEventListener('mousedown', pointerHandler, true);
-            document.addEventListener('click', handler, true);
+            window.addEventListener('pointerdown', pointerHandler, true);
+            window.addEventListener('mousedown', pointerHandler, true);
+            window.addEventListener('click', handler, true);
             window.__CW6_POINTER_CAPTURE_HANDLER__ = pointerHandler;
             window.__CW6_CLICK_CAPTURE_HANDLER__ = handler;
             window.__CW6_CLICK_CAPTURE_VERSION__ = VERSION;
