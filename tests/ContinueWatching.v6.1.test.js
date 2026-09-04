@@ -319,7 +319,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.15-browser-timeline-prime-20260904');
+assert.equal(h.api.version, 'v6.2.16-torrent-return-integrity-20260904');
 
 assert.deepEqual(
     t.normalizeSegments('{"duration_ms":2696000,"skip":[{"start":62,"end":152}],"ad":[{"start":0,"end":12}]}', 3697),
@@ -846,10 +846,11 @@ function seedDelayedOnline(env, id) {
             season: 1, episode: 2, episode_title: 'E2', timeline_hash: 'native-torrent-e2',
             time: 210.125, duration: 3000, percent: 7, current_index: 1,
             torrent: {
-                hash: torrentHash, index: 1,
+                hash: torrentHash, magnet: 'magnet:?xt=urn:btih:' + torrentHash, index: 1,
                 items: [
                     { file_id: 0, file_name: 'S01E01.mkv', title: 'E1', season: 1, episode: 1, hash: 'native-torrent-e1', meta: {} },
-                    { file_id: 1, file_name: 'S01E02.mkv', title: 'E2', season: 1, episode: 2, hash: 'native-torrent-e2', meta: {} }
+                    { file_id: 1, file_name: 'S01E02.mkv', title: 'E2', season: 1, episode: 2, hash: 'native-torrent-e2', meta: {} },
+                    { file_id: 2, file_name: 'S01E03.mkv', title: 'E3', season: 1, episode: 3, hash: 'native-torrent-e3', meta: {} }
                 ]
             }
         }
@@ -863,6 +864,16 @@ function seedDelayedOnline(env, id) {
         'torrent Continue must prime only the selected file timeline before native launch');
     assert.equal(env.timelineUpdates[0].hash, 'native-torrent-e2');
     assert.equal(env.timelineUpdates[0].received, true);
+    assert.equal(env.api.pending().torrent.magnet, 'magnet:?xt=urn:btih:' + torrentHash,
+        'torrent Continue must carry the saved magnet into the external-player return checkpoint');
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'native-torrent-e3', road: { time: 91, duration: 3000, percent: 3, updated: 2_000_100 }
+    }));
+    assert.equal(env.api.reconcile(), true);
+    assert.equal(env.api.record().current_index, 2,
+        'a Just+ episode switch must make the selected file the top-level current index');
+    assert.equal(env.api.record().torrent.index, 2,
+        'a Just+ episode switch must keep the torrent descriptor index aligned with current_index');
 }
 
 {
@@ -4018,4 +4029,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.15 regression fixtures: PASS');
+console.log('ContinueWatching v6.2.16 regression fixtures: PASS');

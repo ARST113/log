@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.15-browser-timeline-prime-20260904';
+    var VERSION = 'v6.2.16-torrent-return-integrity-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -1376,7 +1376,9 @@
             var parsed = parseStream(url);
             if (!session.torrent_hash && parsed) session.torrent_hash = parsed.hash;
             var seed = state.torrentSeedByCard[session.card_key];
-            session.magnet = seed ? seed.magnet : '';
+            var inheritedTorrentMagnet = previousSession && previousSession.source === 'torrent' &&
+                previousSession.card_key === session.card_key ? previousSession.magnet : '';
+            session.magnet = str(data.magnet || (item && item.magnet) || (seed && seed.magnet) || inheritedTorrentMagnet || '');
         } else if (source === 'online') {
             session.resolver = lookupResolver(url, session.card_key, item, session.movie);
             var onlineSeed = state.onlineLaunchSeed;
@@ -1569,7 +1571,10 @@
                 : num(itemIndex),
             poster: str(session.movie.poster_path || session.movie.img || session.movie.poster || '')
         };
-        if (session.source === 'torrent') r.torrent = torrentDescriptor(session);
+        if (session.source === 'torrent') {
+            r.torrent = torrentDescriptor(session);
+            if (r.torrent) r.torrent.index = num(itemIndex);
+        }
         if (session.source === 'online') {
             r.online = onlineDescriptor(session, itemIndex);
             if (r.online) r.current_index = num(r.online.index);
@@ -2448,6 +2453,7 @@
             item.position = time > 0 ? time : -1; item.time = time; item.duration = dur; item.percent = per;
             item.playlist = list; item.playlist_index = idx; item.start_index = idx;
             item.torrent_hash = hash || record.torrent.hash || 'continue_watch_v6';
+            item.magnet = str(record.torrent.magnet || '');
             item.continue_watch_v6 = true;
             try {
                 normalizeLaunchSegments(item);
