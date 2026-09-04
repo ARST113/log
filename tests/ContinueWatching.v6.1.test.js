@@ -38,6 +38,7 @@ function harness(options = {}) {
     const local = {};
     const roads = {};
     const listeners = {};
+    const playerListeners = {};
     const timelineListeners = [];
     const timers = new Map();
     const intervals = [];
@@ -56,6 +57,18 @@ function harness(options = {}) {
         }
     };
 
+    function emitPlayer(name, event) {
+        (playerListeners[name] || []).forEach((callback) => callback(event));
+    }
+
+    function internalPlayerPlay(data) {
+        let run = true;
+        emitPlayer('create', { data, abort() { run = false; } });
+        if (!run) return null;
+        emitPlayer('start', data);
+        return Android.openPlayer(data.url, data);
+    }
+
     const document = {
         head: { appendChild() {} },
         visibilityState: 'visible',
@@ -73,7 +86,11 @@ function harness(options = {}) {
         Noty: { show() {} },
         Platform: { is() { return false; } },
         Android,
-        Player: { play(data) { return Android.openPlayer(data.url, data); }, playlist(data) { playlistCalls.push(data); } },
+        Player: {
+            listener: { follow(name, callback) { (playerListeners[name] ||= []).push(callback); } },
+            play(data) { return internalPlayerPlay(data); },
+            playlist(data) { playlistCalls.push(data); }
+        },
         Storage: {
             listener: { follow(name, callback) { if (name === 'change') storageListeners.push(callback); } },
             field() { return ''; },
@@ -165,6 +182,7 @@ function harness(options = {}) {
             else delete context.window.Online2RchHandshake;
         },
         setActive(movie) { active = movie; },
+        internalPlayerPlay,
         setClock(value) { clock = value; },
         schedule(callback, delay) { return context.setTimeout(callback, delay); },
         advance(milliseconds) {
@@ -1114,6 +1132,79 @@ function seedDelayedOnline(env, id) {
     assert.doesNotThrow(() => JSON.stringify(payload));
     h.setRequestHandler(null);
     delete h.storage.aesgcmkey;
+}
+
+{
+    ['stale', 'missing'].forEach((indexMode, caseIndex) => {
+        const env = harness();
+        const storageKey = 'continue_watch_v6_7';
+        const movie = { id: 810 + caseIndex, media_type: 'tv', title: 'Internal switch ' + indexMode, original_name: 'Internal switch ' + indexMode };
+        const cardKey = env.api.testing.cardKey(movie);
+        const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+        const endpoint = (episode) => 'https://lampac.fun/lite/zetflix/video?id=' + movie.id + '&s=1&e=' + episode + '&t=Original';
+        const media = (episode) => 'https://media.example/internal-' + indexMode + '-e' + episode + '.m3u8';
+        const cells = [1, 2].map((episode) => ({
+            title: 'E' + episode,
+            url: episode === 1 ? media(episode) : function lazyResolver() {},
+            resolver_url: endpoint(episode),
+            season: 1,
+            episode,
+            timeline: { hash: 'internal-' + indexMode + '-e' + episode }
+        }));
+
+        env.setActive(movie);
+        env.setClock(4_050_000 + caseIndex * 10_000);
+        env.listeners.request_secuses.forEach((listener) => listener({
+            params: { url: endpoint(1) }, data: { url: media(1) }
+        }));
+        env.Lampa.Player.play(Object.assign({}, cells[0], {
+            card: movie, movie, isonline: true, playlist: cells, playlist_index: 0
+        }));
+        env.Lampa.Player.playlist(cells);
+        env.timelineListeners.forEach((listener) => listener({
+            hash: cells[0].timeline.hash,
+            road: { time: 25, duration: 3000, percent: 1, updated: env.now() + 100 }
+        }));
+
+        env.listeners.request_secuses.forEach((listener) => listener({
+            params: { url: endpoint(2) }, data: { url: media(2) }
+        }));
+        const next = Object.assign({}, cells[1], { url: media(2) });
+        delete next.isonline;
+        delete next.playlist;
+        if (indexMode === 'stale') next.playlist_index = 0;
+        else delete next.playlist_index;
+        env.internalPlayerPlay(next);
+
+        assert.equal(env.api.session().episode, 2,
+            'an internal online E2 play with a ' + indexMode + ' numeric index must replace the E1 capture session');
+        assert.equal(env.api.session().hash, cells[1].timeline.hash);
+        assert.equal(env.api.session().url, media(2));
+        assert.equal(new URL(env.api.session().resolver.url).searchParams.get('e'), '2',
+            'the active capture session must retain the E2 resolver needed by HDVB Continue');
+
+        env.timelineListeners.forEach((listener) => listener({
+            hash: cells[1].timeline.hash,
+            road: { time: 35, duration: 3000, percent: 1, updated: env.now() + 200 }
+        }));
+        const saved = env.storage[storageKey][recordKey];
+        assert.equal(saved.episode, 2, 'the internal E2 switch must persist E2');
+        assert.equal(saved.timeline_hash, cells[1].timeline.hash);
+        assert.equal(saved.online.items[saved.current_index].episode, 2);
+
+        const resolvedEpisodes = [];
+        env.setRequestHandler(({ url, ok }) => {
+            const episode = Number(new URL(url).searchParams.get('e'));
+            resolvedEpisodes.push(episode);
+            ok({ url: media(episode) + '?fresh=1' });
+        });
+        const before = env.androidLaunches.length;
+        env.api.launch();
+        assert.equal(resolvedEpisodes[0], 2, 'Continue must resolve E2 before any neighbor');
+        assert.equal(env.androidLaunches.length, before + 1);
+        assert.equal(env.androidLaunches[before].parsed.episode, 2);
+        assert.equal(env.androidLaunches[before].parsed.url, media(2) + '?fresh=1');
+    });
 }
 
 {
@@ -2118,6 +2209,21 @@ function seedDelayedOnline(env, id) {
         'adding a Lampac key script after plugin install must automatically trigger a remote GET');
     assert.ok(env.requests.some((request) => request.post && new URL(request.url).pathname === '/storage/set'),
         'a missing key-selected document must then be initialized with a JSON POST');
+}
+
+{
+    const env = harness();
+    env.setRequestHandler(({ post, ok }) => ok(post ? { success: true } : { success: false, msg: 'outFile' }));
+    assert.equal(env.requests.length, 0, 'remote sync is disabled before an enabled Lampac plugin is registered');
+    env.storage.plugins = [{ url: 'https://lampac.fun/sync/js/tol', status: 1 }];
+    env.fireIntervals(1800);
+    const gets = env.requests.filter((request) => !request.post);
+    const posts = env.requests.filter((request) => request.post);
+    assert.ok(gets.some((request) => new URL(request.url).searchParams.get('token') === 'tol'),
+        'an enabled Lampac key stored in the plugin registry must trigger a remote GET even without a script element');
+    assert.ok(posts.some((request) => new URL(request.url).searchParams.get('token') === 'tol'),
+        'a missing registry-key namespace must be repaired with a schema-1 POST');
+    assert.equal(env.storageSyncCalls(), 0, 'registry discovery must not invoke CUB Storage.sync');
 }
 
 {
