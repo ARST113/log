@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.16-torrent-return-integrity-20260904';
+    var VERSION = 'v6.2.17-remote-rch-redaction-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -1903,7 +1903,8 @@
                 var normalized = str(key).toLowerCase();
                 if (normalized === 'token' || normalized === 'aesgcmkey' || normalized === 'authorization' ||
                     normalized === 'account' || normalized === 'headers' || normalized === 'account_email' ||
-                    normalized === 'uid' || normalized === 'nws_id') remove.push(key);
+                    normalized === 'uid' || normalized === 'nws_id' || normalized === 'rch' ||
+                    normalized === 'rch_body') remove.push(key);
             });
             remove.forEach(function (key) { u.searchParams.delete(key); });
         } catch (e) {}

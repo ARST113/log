@@ -319,7 +319,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.16-torrent-return-integrity-20260904');
+assert.equal(h.api.version, 'v6.2.17-remote-rch-redaction-20260904');
 
 assert.deepEqual(
     t.normalizeSegments('{"duration_ms":2696000,"skip":[{"start":62,"end":152}],"ad":[{"start":0,"end":12}]}', 3697),
@@ -3726,8 +3726,8 @@ function syncRecord(env, id, activityAt, itemCount) {
     const storageKey = 'continue_watch_v6_7';
     const local = syncRecord(env, 922, 3_210_000, 1);
     const malformed = syncRecord(env, 923, 3_210_100, 1);
-    const sensitiveSentinels = ['legitimate-hdvb-token', 'adversarial-aes', 'adversarial-authorization', 'adversarial-account', 'adversarial-headers'];
-    const resolver = 'https://lampac.fun/lite/hdvb/video?id=922&s=1&e=1&t=HDVB&ToKeN=legitimate-hdvb-token&AeSgCmKeY=adversarial-aes&AUTHORIZATION=adversarial-authorization&AcCoUnT=adversarial-account&HeAdErS=adversarial-headers&AcCoUnT_EmAiL=adversarial-account&UiD=adversarial-account&NwS_iD=adversarial-account';
+    const sensitiveSentinels = ['legitimate-hdvb-token', 'adversarial-aes', 'adversarial-authorization', 'adversarial-account', 'adversarial-headers', 'query-rch-secret', 'query-rch-body-secret'];
+    const resolver = 'https://lampac.fun/lite/hdvb/video?id=922&s=1&e=1&t=HDVB&ToKeN=legitimate-hdvb-token&AeSgCmKeY=adversarial-aes&AUTHORIZATION=adversarial-authorization&AcCoUnT=adversarial-account&HeAdErS=adversarial-headers&AcCoUnT_EmAiL=adversarial-account&UiD=adversarial-account&NwS_iD=adversarial-account&RcH=query-rch-secret&RcH_BoDy=query-rch-body-secret';
     local.value.time = 343;
     local.value.online.resolver_url = resolver;
     local.value.online.selection = { provider: 'hdvb', translation: 'hdvb' };
@@ -3769,8 +3769,13 @@ function syncRecord(env, id, activityAt, itemCount) {
         diagnostic: sensitiveSentinels.filter((secret) => diagnostic.includes(secret)),
         remote: sensitiveSentinels.filter((secret) => remoteBody.includes(secret)),
         nativeToken: new URL(nativeResolverUrl).searchParams.get('ToKeN'),
+        nativeRch: new URL(nativeResolverUrl).searchParams.get('RcH'),
+        nativeRchBody: new URL(nativeResolverUrl).searchParams.get('RcH_BoDy'),
         resumeTime: env.androidLaunches[0] && env.androidLaunches[0].parsed.time
-    }, { diagnostic: [], remote: [], nativeToken: 'legitimate-hdvb-token', resumeTime: 343 },
+    }, {
+        diagnostic: [], remote: [], nativeToken: 'legitimate-hdvb-token',
+        nativeRch: 'query-rch-secret', nativeRchBody: 'query-rch-body-secret', resumeTime: 343
+    },
     'mixed-case credential aliases must be hidden publicly/remotely while the local HDVB token still resumes at 343 seconds');
 }
 
@@ -4029,4 +4034,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.16 regression fixtures: PASS');
+console.log('ContinueWatching v6.2.17 regression fixtures: PASS');
