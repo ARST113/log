@@ -40,6 +40,7 @@
         remoteBusy: false,
         remoteQueued: false,
         remoteTimer: null,
+        remoteGeneration: 0,
         controllerNode: null,
         controllerState: '',
         onlineLaunchSeed: null
@@ -193,20 +194,23 @@
         return m || state.lastMovie;
     }
     function profileId() {
-        try {
-            var configured = str(Lampa.Storage.get('lampac_profile_id', '')).trim();
-            if (configured) return configured;
-        } catch (e0) {}
         var a = null;
         try { a = Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.account; } catch (e) {}
         try { if (!a) a = Lampa.Storage.get('account', {}); } catch (e2) {}
         if (a && a.profile && a.profile.id !== undefined && a.profile.id !== null && a.profile.id !== '') return str(a.profile.id);
+        try {
+            var configured = str(Lampa.Storage.get('lampac_profile_id', '')).trim();
+            if (configured) return configured;
+        } catch (e0) {}
         return 'default';
     }
     function remoteProfileId() { return profileId(); }
-    function storageKey() { return STORAGE_BASE + '_' + profileId(); }
-    function pendingKey() { return PENDING_BASE + '_' + profileId(); }
-    function outboxKey() { return OUTBOX_BASE + '_' + profileId(); }
+    function storageKeyForProfile(profile) { return STORAGE_BASE + '_' + profile; }
+    function pendingKeyForProfile(profile) { return PENDING_BASE + '_' + profile; }
+    function outboxKeyForProfile(profile) { return OUTBOX_BASE + '_' + profile; }
+    function storageKey() { return storageKeyForProfile(profileId()); }
+    function pendingKey() { return pendingKeyForProfile(profileId()); }
+    function outboxKey() { return outboxKeyForProfile(profileId()); }
     function discoverLampacToken() {
         var scripts = [];
         try { scripts = document && document.scripts ? document.scripts : []; } catch (e) {}
@@ -230,22 +234,44 @@
         try { identity.uid = str(Lampa.Storage.get('lampac_unic_id', '')).trim(); } catch (e2) {}
         return identity;
     }
-    function lampacStorageUrl(action) {
-        var identity = lampacIdentity();
+    function lampacStorageUrl(action, identity) {
+        identity = identity || lampacIdentity();
         var u = new URL('/storage/' + (action === 'set' ? 'set' : 'get'), LAMPAC_BASE);
         u.searchParams.set('path', REMOTE_PATH);
-        u.searchParams.set('pathfile', STORAGE_BASE + '_' + remoteProfileId());
+        u.searchParams.set('pathfile', STORAGE_BASE + '_' + identity.profile_id);
         u.searchParams.set('profile_id', identity.profile_id);
         if (identity.token) u.searchParams.set('token', identity.token);
         if (identity.account_email) u.searchParams.set('account_email', identity.account_email);
         if (identity.uid) u.searchParams.set('uid', identity.uid);
         return u.toString();
     }
-    function remoteAvailable() {
-        var identity = lampacIdentity();
+    function remoteAvailable(identity) {
+        identity = identity || lampacIdentity();
         return !!(identity.token || identity.account_email || identity.uid);
     }
-    function remoteRequest(action, body, callback) {
+    function identityFingerprint(identity) {
+        identity = identity || {};
+        return [identity.token, identity.account_email, identity.uid, identity.profile_id].map(str).join('\u001f');
+    }
+    function remoteContext() {
+        var profile = profileId();
+        var identity = lampacIdentity();
+        return {
+            profile: profile,
+            storageKey: storageKeyForProfile(profile),
+            outboxKey: outboxKeyForProfile(profile),
+            identity: identity,
+            identityKey: identityFingerprint(identity),
+            generation: state.remoteGeneration,
+            getUrl: lampacStorageUrl('get', identity),
+            setUrl: lampacStorageUrl('set', identity)
+        };
+    }
+    function remoteContextCurrent(context) {
+        return !!context && context.generation === state.remoteGeneration && context.profile === profileId() &&
+            context.identityKey === identityFingerprint(lampacIdentity());
+    }
+    function remoteRequest(action, body, callback, requestUrl) {
         var settled = false;
         var timer = null;
         function finish(value) {
@@ -254,12 +280,12 @@
             if (timer) clearTimeout(timer);
             callback(value);
         }
-        if (!remoteAvailable() || !Lampa.Reguest) return finish(null);
+        if ((!requestUrl && !remoteAvailable()) || !Lampa.Reguest) return finish(null);
         timer = setTimeout(function () { finish(null); }, REMOTE_TIMEOUT);
         try {
             var request = new Lampa.Reguest();
             try { request.timeout(REMOTE_TIMEOUT); } catch (e) {}
-            request.native(lampacStorageUrl(action), function (data) { finish(data); }, function () { finish(null); },
+            request.native(requestUrl || lampacStorageUrl(action), function (data) { finish(data); }, function () { finish(null); },
                 action === 'set', action === 'set' ? body : undefined);
         } catch (e2) { finish(null); }
     }
@@ -299,6 +325,10 @@
                     delete value[key];
                     return;
                 }
+                if (normalized === 'url' || normalized === 'uri' || normalized === 'src') {
+                    delete value[key];
+                    return;
+                }
                 stripNestedCredentials(value[key]);
             });
         }
@@ -331,21 +361,24 @@
         return merged;
     }
     function pullRemote(callback) {
+        var context = remoteContext();
+        if (!remoteAvailable(context.identity)) return callback(false, null);
         remoteRequest('get', null, function (response) {
+            if (!remoteContextCurrent(context)) return callback(false, null);
             var document = parseRemoteDocument(response);
             if (!document) return callback(false, null);
-            var merged = mergeRecordMaps(document.records, store(), readOutbox());
-            writeStore(merged);
+            var merged = mergeRecordMaps(document.records, readStore(context.storageKey), readOutboxByKey(context.outboxKey));
+            writeStoreByKey(context.storageKey, merged);
             refreshUI();
             callback(true, document);
-        });
+        }, context.getUrl);
     }
-    function pushRemote(records, callback) {
+    function pushRemote(records, callback, requestUrl) {
         var document = { schema: REMOTE_SCHEMA, updated_at: now(), records: mergeRecordMaps(records) };
         remoteRequest('set', JSON.stringify(document), function (response) {
             if (typeof response === 'string') { try { response = JSON.parse(response); } catch (e) { response = null; } }
             callback(!!response && !(response.success === false), document);
-        });
+        }, requestUrl);
     }
     function recordMapsEqual(a, b) {
         var left = mergeRecordMaps(a), right = mergeRecordMaps(b);
@@ -361,10 +394,12 @@
         state.remoteTimer = setTimeout(function () { state.remoteTimer = null; syncRemote(reason || 'debounce'); }, REMOTE_DEBOUNCE);
     }
     function syncRemote(reason) {
-        if (!remoteAvailable()) return false;
+        var context = remoteContext();
+        if (!remoteAvailable(context.identity)) return false;
         if (state.remoteBusy) { state.remoteQueued = true; return false; }
         state.remoteBusy = true;
         var attempts = 0;
+        function stale() { return !remoteContextCurrent(context); }
         function finish() {
             state.remoteBusy = false;
             if (!state.remoteQueued) return;
@@ -372,46 +407,51 @@
             scheduleRemoteSync('queued');
         }
         function apply(document) {
-            var merged = mergeRecordMaps(document.records, store(), readOutbox());
-            writeStore(merged);
+            var merged = mergeRecordMaps(document.records, readStore(context.storageKey), readOutboxByKey(context.outboxKey));
+            writeStoreByKey(context.storageKey, merged);
             refreshUI();
             return merged;
         }
         function verifyAfterPush() {
             remoteRequest('get', null, function (response) {
+                if (stale()) return finish();
                 var verified = parseRemoteDocument(response);
                 if (!verified) return finish();
                 var merged = apply(verified);
                 if (recordMapsEqual(verified.records, merged) || attempts >= 3) return finish();
                 writeAttempt(verified);
-            });
+            }, context.getUrl);
         }
         function writeAttempt(remote) {
+            if (stale()) return finish();
             var merged = apply(remote);
             if (recordMapsEqual(remote.records, merged)) return finish();
             attempts += 1;
-            pushRemote(merged, function (ok) { if (!ok) return finish(); verifyAfterPush(); });
+            pushRemote(merged, function (ok) { if (stale() || !ok) return finish(); verifyAfterPush(); }, context.setUrl);
         }
         remoteRequest('get', null, function (response) {
+            if (stale()) return finish();
             var remote = parseRemoteDocument(response);
             if (!remote) return finish();
             writeAttempt(remote);
-        });
+        }, context.getUrl);
         return true;
     }
-    function store() {
+    function readStore(key) {
         try {
-            var v = Lampa.Storage.get(storageKey(), {});
+            var v = Lampa.Storage.get(key, {});
             return v && typeof v === 'object' ? v : {};
         } catch (e) { return {}; }
     }
-    function readOutbox() {
+    function store() { return readStore(storageKey()); }
+    function readOutboxByKey(key) {
         try {
-            var raw = localStorage.getItem(outboxKey());
+            var raw = localStorage.getItem(key);
             var v = raw ? JSON.parse(raw) : {};
             return v && typeof v === 'object' ? v : {};
         } catch (e) { return {}; }
     }
+    function readOutbox() { return readOutboxByKey(outboxKey()); }
     function writeOutbox(v) {
         try {
             var keys = Object.keys(v || {});
@@ -437,9 +477,10 @@
         }
         writeOutbox(out);
     }
-    function writeStore(v) {
-        try { Lampa.Storage.set(storageKey(), v); } catch (e) {}
+    function writeStoreByKey(key, v) {
+        try { Lampa.Storage.set(key, v); } catch (e) {}
     }
+    function writeStore(v) { writeStoreByKey(storageKey(), v); }
     function flushOutbox(forceWrite) {
         var out = readOutbox();
         if (!Object.keys(out).length) { refreshUI(); if (forceWrite) scheduleRemoteSync('outbox'); return false; }
@@ -1963,6 +2004,7 @@
                     if (!e) return;
                     if (e.name === storageKey()) refreshUI();
                     if (e.name === 'account' || e.name === 'account_email' || e.name === 'lampac_unic_id' || e.name === 'lampac_profile_id') {
+                        state.remoteGeneration += 1;
                         setTimeout(function () { seedOutboxFromStore(); flushOutbox(true); syncRemote('identity'); refreshUI(); }, 5500);
                     }
                 });

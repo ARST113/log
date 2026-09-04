@@ -154,6 +154,7 @@ function harness(options = {}) {
         rch_nws: context.rch_nws,
         setRequestHandler(handler) { requestHandler = handler; },
         setScripts(scripts) { document.scripts = (scripts || []).map((src) => ({ src })); },
+        setAccountProfile(id) { Lampa.Account.Permit.account = id === null ? {} : { profile: { id } }; },
         dispatchStorageChange(name) { storageListeners.forEach((callback) => callback({ name })); },
         dispatchWindowEvent(name) { (listeners['window:' + name] || []).forEach((callback) => callback()); },
         setVisibility(value) { document.visibilityState = value; (listeners['document:visibilitychange'] || []).forEach((callback) => callback()); },
@@ -1915,14 +1916,25 @@ function seedDelayedOnline(env, id) {
     assert.equal(setUrl.pathname, '/storage/set');
     assert.equal(getUrl.searchParams.get('token'), 'nast');
     assert.equal(getUrl.searchParams.get('path'), 'continuewatch');
-    assert.equal(getUrl.searchParams.get('pathfile'), 'continue_watch_v6_family room');
+    assert.equal(getUrl.searchParams.get('pathfile'), 'continue_watch_v6_7');
     assert.equal(getUrl.searchParams.get('account_email'), 'viewer@example.test');
     assert.equal(getUrl.searchParams.get('uid'), 'device-id');
-    assert.equal(getUrl.searchParams.get('profile_id'), 'family room');
+    assert.equal(getUrl.searchParams.get('profile_id'), '7');
     changedToken.setScripts(['https://untrusted.example/sync/js/evil']);
     assert.equal(changedToken.api.testing.discoverLampacToken(), '');
     assert.equal(changedToken.requests.length, requestsBeforeUrlHelpers, 'identity/URL helpers must not themselves make network requests');
     assert.equal(changedToken.storageSyncCalls(), 0);
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    env.storage.lampac_profile_id = 'lampac-profile';
+    env.setAccountProfile('account-profile');
+    assert.equal(env.api.sync().key, 'continue_watch_v6_account-profile', 'the active account profile must select the local store before the Lampac fallback');
+    env.setAccountProfile(null);
+    assert.equal(env.api.sync().key, 'continue_watch_v6_lampac-profile', 'lampac_profile_id must be used when the active account has no profile');
+    delete env.storage.lampac_profile_id;
+    assert.equal(env.api.sync().key, 'continue_watch_v6_default', 'default must be used when neither active nor Lampac profile is available');
 }
 
 function syncRecord(env, id, activityAt, itemCount) {
@@ -2000,7 +2012,13 @@ function syncRecord(env, id, activityAt, itemCount) {
     local.value.online.direct_url = 'https://media.example/transient-proxy/video.m3u8';
     local.value.online.resolver_url += '&account_email=source%40example.test&uid=source-device&nws_id=source-rch';
     local.value.online.resolver_headers = { 'X-Kit-AesGcm': 'secret', Authorization: 'Bearer private' };
-    local.value.online.items[0].meta.segments = [{ duration: 4, url: 'https://segment.example/part-1.ts' }];
+    local.value.online.items[0].meta.segments = [{
+        duration: 4, type: 'video/mp2t', url: 'https://segment.example/part-1.ts',
+        uri: 'https://segment.example/part-1-uri.ts', src: 'https://segment.example/part-1-src.ts'
+    }];
+    local.value.online.items[0].meta.transport = {
+        url: 'https://media.example/nested-url.m3u8', uri: 'https://media.example/nested-uri.m3u8', src: 'https://media.example/nested-src.m3u8'
+    };
     local.value.online.items[0].meta.headers = { Authorization: 'Bearer nested-private' };
     local.value.online.items[0].meta.rch = { body: 'source-rch-body' };
     env.storage.continue_watch_v6_7 = { [local.key]: local.value };
@@ -2023,7 +2041,7 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(firstBody.records[local.key].episode, 1);
     assert.equal(firstBody.records[local.key].current_index, 0);
     assert.equal(firstBody.records[local.key].online.items.length, 2);
-    assert.deepEqual(firstBody.records[local.key].online.items[0].meta.segments, [{ duration: 4, url: 'https://segment.example/part-1.ts' }]);
+    assert.deepEqual(firstBody.records[local.key].online.items[0].meta.segments, [{ duration: 4, type: 'video/mp2t' }], 'remote segments must retain timing/type but not media locations');
     const normalizedBodyKeys = Object.keys(firstBody.records[local.key].online).map((key) => key.toLowerCase());
     assert.equal(normalizedBodyKeys.some((key) => ['token', 'account_email', 'uid', 'nws_id', 'aesgcmkey', 'rch'].includes(key)), false);
     assert.equal(JSON.stringify(firstBody).includes('source@example.test'), false);
@@ -2033,6 +2051,9 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(JSON.stringify(firstBody).includes('Bearer nested-private'), false);
     assert.equal(JSON.stringify(firstBody).includes('source-rch-body'), false);
     assert.equal(JSON.stringify(firstBody).includes('transient-proxy'), false);
+    ['segment.example', 'nested-url.m3u8', 'nested-uri.m3u8', 'nested-src.m3u8'].forEach((needle) => {
+        assert.equal(JSON.stringify(firstBody).includes(needle), false, 'remote body must not retain nested transient media URL ' + needle);
+    });
     assert.equal(posts.length, 2, 'a verification document missing the local record must produce one merged repair POST');
     const repair = JSON.parse(posts[1].params);
     assert.ok(repair.records[local.key]);
@@ -2071,6 +2092,28 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(diagnostic.includes('arx.lamp'), false);
     assert.equal(diagnostic.includes('account_email'), false);
     assert.equal(diagnostic.includes('lampac_unic_id'), false);
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    env.setAccountProfile('profile-a');
+    const localA = syncRecord(env, 940, 3_400_000, 1);
+    const remoteA = syncRecord(env, 941, 3_400_100, 1);
+    const localB = syncRecord(env, 942, 3_400_200, 1);
+    env.storage['continue_watch_v6_profile-a'] = { [localA.key]: localA.value };
+    env.storage['continue_watch_v6_profile-b'] = { [localB.key]: localB.value };
+    let heldGet = null;
+    env.setRequestHandler(({ post, ok, fail }) => {
+        if (!post && !heldGet) { heldGet = ok; return; }
+        fail();
+    });
+    env.api.testing.syncRemote('profile-a');
+    assert.ok(heldGet, 'the profile-A GET must remain in flight for the profile-switch regression');
+    env.setAccountProfile('profile-b');
+    env.dispatchStorageChange('account');
+    heldGet({ schema: 1, updated_at: 3_400_100, records: { [remoteA.key]: remoteA.value } });
+    assert.deepEqual(Object.keys(env.storage['continue_watch_v6_profile-b']).sort(), [localB.key], 'a stale profile-A response must not merge into profile B local storage');
+    assert.equal(env.requests.filter((request) => request.post).length, 0, 'a stale profile-A response must never POST its records to profile B');
 }
 
 console.log('ContinueWatching v6.2: identity fixtures plus 53 prior fixtures passed');
