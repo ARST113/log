@@ -354,8 +354,8 @@
     }
     function chooseMergedRecord(oldRecord, candidate) {
         if (!oldRecord) return candidate;
-        if (candidate.completion_guard && !oldRecord.completion_guard && num(oldRecord.percent) < 100 && num(candidate.percent) <= num(oldRecord.percent)) return oldRecord;
-        if (oldRecord.completion_guard && !candidate.completion_guard && num(candidate.percent) < 100 && num(oldRecord.percent) <= num(candidate.percent)) return candidate;
+        if (candidate.completion_guard && !oldRecord.completion_guard && num(oldRecord.percent) < 100 && num(candidate.time) <= num(oldRecord.time)) return oldRecord;
+        if (oldRecord.completion_guard && !candidate.completion_guard && num(candidate.percent) < 100 && num(candidate.time) >= num(oldRecord.time)) return candidate;
         if (num(candidate.activity_at) > num(oldRecord.activity_at)) return candidate;
         if (num(candidate.activity_at) < num(oldRecord.activity_at)) return oldRecord;
         if (rejectEqualTimeDowngrade(oldRecord, candidate)) return oldRecord;

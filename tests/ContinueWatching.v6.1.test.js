@@ -2214,4 +2214,24 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(env.requests.filter((request) => request.post).length, 0, 'a stale profile-A response must never POST its records to profile B');
 }
 
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
+    const local = syncRecord(env, 980, 3_800_000, 1);
+    local.value.time = 300; local.value.duration = 0; local.value.percent = 0;
+    const falseComplete = syncRecord(env, 980, 3_800_100, 1);
+    falseComplete.value.time = 20; falseComplete.value.duration = 3000; falseComplete.value.percent = 100;
+    env.storage.continue_watch_v6_7 = { [local.key]: local.value };
+    let gets = 0;
+    env.setRequestHandler(({ post, params, ok }) => {
+        if (post) return ok({ success: true });
+        gets += 1;
+        return ok({ schema: 1, updated_at: gets === 1 ? 3_800_100 : 3_800_200,
+            records: { [local.key]: gets === 1 ? falseComplete.value : local.value } });
+    });
+    env.api.testing.syncRemote('time-only-partial');
+    const posts = env.requests.filter((request) => request.post);
+    assert.equal(env.api.sync().store[local.key].time, 300, 'a guarded false completion must not replace a time-only local partial');
+    assert.equal(JSON.parse(posts[0].params).records[local.key].time, 300, 'the repair POST must converge remote state to the valid local time-only partial');
+}
+
 console.log('ContinueWatching v6.2: identity fixtures plus 53 prior fixtures passed');
