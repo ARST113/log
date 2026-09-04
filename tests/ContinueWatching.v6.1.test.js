@@ -48,6 +48,24 @@ function harness(options = {}) {
     const storageListeners = [];
     const requests = [];
     let storageSyncCalls = 0;
+    const $ = jqueryStub();
+
+    $.ajax = function (settings) {
+        const request = {
+            url: settings.url,
+            post: String(settings.type || 'GET').toUpperCase() === 'POST' ? settings.data : false,
+            params: {
+                transport: 'jquery',
+                contentType: settings.contentType,
+                processData: settings.processData,
+                cache: settings.cache
+            },
+            timeout: Number(settings.timeout || 0)
+        };
+        requests.push(request);
+        if (requestHandler) return requestHandler({ ...request, ok: settings.success, fail: settings.error });
+        if (settings.error) settings.error({ status: 0 });
+    };
 
     const Android = {
         openPlayer(link, data) {
@@ -149,7 +167,7 @@ function harness(options = {}) {
         setInterval(callback, delay) { intervals.push({ callback, delay: Number(delay || 0) }); return intervals.length; },
         clearInterval() {},
         Lampa,
-        $: jqueryStub()
+        $
     };
     context.addEventListener = function (name, callback) { (listeners['window:' + name] ||= []).push(callback); };
     context.window = context;
@@ -216,7 +234,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.4-lampac-key-sync-20260904');
+assert.equal(h.api.version, 'v6.2.5-lampac-key-sync-20260904');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -2013,6 +2031,106 @@ function seedDelayedOnline(env, id) {
 {
     const env = harness();
     const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 819, media_type: 'tv', title: 'Resolver-owned episode index', original_name: 'Resolver-owned episode index' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const resolver = (episode) => 'https://lampac.fun/lite/zetflix/video?id=819&s=1&e=' + episode + '&t=Original';
+    const selection = { provider: 'zetflix', translation: 'original' };
+    env.storage[storageKey] = {
+        [recordKey]: {
+            v: 6, card_key: cardKey, source: 'online', activity_at: 7_305_000,
+            season: 1, episode: 2, episode_title: 'E2 title', timeline_hash: 'runtime-e2-hash',
+            time: 44, duration: 3430, percent: 1, current_index: 0,
+            online: {
+                index: 0, resolver_url: resolver(1), selection,
+                items: [
+                    { title: 'E1 title', season: 0, episode: 0, hash: 'opaque-e1', resolver_url: resolver(1), selection, meta: {} },
+                    { title: 'E2 title', season: 0, episode: 0, hash: 'opaque-e2', resolver_url: resolver(2), selection, meta: {} }
+                ]
+            }
+        }
+    };
+    env.setActive(movie);
+    const calls = [];
+    env.setRequestHandler(({ url, ok }) => {
+        const episode = Number(new URL(url).searchParams.get('e'));
+        calls.push(episode);
+        ok({ url: 'https://media.example/resolver-owned-e' + episode + '.m3u8' });
+    });
+    env.api.launch();
+    assert.equal(calls[0], 2,
+        'resolver coordinates must recover E2 when saved numeric indices and item coordinates are stale');
+    const payload = env.androidLaunches[env.androidLaunches.length - 1].parsed;
+    assert.equal(payload.episode, 2);
+    assert.equal(payload.title, 'E2 title');
+    assert.equal(payload.url, 'https://media.example/resolver-owned-e2.m3u8');
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 820, media_type: 'tv', title: 'Resolver selection index', original_name: 'Resolver selection index' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const resolver = (voice) => 'https://lampac.fun/lite/zetflix/video?id=820&s=1&e=2&t=' + encodeURIComponent(voice);
+    env.storage[storageKey] = {
+        [recordKey]: {
+            v: 6, card_key: cardKey, source: 'online', activity_at: 7_306_000,
+            season: 1, episode: 2, episode_title: 'E2 Original', timeline_hash: 'selection-e2',
+            time: 45, duration: 3400, percent: 1, current_index: 0,
+            online: {
+                index: 0, selection: { provider: 'zetflix', translation: 'original' },
+                items: [
+                    { title: 'E2 Fox', resolver_url: resolver('Fox Life'), selection: { provider: 'zetflix', translation: 'fox life' }, meta: {} },
+                    { title: 'E2 Original', resolver_url: resolver('Original'), selection: { provider: 'zetflix', translation: 'original' }, meta: {} }
+                ]
+            }
+        }
+    };
+    env.setActive(movie);
+    const translations = [];
+    env.setRequestHandler(({ url, ok }) => {
+        translations.push(new URL(url).searchParams.get('t'));
+        ok({ url: 'https://media.example/selection-e2.m3u8' });
+    });
+    env.api.launch();
+    assert.equal(translations[0], 'Original',
+        'resolver-coordinate recovery must retain the saved translation while sharing progress');
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 821, media_type: 'tv', title: 'Ambiguous resolver index', original_name: 'Ambiguous resolver index' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const resolver = (voice) => 'https://lampac.fun/lite/zetflix/video?id=821&s=1&e=2&t=' + encodeURIComponent(voice);
+    env.storage[storageKey] = {
+        [recordKey]: {
+            v: 6, card_key: cardKey, source: 'online', activity_at: 7_307_000,
+            season: 1, episode: 2, episode_title: 'E2', timeline_hash: 'ambiguous-e2',
+            time: 46, duration: 3400, percent: 1, current_index: 0,
+            online: {
+                index: 0,
+                items: [
+                    { title: 'E2 Fox', resolver_url: resolver('Fox Life'), selection: {}, meta: {} },
+                    { title: 'E2 Original', resolver_url: resolver('Original'), selection: {}, meta: {} }
+                ]
+            }
+        }
+    };
+    env.setActive(movie);
+    let requests = 0;
+    env.setRequestHandler(() => { requests += 1; });
+    const before = env.androidLaunches.length;
+    env.api.launch();
+    assert.equal(requests, 0, 'different translations with no saved selection must fail closed');
+    assert.equal(env.androidLaunches.length, before);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
     const movie = { id: 816, media_type: 'tv', title: 'Mismatched current resolver', original_name: 'Mismatched current resolver' };
     const cardKey = env.api.testing.cardKey(movie);
     const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
@@ -2294,8 +2412,11 @@ function syncRecord(env, id, activityAt, itemCount) {
             assert.equal(parsed.searchParams.get('token'), 'arx.lamp');
             assert.equal(parsed.searchParams.get('pathfile'), 'continue_watch_v6');
             if (post) {
-                assert.equal(typeof post, 'string', 'Lampac Storage body must be passed as Reguest.native post_data');
-                assert.equal(params, undefined, 'a JSON body must not be misused as the Reguest.native options argument');
+                assert.equal(typeof post, 'string', 'Lampac Storage body must be sent as the raw POST body');
+                assert.equal(params.transport, 'jquery', 'Lampac Storage POST must match the official jQuery transport');
+                assert.equal(params.contentType, false, 'Lampac Storage POST must not synthesize a form content type');
+                assert.equal(params.processData, false, 'Lampac Storage JSON must not be form-processed');
+                assert.equal(params.cache, false);
                 remoteDocument = JSON.parse(post);
                 return ok({ success: true });
             }
@@ -2703,4 +2824,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.4: identity, episode-switch, and 53 prior fixtures passed');
+console.log('ContinueWatching v6.2.5: identity, episode-switch, and 53 prior fixtures passed');

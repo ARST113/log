@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.4-lampac-key-sync-20260904';
+    var VERSION = 'v6.2.5-lampac-key-sync-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -337,6 +337,10 @@
         }
         return parsed && typeof parsed === 'object' && parsed.success === false ? 'rejected' : 'ok';
     }
+    function remoteErrorStatus(value) {
+        var status = num(value && (value.status || value.statusCode));
+        return status > 0 ? 'error-' + status : 'error';
+    }
     function remoteRequest(action, body, callback, requestUrl) {
         var settled = false;
         var timer = null;
@@ -351,6 +355,21 @@
         markRemote(action, 'start');
         timer = setTimeout(function () { finish(null, 'timeout'); }, REMOTE_TIMEOUT);
         try {
+            if (action === 'set' && typeof $ !== 'undefined' && $ && $.ajax) {
+                $.ajax({
+                    url: requestUrl || lampacStorageUrl(action),
+                    type: 'POST',
+                    data: body,
+                    async: true,
+                    cache: false,
+                    contentType: false,
+                    processData: false,
+                    timeout: REMOTE_TIMEOUT,
+                    success: function (data) { finish(data, remoteResponseStatus(data)); },
+                    error: function (error) { finish(null, remoteErrorStatus(error)); }
+                });
+                return;
+            }
             var request = new Lampa.Reguest();
             try { request.timeout(REMOTE_TIMEOUT); } catch (e) {}
             request.native(requestUrl || lampacStorageUrl(action), function (data) { finish(data, remoteResponseStatus(data)); }, function () { finish(null, 'error'); },
@@ -1659,12 +1678,25 @@
             for (i = 0; i < items.length; i++) {
                 if (items[i] && num(items[i].season) === season && num(items[i].episode) === episode) return i;
             }
+            var expectedSelection = resolverSelection(online.resolver_url || '', online.selection || {});
+            var coordinateMatches = [];
+            for (i = 0; i < items.length; i++) {
+                var resolverUrl = str(items[i] && (items[i].resolver_url || (looksOnlineResolver(items[i].direct_url) ? items[i].direct_url : '')));
+                var shape = safeResolverShape(resolverUrl);
+                if (!shape || shape.season !== season || shape.episode !== episode) continue;
+                var actualSelection = resolverSelection(resolverUrl, items[i] && items[i].selection || {});
+                if (selectionKey(expectedSelection) && !selectionMatches(expectedSelection, actualSelection)) continue;
+                coordinateMatches.push(i);
+            }
+            if (coordinateMatches.length === 1) return coordinateMatches[0];
+            if (coordinateMatches.length > 1) return -1;
         }
         return Math.max(0, Math.min(Math.max(0, items.length - 1), num(record && record.current_index !== undefined ? record.current_index : online.index)));
     }
     function onlineResolverForRecord(record) {
         var o = record && record.online || {};
         var idx = onlineRecordIndex(record);
+        if (idx < 0) return null;
         var item = o.items && o.items[idx] || {};
         var savedIndex = normalizedOnlineIndex(o);
         var expected = selectionKey(item.selection) ? item.selection : resolverSelection(item.resolver_url || '', {});
@@ -1951,6 +1983,7 @@
                 hash: record.timeline_hash, direct_url: online.direct_url || '', meta: {}
             }];
             var idx = onlineRecordIndex(record);
+            if (idx < 0) return noty('Не удалось однозначно определить серию');
             var list = defs.map(function (it, i) {
                 var h = it.hash || timelineHash(movie, it.season, it.episode);
                 var road = timelineView(h) || {};
