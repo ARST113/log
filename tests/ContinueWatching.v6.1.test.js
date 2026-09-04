@@ -216,7 +216,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.3-lampac-key-sync-20260904');
+assert.equal(h.api.version, 'v6.2.4-lampac-key-sync-20260904');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -2227,6 +2227,23 @@ function seedDelayedOnline(env, id) {
 }
 
 {
+    const env = harness();
+    env.setRequestHandler(({ ok }) => ok({ success: true, data: '' }));
+    env.storage.plugins = [
+        { url: 'https://lampac.fun/sync/js/missing-status' },
+        { url: 'https://lampac.fun/sync/js/disabled', status: 0 }
+    ];
+    env.fireIntervals(1800);
+    assert.equal(env.requests.length, 0,
+        'object registry entries without an explicit enabled status must not activate remote sync');
+
+    env.storage.plugins = ['https://lampac.fun/sync/js/legacy'];
+    env.fireIntervals(1800);
+    assert.ok(env.requests.some((request) => new URL(request.url).searchParams.get('token') === 'legacy'),
+        'legacy string plugin entries remain enabled for compatibility with older Lampa storage');
+}
+
+{
     const env = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
     let stored = '';
     env.setRequestHandler(({ post, ok }) => {
@@ -2686,4 +2703,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2: identity fixtures plus 53 prior fixtures passed');
+console.log('ContinueWatching v6.2.4: identity, episode-switch, and 53 prior fixtures passed');
