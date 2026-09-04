@@ -2253,4 +2253,19 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(env.api.testing.mergeRecordMaps({ [local.key]: local.value }, { [local.key]: nextEpisode })[local.key].episode, 2, 'newer next-episode progress must use normal activity ordering even with lower elapsed time');
 }
 
+{
+    const env = harness();
+    const movie = { id: 108978, media_type: 'tv', title: 'Reacher', original_name: 'Reacher' };
+    const e1 = { title: 'Episode 1', season: 1, episode: 1, url: 'https://media.example/reacher-e1.m3u8', timeline: { hash: 'reacher-e1' } };
+    const e2 = { title: 'Первый танец', season: 1, episode: 2, url: 'https://media.example/reacher-e2.m3u8', timeline: { hash: 'reacher-e2' } };
+    env.setActive(movie);
+    env.Lampa.Player.play(Object.assign({}, e1, { card: movie, movie, isonline: true, playlist: [e1], playlist_index: 0, duration: 3275 }));
+    env.Lampa.Player.playlist([Object.assign({}, e2, { duration: 3205 })]);
+    env.timelineListeners.forEach((listener) => listener({ hash: 'reacher-e2', road: { time: 198, duration: 3205, percent: 6, updated: 3_900_000 } }));
+    const saved = env.api.sync().store['c_' + env.Lampa.Utils.hash(env.api.testing.cardKey(movie))];
+    assert.equal(saved.episode, 2, 'a web-player Next metadata transition must save episode 2');
+    assert.equal(saved.episode_title, 'Первый танец');
+    assert.equal(saved.time, 198);
+}
+
 console.log('ContinueWatching v6.2: identity fixtures plus 53 prior fixtures passed');

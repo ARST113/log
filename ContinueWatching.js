@@ -1863,6 +1863,7 @@
                 if (itemUrl && itemUrl === currentUrl) { matched = j; break; }
             }
         }
+        if (matched < 0 && list.length === 1) matched = 0;
         if (matched < 0) return false;
         for (var k = 0; k < list.length; k++) {
             var itemSEValue = itemSE(list[k], k);
