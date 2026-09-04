@@ -234,7 +234,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.5-lampac-key-sync-20260904');
+assert.equal(h.api.version, 'v6.2.6-lampac-key-sync-20260904');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -2131,6 +2131,102 @@ function seedDelayedOnline(env, id) {
 {
     const env = harness();
     const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 822, media_type: 'tv', title: 'Episode title resolver rebuild', original_name: 'Episode title resolver rebuild' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const resolver = (episode) => 'https://lampac.fun/lite/hdvb/video?id=822&s=1&e=' + episode + '&t=Dub';
+    const selection = { provider: 'hdvb', translation: 'dub' };
+    env.storage[storageKey] = {
+        [recordKey]: {
+            v: 6, card_key: cardKey, source: 'online', activity_at: 7_308_000,
+            season: 1, episode: 2, episode_title: 'The second episode', timeline_hash: 'runtime-second-hash',
+            time: 127, duration: 3430, percent: 4, current_index: 0,
+            online: {
+                index: 0, resolver_url: resolver(1), selection,
+                items: [
+                    { title: 'The first episode', hash: 'opaque-first', resolver_url: resolver(1), selection, meta: {} },
+                    { title: 'The second episode', hash: 'opaque-second', resolver_url: '', selection, meta: {} }
+                ]
+            }
+        }
+    };
+    env.setActive(movie);
+    const episodes = [];
+    env.setRequestHandler(({ url, ok }) => {
+        episodes.push(Number(new URL(url).searchParams.get('e')));
+        ok({ url: 'https://media.example/title-rebuild-e2.m3u8' });
+    });
+    env.api.launch();
+    assert.equal(episodes[0], 2,
+        'a same-movie selected resolver may be rebuilt from E1 to the uniquely titled saved E2');
+    const payload = env.androidLaunches[env.androidLaunches.length - 1].parsed;
+    assert.equal(payload.episode, 2);
+    assert.equal(payload.title, 'The second episode');
+    assert.equal(payload.url, 'https://media.example/title-rebuild-e2.m3u8');
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 824, media_type: 'tv', title: 'Resolver rebuild voice mismatch', original_name: 'Resolver rebuild voice mismatch' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    env.storage[storageKey] = {
+        [recordKey]: {
+            v: 6, card_key: cardKey, source: 'online', activity_at: 7_308_500,
+            season: 1, episode: 2, episode_title: 'E2 Original', timeline_hash: 'voice-mismatch-e2',
+            time: 75, duration: 3000, percent: 3, current_index: 0,
+            online: {
+                index: 0,
+                resolver_url: 'https://lampac.fun/lite/hdvb/video?id=824&s=1&e=1&t=Fox',
+                selection: { provider: 'hdvb', translation: 'fox' },
+                items: [
+                    { title: 'E1 Fox' },
+                    { title: 'E2 Original', selection: { provider: 'hdvb', translation: 'original' } }
+                ]
+            }
+        }
+    };
+    env.setActive(movie);
+    let requests = 0;
+    env.setRequestHandler(() => { requests += 1; });
+    const before = env.androidLaunches.length;
+    env.api.launch();
+    assert.equal(requests, 0, 'an E1 Fox resolver must not be rebuilt for an E2 Original selection');
+    assert.equal(env.androidLaunches.length, before);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 823, media_type: 'tv', title: 'Foreign resolver rejection', original_name: 'Foreign resolver rejection' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    env.storage[storageKey] = {
+        [recordKey]: {
+            v: 6, card_key: cardKey, source: 'online', activity_at: 7_309_000,
+            season: 1, episode: 2, episode_title: 'E2', timeline_hash: 'foreign-e2',
+            time: 60, duration: 3000, percent: 2, current_index: 0,
+            online: {
+                index: 0,
+                resolver_url: 'https://lampac.fun/lite/hdvb/video?id=999999&s=1&e=1&t=Dub',
+                selection: { provider: 'hdvb', translation: 'dub' },
+                items: [{ title: 'E1' }, { title: 'E2' }]
+            }
+        }
+    };
+    env.setActive(movie);
+    let requests = 0;
+    env.setRequestHandler(() => { requests += 1; });
+    const before = env.androidLaunches.length;
+    env.api.launch();
+    assert.equal(requests, 0, 'a resolver belonging to another movie must never be rebuilt for E2');
+    assert.equal(env.androidLaunches.length, before);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
     const movie = { id: 816, media_type: 'tv', title: 'Mismatched current resolver', original_name: 'Mismatched current resolver' };
     const cardKey = env.api.testing.cardKey(movie);
     const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
@@ -2824,4 +2920,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.5: identity, episode-switch, and 53 prior fixtures passed');
+console.log('ContinueWatching v6.2.6: identity, episode-switch, and 53 prior fixtures passed');

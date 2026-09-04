@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.5-lampac-key-sync-20260904';
+    var VERSION = 'v6.2.6-lampac-key-sync-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -1690,10 +1690,20 @@
             }
             if (coordinateMatches.length === 1) return coordinateMatches[0];
             if (coordinateMatches.length > 1) return -1;
+            var episodeTitle = str(record && record.episode_title).trim().toLowerCase().replace(/\s+/g, ' ');
+            if (episodeTitle) {
+                var titleMatches = [];
+                for (i = 0; i < items.length; i++) {
+                    var itemTitle = str(items[i] && (items[i].title || items[i].name)).trim().toLowerCase().replace(/\s+/g, ' ');
+                    if (itemTitle && itemTitle === episodeTitle) titleMatches.push(i);
+                }
+                if (titleMatches.length === 1) return titleMatches[0];
+                if (titleMatches.length > 1) return -1;
+            }
         }
         return Math.max(0, Math.min(Math.max(0, items.length - 1), num(record && record.current_index !== undefined ? record.current_index : online.index)));
     }
-    function onlineResolverForRecord(record) {
+    function onlineResolverForRecord(record, movie) {
         var o = record && record.online || {};
         var idx = onlineRecordIndex(record);
         if (idx < 0) return null;
@@ -1715,6 +1725,21 @@
             if (selectionKey(expected) && !selectionMatches(expected, actual)) continue;
             candidates[i].selection = actual;
             return candidates[i];
+        }
+        var target = explicitItemSE(record);
+        var selectedResolver = str(item && (item.resolver_url || (looksOnlineResolver(item.direct_url) ? item.direct_url : '')));
+        var topShape = safeResolverShape(o.resolver_url || '');
+        var itemSelection = resolverSelection('', item && item.selection || {});
+        var savedSelection = resolverSelection('', o.selection || {});
+        var expectedSelection = selectionKey(itemSelection) ? itemSelection : savedSelection;
+        if (!selectedResolver && target && topShape && resolverIdentityMatchesMovie(topShape, movie) &&
+            (!selectionKey(expectedSelection) || selectionMatches(expectedSelection, topShape.selection))) {
+            var rebuilt = synthesizeResolverForItem(topShape, {
+                season: target.season,
+                episode: target.episode,
+                selection: topShape.selection
+            });
+            if (rebuilt) return { url: rebuilt.url, headers: o.resolver_headers || rebuilt.headers || {}, selection: rebuilt.selection || topShape.selection };
         }
         return null;
     }
@@ -1769,8 +1794,8 @@
         }
         request();
     }
-    function resolveOnline(record, callback, launchDeadline) {
-        var resolver = onlineResolverForRecord(record);
+    function resolveOnline(record, movie, callback, launchDeadline) {
+        var resolver = onlineResolverForRecord(record, movie);
         if (!resolver) return callback(null);
         onlineNoty('RESOLVE ' + shortUrl(resolver.url));
         resolveOnlineCandidate(resolver, function (resolved) {
@@ -1976,7 +2001,7 @@
     function launchOnline(movie, record) {
         var launchDeadline = now() + ONLINE_LAUNCH_DEADLINE;
         onlineNoty('CONTINUE S' + num(record.season) + 'E' + num(record.episode) + ' ' + formatTime(record.time));
-        resolveOnline(record, function (resolved) {
+        resolveOnline(record, movie, function (resolved) {
             var online = record.online || {};
             var defs = Array.isArray(online.items) && online.items.length ? online.items : [{
                 title: record.episode_title || record.title, season: record.season, episode: record.episode,
@@ -2215,6 +2240,10 @@
         if (road && road.time) p.push(formatTime(road.time));
         return p.join(' / ');
     }
+    function resolverCoordinateLabel(url) {
+        var shape = safeResolverShape(url || '');
+        return shape ? 'S' + shape.season + 'E' + shape.episode : (url ? 'opaque' : 'none');
+    }
     function makeButton(movie, r) {
         var road = recordRoad(r);
         var sub = $('<div>').text(subtitle(r, road)).html();
@@ -2224,6 +2253,17 @@
             '<circle cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="1.7" fill="none" opacity="0.22"></circle>' +
             '<circle cx="12" cy="12" r="10.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="' + dash + ' 65.97" transform="rotate(-90 12 12)"></circle>' +
             '<path d="M9 7.7v8.6c0 .55.6.89 1.08.6l6.62-4.3a.72.72 0 0 0 0-1.2l-6.62-4.3A.7.7 0 0 0 9 7.7z" fill="currentColor"></path></svg><span>Продолжить</span></div>');
+        if (r.source === 'online' && r.online) {
+            var resolvedIndex = onlineRecordIndex(r);
+            var selectedItem = resolvedIndex >= 0 && r.online.items ? r.online.items[resolvedIndex] || {} : {};
+            var selectedSE = explicitItemSE(selectedItem) || {};
+            b.attr('data-cw-current-index', str(r.current_index));
+            b.attr('data-cw-online-index', str(r.online.index));
+            b.attr('data-cw-resolved-index', str(resolvedIndex));
+            b.attr('data-cw-item-se', 'S' + num(selectedSE.season) + 'E' + num(selectedSE.episode));
+            b.attr('data-cw-item-resolver-se', resolverCoordinateLabel(selectedItem.resolver_url || selectedItem.direct_url));
+            b.attr('data-cw-top-resolver-se', resolverCoordinateLabel(r.online.resolver_url || r.online.direct_url));
+        }
         var lock = 0;
         function go(e) {
             if (e) { try { e.preventDefault(); e.stopPropagation(); } catch (x) {} }
