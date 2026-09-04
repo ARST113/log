@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.9-lampac-key-sync-20260904';
+    var VERSION = 'v6.2.10-lampac-key-sync-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -55,6 +55,7 @@
     };
 
     function now() { return Date.now ? Date.now() : new Date().getTime(); }
+    function runtimeCurrent() { return window.__CW_V6_VERSION__ === VERSION; }
     function num(v) { v = Number(v || 0); return isNaN(v) ? 0 : v; }
     function str(v) { return v === undefined || v === null ? '' : String(v); }
     function clone(obj) {
@@ -272,8 +273,7 @@
         identity = identity || lampacIdentity();
         var u = new URL('/storage/' + (action === 'set' ? 'set' : 'get'), LAMPAC_BASE);
         u.searchParams.set('path', REMOTE_PATH);
-        u.searchParams.set('pathfile', STORAGE_BASE + (identity.profile_id ? '_' + identity.profile_id : ''));
-        if (identity.profile_id) u.searchParams.set('profile_id', identity.profile_id);
+        u.searchParams.set('pathfile', STORAGE_BASE);
         if (identity.token) u.searchParams.set('token', identity.token);
         return u.toString();
     }
@@ -2401,6 +2401,19 @@
         try {
             var previous = window.__CW6_CLICK_CAPTURE_HANDLER__;
             if (previous && document.removeEventListener) document.removeEventListener('click', previous, true);
+            var previousPointer = window.__CW6_POINTER_CAPTURE_HANDLER__;
+            if (previousPointer && document.removeEventListener) {
+                document.removeEventListener('pointerdown', previousPointer, true);
+                document.removeEventListener('mousedown', previousPointer, true);
+            }
+            var pointerHandler = function (event) {
+                if (isPhone() || (event && event.pointerType && event.pointerType !== 'mouse')) return;
+                var pointerTarget = event && event.target;
+                var pointerButton = pointerTarget && pointerTarget.closest ? pointerTarget.closest('.cw6-button') : null;
+                if (!pointerButton) return;
+                try { event.preventDefault(); event.stopPropagation(); } catch (ePointer) {}
+                try { if (event.stopImmediatePropagation) event.stopImmediatePropagation(); } catch (ePointer2) {}
+            };
             var handler = function (event) {
                 var target = event && event.target;
                 var button = target && target.closest ? target.closest('.cw6-button') : null;
@@ -2415,7 +2428,10 @@
                 if (movie) launch(movie);
                 return false;
             };
+            document.addEventListener('pointerdown', pointerHandler, true);
+            document.addEventListener('mousedown', pointerHandler, true);
             document.addEventListener('click', handler, true);
+            window.__CW6_POINTER_CAPTURE_HANDLER__ = pointerHandler;
             window.__CW6_CLICK_CAPTURE_HANDLER__ = handler;
             window.__CW6_CLICK_CAPTURE_VERSION__ = VERSION;
         } catch (e3) {}
@@ -2423,11 +2439,16 @@
     function buttonStateKey(movie, r, road) {
         return cardKey(movie) + '|' + str(r.activity_at) + '|' + r.source + '|' + r.timeline_hash + '|' + road.time + '|' + road.percent;
     }
+    function buttonOwnedByCurrentVersion(button, stateKey) {
+        return !!(button && button.length && button.attr('data-state') === stateKey && button.attr('data-cw-owner-version') === VERSION);
+    }
     function refreshUI(exactMovie, exactRoot) {
+        if (!runtimeCurrent()) return;
         var queuedMovie = exactMovie || null;
         var queuedRoot = exactRoot || null;
         if (state.uiTimer) clearTimeout(state.uiTimer);
         state.uiTimer = setTimeout(function () {
+            if (!runtimeCurrent()) return;
             var movie = queuedMovie || currentActivityMovie(), root = cardRoot(queuedRoot);
             if (!movie || !root) return;
             var r = getRecord(movie), old = root.find('.cw6-button,.button--continue-watch-native-just');
@@ -2435,10 +2456,10 @@
             var road = recordRoad(r);
             var movieKey = cardKey(movie);
             var key = buttonStateKey(movie, r, road);
-            if (old.length && old.attr('data-card-key') === movieKey && old.attr('data-state') === key) return;
+            if (old.attr('data-card-key') === movieKey && buttonOwnedByCurrentVersion(old, key)) return;
             old.remove();
             var c = buttonContainer(root); if (!c || !c.length) return;
-            var b = makeButton(movie, r).attr('data-card-key', movieKey).attr('data-state', key);
+            var b = makeButton(movie, r).attr('data-card-key', movieKey).attr('data-state', key).attr('data-cw-owner-version', VERSION);
             var before = c.find('> .view--torrent').first();
             var trailer = c.find('> .view--trailer').first();
             if (before.length) before.before(b); else if (trailer.length) trailer.before(b); else c.prepend(b);
@@ -2490,7 +2511,8 @@
         } catch (e3) {}
         try { window.addEventListener('focus', function () { scheduleReconcile(); syncRemote('focus'); refreshUI(); }); } catch (e4) {}
         try { document.addEventListener('visibilitychange', function () { if (document.visibilityState !== 'hidden') { scheduleReconcile(); syncRemote('visibility'); refreshUI(); } }); } catch (e5) {}
-        setInterval(function () { patchTorrent(); patchPlayer(); detectRemoteIdentityChange(); refreshUI(); }, 1800);
+        try { if (window.__CW6_REFRESH_INTERVAL__) clearInterval(window.__CW6_REFRESH_INTERVAL__); } catch (eInterval) {}
+        window.__CW6_REFRESH_INTERVAL__ = setInterval(function () { patchTorrent(); patchPlayer(); detectRemoteIdentityChange(); refreshUI(); }, 1800);
         setTimeout(reconcilePending, 1000);
         syncRemote('install');
         setTimeout(function () { flushOutbox(true); syncRemote('recovery'); refreshUI(); }, 7500);
@@ -2504,7 +2526,7 @@
             reconcile: reconcilePending,
             launch: function () { var m = activeMovie(); if (m) launch(m); },
             source: function () { var r = activeMovie() ? getRecord(activeMovie()) : null; return r && r.source; },
-            sync: function () { return { key: storageKey(), outbox: diagnosticProjectionMaps(readOutbox()), store: diagnosticProjectionMaps(store()) }; }
+            sync: function () { return { key: STORAGE_BASE, outbox: diagnosticProjectionMaps(readOutbox()), store: diagnosticProjectionMaps(store()) }; }
         };
         if (window.__CONTINUE_WATCH_TEST_MODE__) {
             window.ContinueWatchV6.testing = {
@@ -2517,7 +2539,9 @@
                 localizeResolver: localizeResolver,
                 ensureTorrent: ensureTorrent,
                 buttonStateKey: buttonStateKey,
+                buttonOwnedByCurrentVersion: buttonOwnedByCurrentVersion,
                 cardKey: cardKey,
+                storageKey: storageKey,
                 getMovieFromData: getMovieFromData,
                 discoverLampacToken: discoverLampacToken,
                 lampacIdentity: lampacIdentity,

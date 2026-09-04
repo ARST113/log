@@ -93,7 +93,11 @@ function harness(options = {}) {
         scripts: scriptUrls.map((src) => ({ src })),
         getElementById() { return null; },
         createElement() { return {}; },
-        addEventListener(name, callback) { (listeners['document:' + name] ||= []).push(callback); }
+        addEventListener(name, callback) { (listeners['document:' + name] ||= []).push(callback); },
+        removeEventListener(name, callback) {
+            const key = 'document:' + name;
+            listeners[key] = (listeners[key] || []).filter((listener) => listener !== callback);
+        }
     };
 
     const Lampa = {
@@ -149,7 +153,9 @@ function harness(options = {}) {
         Date: class FakeDate extends Date { static now() { return clock; } },
         window: null,
         document,
-        navigator: { maxTouchPoints: 0, userAgent: '' },
+        navigator: { maxTouchPoints: options.phone ? 5 : 0, userAgent: '' },
+        innerWidth: options.phone ? 412 : 1920,
+        innerHeight: options.phone ? 915 : 1080,
         rch_nws: { 'lampac.fun': { connectionId: 'live-rch-session' } },
         location: { href: 'https://lampac.fun/', protocol: 'https:' },
         localStorage: {
@@ -164,8 +170,15 @@ function harness(options = {}) {
             return id;
         },
         clearTimeout(id) { timers.delete(id); },
-        setInterval(callback, delay) { intervals.push({ callback, delay: Number(delay || 0) }); return intervals.length; },
-        clearInterval() {},
+        setInterval(callback, delay) {
+            const id = intervals.length + 1;
+            intervals.push({ id, callback, delay: Number(delay || 0), active: true });
+            return id;
+        },
+        clearInterval(id) {
+            const interval = intervals.find((entry) => entry.id === id);
+            if (interval) interval.active = false;
+        },
         Lampa,
         $
     };
@@ -177,7 +190,7 @@ function harness(options = {}) {
     vm.runInNewContext(source, context, { filename: pluginFile });
 
     return {
-        api: context.window.ContinueWatchV6,
+        get api() { return context.window.ContinueWatchV6; },
         Lampa,
         storage,
         local,
@@ -189,6 +202,14 @@ function harness(options = {}) {
         requests,
         rch_nws: context.rch_nws,
         setRequestHandler(handler) { requestHandler = handler; },
+        reloadPlugin(version) {
+            delete context.window.__CW_V6_VERSION__;
+            const reloadSource = version
+                ? source.replace(/var VERSION = '[^']+';/, "var VERSION = '" + version + "';")
+                : source;
+            vm.runInNewContext(reloadSource, context, { filename: pluginFile });
+            return context.window.ContinueWatchV6;
+        },
         setScripts(scripts) { document.scripts = (scripts || []).map((src) => ({ src })); },
         setAccountProfile(id) { Lampa.Account.Permit.account = id === null ? {} : { profile: { id } }; },
         dispatchStorageChange(name) { storageListeners.forEach((callback) => callback({ name })); },
@@ -226,7 +247,13 @@ function harness(options = {}) {
             });
         },
         fireIntervals(delay) {
-            intervals.filter((entry) => delay === undefined || entry.delay === Number(delay)).forEach((entry) => entry.callback());
+            intervals.filter((entry) => entry.active && (delay === undefined || entry.delay === Number(delay))).forEach((entry) => entry.callback());
+        },
+        activeIntervalCount(delay) {
+            return intervals.filter((entry) => entry.active && (delay === undefined || entry.delay === Number(delay))).length;
+        },
+        pendingTimerCount(delay) {
+            return Array.from(timers.values()).filter((entry) => delay === undefined || entry.delay === Number(delay)).length;
         }
     };
 }
@@ -234,7 +261,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.9-lampac-key-sync-20260904');
+assert.equal(h.api.version, 'v6.2.10-lampac-key-sync-20260904');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -405,6 +432,23 @@ function seedDelayedOnline(env, id) {
     const record = { activity_at: 10, source: 'online', timeline_hash: 'h' };
     const road = { time: 20, percent: 2 };
     assert.notEqual(t.buttonStateKey(movieA, record, road), t.buttonStateKey(movieB, record, road));
+    assert.equal(t.buttonStateKey(movieA, record, road), t.cardKey(movieA) + '|10|online|h|20|2',
+        'button state must remain backward-compatible so a v6.2.9 refresh loop leaves the new button in place');
+}
+
+{
+    assert.equal(typeof t.buttonOwnedByCurrentVersion, 'function',
+        'refresh must distinguish an unowned legacy button from the current plugin button');
+    const stateKey = 'stable-state';
+    function button(attrs) {
+        return { length: 1, attr(name) { return attrs[name]; } };
+    }
+    assert.equal(t.buttonOwnedByCurrentVersion(button({ 'data-state': stateKey }), stateKey), false,
+        'a legacy button without an owner marker must be replaced once');
+    assert.equal(t.buttonOwnedByCurrentVersion(button({ 'data-state': stateKey, 'data-cw-owner-version': h.api.version }), stateKey), true,
+        'the current version must keep its own button');
+    assert.equal(t.buttonOwnedByCurrentVersion(button({ 'data-state': stateKey, 'data-cw-owner-version': 'v6.2.9' }), stateKey), false,
+        'a button owned by an older version must be replaced');
 }
 
 {
@@ -552,8 +596,20 @@ function seedDelayedOnline(env, id) {
         }
     };
     env.setActive(movie);
+    const pointerListeners = env.listeners['document:pointerdown'] || [];
     const clickListeners = env.listeners['document:click'] || [];
+    assert.ok(pointerListeners.length, 'plugin must install an early desktop pointer handler for its own Continue button');
     assert.ok(clickListeners.length, 'plugin must install a capture click handler for its own Continue button');
+    const pointerStopped = { prevent: 0, propagation: 0, immediate: 0 };
+    pointerListeners[pointerListeners.length - 1]({
+        pointerType: 'mouse',
+        target: { closest(selector) { return selector === '.cw6-button' ? {} : null; } },
+        preventDefault() { pointerStopped.prevent += 1; },
+        stopPropagation() { pointerStopped.propagation += 1; },
+        stopImmediatePropagation() { pointerStopped.immediate += 1; }
+    });
+    assert.deepEqual(pointerStopped, { prevent: 1, propagation: 1, immediate: 1 });
+    assert.equal(env.androidLaunches.length, 0, 'pointerdown must block competitors without launching before click');
     const stopped = { prevent: 0, propagation: 0, immediate: 0 };
     const clickEvent = {
         target: { closest(selector) { return selector === '.cw6-button' ? {} : null; } },
@@ -571,6 +627,53 @@ function seedDelayedOnline(env, id) {
     assert.equal(payload.time, 146);
     clickListeners[clickListeners.length - 1](clickEvent);
     assert.equal(env.androidLaunches.length, 1, 'a second capture click inside 800ms must not launch twice');
+}
+
+{
+    const env = harness({ phone: true });
+    const pointerListeners = env.listeners['document:pointerdown'] || [];
+    const stopped = { prevent: 0, propagation: 0, immediate: 0 };
+    const event = {
+        pointerType: 'mouse',
+        target: { closest(selector) { return selector === '.cw6-button' ? {} : null; } },
+        preventDefault() { stopped.prevent += 1; },
+        stopPropagation() { stopped.propagation += 1; },
+        stopImmediatePropagation() { stopped.immediate += 1; }
+    };
+    pointerListeners.forEach((listener) => listener(event));
+    assert.deepEqual(stopped, { prevent: 0, propagation: 0, immediate: 0 },
+        'phone pointer events must remain untouched so tap UX is unchanged');
+}
+
+{
+    const env = harness();
+    const movie = { id: 7788, media_type: 'movie', title: 'Hot reload probe' };
+    env.setActive(movie);
+    const staleFullListener = (env.listeners.full || [])[0];
+    assert.equal(typeof staleFullListener, 'function');
+    assert.equal(env.activeIntervalCount(1800), 1);
+    const reloaded = env.reloadPlugin('v6.2.10-hot-reload-probe');
+    assert.equal(env.activeIntervalCount(1800), 1,
+        'hot reload must retire the previous refresh loop before installing the new version');
+    ['click', 'pointerdown', 'mousedown'].forEach((name) => {
+        assert.equal((env.listeners['document:' + name] || []).length, 1,
+            'hot reload must leave exactly one ' + name + ' capture handler');
+    });
+    const stateKey = reloaded.testing.buttonStateKey(
+        { id: 1, media_type: 'movie' },
+        { activity_at: 1, source: 'online', timeline_hash: 'h' },
+        { time: 1, percent: 1 }
+    );
+    assert.equal(stateKey, 'tmdb:movie:1|1|online|h|1|1',
+        'the reloaded version must preserve the state key understood by v6.2.9');
+    assert.equal(reloaded.testing.buttonOwnedByCurrentVersion({
+        length: 1,
+        attr(name) { return name === 'data-state' ? stateKey : (name === 'data-cw-owner-version' ? reloaded.version : undefined); }
+    }, stateKey), true);
+    staleFullListener({ data: { movie } });
+    env.advance(500);
+    assert.equal(env.pendingTimerCount(80), 0,
+        'callbacks retained from the previous version must not schedule stale UI refreshes after hot reload');
 }
 
 {
@@ -2418,10 +2521,10 @@ function seedDelayedOnline(env, id) {
     assert.equal(setUrl.pathname, '/storage/set');
     assert.equal(getUrl.searchParams.get('token'), 'nast');
     assert.equal(getUrl.searchParams.get('path'), 'continuewatch');
-    assert.equal(getUrl.searchParams.get('pathfile'), 'continue_watch_v6_family room');
+    assert.equal(getUrl.searchParams.get('pathfile'), 'continue_watch_v6');
     assert.equal(getUrl.searchParams.has('account_email'), false, 'storage sync must not expose the Lampa email');
     assert.equal(getUrl.searchParams.has('uid'), false, 'storage sync must not expose the device uid');
-    assert.equal(getUrl.searchParams.get('profile_id'), 'family room');
+    assert.equal(getUrl.searchParams.has('profile_id'), false, 'the arbitrary key must not be split by an internal Lampac profile');
     changedToken.setScripts(['https://untrusted.example/sync/js/evil']);
     assert.equal(changedToken.api.testing.discoverLampacToken(), '');
     assert.equal(changedToken.requests.length, requestsBeforeUrlHelpers, 'identity/URL helpers must not themselves make network requests');
@@ -2432,11 +2535,11 @@ function seedDelayedOnline(env, id) {
     const env = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
     env.storage.lampac_profile_id = 'lampac-profile';
     env.setAccountProfile('account-profile');
-    assert.equal(env.api.sync().key, 'continue_watch_v6_account-profile', 'the active account profile must select the local store before the Lampac fallback');
+    assert.equal(env.api.testing.storageKey(), 'continue_watch_v6_account-profile', 'the active account profile must select the local store before the Lampac fallback');
     env.setAccountProfile(null);
-    assert.equal(env.api.sync().key, 'continue_watch_v6_lampac-profile', 'lampac_profile_id must be used when the active account has no profile');
+    assert.equal(env.api.testing.storageKey(), 'continue_watch_v6_lampac-profile', 'lampac_profile_id must be used when the active account has no profile');
     delete env.storage.lampac_profile_id;
-    assert.equal(env.api.sync().key, 'continue_watch_v6_default', 'default must be used when neither active nor Lampac profile is available');
+    assert.equal(env.api.testing.storageKey(), 'continue_watch_v6_default', 'default must be used when neither active nor Lampac profile is available');
 }
 
 {
@@ -2452,7 +2555,7 @@ function seedDelayedOnline(env, id) {
         'a fresh browser using the same Lampac key must address the same remote document');
     assert.equal(phoneUrl.searchParams.has('profile_id'), false);
     assert.equal(browserUrl.searchParams.has('profile_id'), false);
-    assert.notEqual(phone.api.sync().key, browser.api.sync().key,
+    assert.notEqual(phone.api.testing.storageKey(), browser.api.testing.storageKey(),
         'local stores remain isolated even though the Lampac key selects one shared remote namespace');
 }
 
@@ -2540,8 +2643,10 @@ function syncRecord(env, id, activityAt, itemCount) {
 {
     const phone = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
     phone.setAccountProfile('phone-profile');
+    phone.storage.lampac_profile_id = 'phone-internal-profile';
     const browser = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
     browser.setAccountProfile(null);
+    browser.storage.lampac_profile_id = 'browser-internal-profile';
     const seeded = syncRecord(phone, 900, 2_990_000, 2);
     phone.storage['continue_watch_v6_phone-profile'] = { [seeded.key]: seeded.value };
     let remoteDocument = null;
@@ -2550,6 +2655,8 @@ function syncRecord(env, id, activityAt, itemCount) {
             const parsed = new URL(url);
             assert.equal(parsed.searchParams.get('token'), 'arx.lamp');
             assert.equal(parsed.searchParams.get('pathfile'), 'continue_watch_v6');
+            assert.equal(parsed.searchParams.has('profile_id'), false,
+                'the Lampac key alone must select the cross-device remote document');
             if (post) {
                 assert.equal(typeof post, 'string', 'Lampac Storage body must be sent as the raw POST body');
                 assert.equal(params.transport, 'jquery', 'Lampac Storage POST must match the official jQuery transport');
@@ -2570,9 +2677,9 @@ function syncRecord(env, id, activityAt, itemCount) {
 
     bindSharedLampac(browser);
     browser.api.testing.pullRemote(() => {});
-    assert.ok(browser.storage.continue_watch_v6_default[seeded.key],
-        'a default-profile browser with the same key must hydrate the phone record');
-    assert.equal(browser.storage.continue_watch_v6_default[seeded.key].episode, 1);
+    assert.ok(browser.storage['continue_watch_v6_browser-internal-profile'][seeded.key],
+        'a browser with a different internal profile and the same key must hydrate the phone record');
+    assert.equal(browser.storage['continue_watch_v6_browser-internal-profile'][seeded.key].episode, 1);
 }
 
 {
@@ -2772,12 +2879,15 @@ function syncRecord(env, id, activityAt, itemCount) {
     const env = harness({ scripts: ['https://lampac.fun/sync/js/a%20token%2Fwith%3Fchars'] });
     env.setAccountProfile('device-profile');
     env.storage.lampac_profile_id = 'shared-lampac-profile';
-    assert.equal(env.api.sync().key, 'continue_watch_v6_device-profile', 'local state remains scoped to the active Lampa profile');
+    assert.equal(env.api.testing.storageKey(), 'continue_watch_v6_device-profile', 'local state remains scoped to the active Lampa profile');
     const remoteUrl = new URL(env.api.testing.lampacStorageUrl('get'));
     assert.equal(env.api.testing.discoverLampacToken(), 'a token/with?chars');
     assert.equal(remoteUrl.searchParams.get('token'), 'a token/with?chars');
-    assert.equal(remoteUrl.searchParams.get('pathfile'), 'continue_watch_v6_shared-lampac-profile', 'configured Lampac profile must select the shared remote document');
-    assert.equal(remoteUrl.searchParams.get('profile_id'), 'shared-lampac-profile');
+    assert.equal(remoteUrl.searchParams.get('pathfile'), 'continue_watch_v6', 'the arbitrary Lampac key must select one shared remote document across device profiles');
+    assert.equal(remoteUrl.searchParams.has('profile_id'), false, 'internal Lampac profile ids must not split key-based Continue sync');
+    env.setAccountProfile(null);
+    assert.equal(JSON.stringify(env.api.sync()).includes('shared-lampac-profile'), false,
+        'public sync diagnostics must not expose an internal Lampac profile id');
 }
 
 {
@@ -2963,4 +3073,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.9: identity, episode-switch, and 53 prior fixtures passed');
+console.log('ContinueWatching v6.2.10 regression fixtures: PASS');
