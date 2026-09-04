@@ -234,7 +234,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.8-lampac-key-sync-20260904');
+assert.equal(h.api.version, 'v6.2.9-lampac-key-sync-20260904');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -528,6 +528,49 @@ function seedDelayedOnline(env, id) {
     assert.deepEqual(payload.playlist[1].segments, segments);
     assert.equal(payload.currentItem.playlist, undefined);
     assert.equal(payload.playlist[1].playlist, undefined);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 7772, media_type: 'tv', title: 'Capture click fake zero', original_name: 'Capture click fake zero' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    env.storage[storageKey] = {
+        [recordKey]: {
+            v: 6, card_key: cardKey, source: 'online', activity_at: 2_000_050,
+            season: 1, episode: 2, episode_title: 'E2', timeline_hash: 'fake-zero-e2',
+            time: 146, duration: 5401, percent: 3, current_index: 2,
+            online: {
+                index: 2,
+                items: [
+                    { title: '0 episode', direct_url: 'https://media.example/fake-zero.m3u8', meta: {} },
+                    { title: 'E1', season: 1, episode: 1, hash: 'fake-zero-e1', direct_url: 'https://media.example/fake-zero-e1.m3u8', meta: {} },
+                    { title: 'E2', season: 1, episode: 2, hash: 'fake-zero-e2', direct_url: 'https://media.example/fake-zero-e2.m3u8', meta: {} }
+                ]
+            }
+        }
+    };
+    env.setActive(movie);
+    const clickListeners = env.listeners['document:click'] || [];
+    assert.ok(clickListeners.length, 'plugin must install a capture click handler for its own Continue button');
+    const stopped = { prevent: 0, propagation: 0, immediate: 0 };
+    const clickEvent = {
+        target: { closest(selector) { return selector === '.cw6-button' ? {} : null; } },
+        preventDefault() { stopped.prevent += 1; },
+        stopPropagation() { stopped.propagation += 1; },
+        stopImmediatePropagation() { stopped.immediate += 1; }
+    };
+    clickListeners[clickListeners.length - 1](clickEvent);
+    assert.deepEqual(stopped, { prevent: 1, propagation: 1, immediate: 1 });
+    assert.equal(env.androidLaunches.length, 1, 'capture handler must launch exactly once');
+    const payload = env.androidLaunches[0].parsed;
+    assert.equal(payload.episode, 2);
+    assert.equal(payload.playlist_index, 1, 'prepared window may omit the leading fake zero item');
+    assert.equal(payload.playlist[payload.playlist_index].episode, 2);
+    assert.equal(payload.time, 146);
+    clickListeners[clickListeners.length - 1](clickEvent);
+    assert.equal(env.androidLaunches.length, 1, 'a second capture click inside 800ms must not launch twice');
 }
 
 {
@@ -2920,4 +2963,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.8: identity, episode-switch, and 53 prior fixtures passed');
+console.log('ContinueWatching v6.2.9: identity, episode-switch, and 53 prior fixtures passed');
