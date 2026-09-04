@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.8-lampac-key-sync-20260904';
+    var VERSION = 'v6.2.9-lampac-key-sync-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -50,7 +50,8 @@
         remoteSetOk: 0,
         controllerNode: null,
         controllerState: '',
-        onlineLaunchSeed: null
+        onlineLaunchSeed: null,
+        buttonLaunchAt: -10000
     };
 
     function now() { return Date.now ? Date.now() : new Date().getTime(); }
@@ -2378,18 +2379,46 @@
             b.attr('data-cw-item-top-resolver-same', sameDiagnosticUrl(selectedItem.resolver_url, r.online.resolver_url));
             b.attr('data-cw-item-top-direct-same', sameDiagnosticUrl(selectedItem.direct_url, r.online.direct_url));
         }
-        var lock = 0;
-        function go(e) {
-            if (e) { try { e.preventDefault(); e.stopPropagation(); } catch (x) {} }
-            if (now() - lock < 800) return false;
-            lock = now();
-            diagnosticMarkerAttr('data-cw-launch-stage', 'button-go');
+        function launchButton(stage) {
+            if (now() - state.buttonLaunchAt < 800) return false;
+            state.buttonLaunchAt = now();
+            diagnosticMarkerAttr('data-cw-launch-stage', stage);
             diagnosticMarkerAttr('data-cw-launch-version', VERSION);
             launch(movie); return false;
+        }
+        function go(e) {
+            if (e) {
+                try { e.preventDefault(); e.stopPropagation(); } catch (x) {}
+                try { if (e.stopImmediatePropagation) e.stopImmediatePropagation(); } catch (x2) {}
+            }
+            return launchButton('button-go');
         }
         b.on('hover:enter.cw6', go).on('click.cw6', go);
         if (!isPhone()) b.on('mousedown.cw6 pointerdown.cw6', function (e) { if (!e.pointerType || e.pointerType === 'mouse') { e.preventDefault(); e.stopPropagation(); } });
         return b;
+    }
+    function installButtonClickCapture() {
+        try {
+            var previous = window.__CW6_CLICK_CAPTURE_HANDLER__;
+            if (previous && document.removeEventListener) document.removeEventListener('click', previous, true);
+            var handler = function (event) {
+                var target = event && event.target;
+                var button = target && target.closest ? target.closest('.cw6-button') : null;
+                if (!button) return;
+                try { event.preventDefault(); event.stopPropagation(); } catch (e) {}
+                try { if (event.stopImmediatePropagation) event.stopImmediatePropagation(); } catch (e2) {}
+                if (now() - state.buttonLaunchAt < 800) return false;
+                state.buttonLaunchAt = now();
+                diagnosticMarkerAttr('data-cw-launch-stage', 'capture-click');
+                diagnosticMarkerAttr('data-cw-launch-version', VERSION);
+                var movie = currentActivityMovie() || state.lastMovie;
+                if (movie) launch(movie);
+                return false;
+            };
+            document.addEventListener('click', handler, true);
+            window.__CW6_CLICK_CAPTURE_HANDLER__ = handler;
+            window.__CW6_CLICK_CAPTURE_VERSION__ = VERSION;
+        } catch (e3) {}
     }
     function buttonStateKey(movie, r, road) {
         return cardKey(movie) + '|' + str(r.activity_at) + '|' + r.source + '|' + r.timeline_hash + '|' + road.time + '|' + road.percent;
@@ -2429,7 +2458,7 @@
         if (state.installed) return;
         state.installed = true;
         state.remoteIdentityKey = identityFingerprint(lampacIdentity());
-        injectStyle(); seedOutboxFromStore();
+        injectStyle(); installButtonClickCapture(); seedOutboxFromStore();
         try { $('.button--continue-watch-native-just,.button--continue-watch-ddd,.continue-watch-ddd-source').remove(); } catch (eOld) {}
         patchTorrent(); patchPlayer();
         try { Lampa.Timeline.listener.follow('update', onTimeline); } catch (e) {}
