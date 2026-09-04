@@ -40,6 +40,7 @@ function harness(options = {}) {
     const listeners = {};
     const playerListeners = {};
     const timelineListeners = [];
+    const timelineUpdates = [];
     const timers = new Map();
     const intervals = [];
     const androidLaunches = [];
@@ -70,7 +71,11 @@ function harness(options = {}) {
     const Android = {
         openPlayer(link, data) {
             const serialized = JSON.stringify(data);
-            androidLaunches.push({ link, data, serialized, parsed: JSON.parse(serialized) });
+            const parsed = JSON.parse(serialized);
+            const nativePlaylist = Array.isArray(parsed.playlist) && parsed.playlist.length ? parsed.playlist : [parsed];
+            const nativeCurrent = nativePlaylist.find((item) => item && item.url === parsed.url) || nativePlaylist[0] || {};
+            const nativePositionMs = Math.trunc(Number(nativeCurrent.timeline && nativeCurrent.timeline.time || 0) * 1000);
+            androidLaunches.push({ link, data, serialized, parsed, nativePositionMs });
             return serialized;
         }
     };
@@ -84,6 +89,20 @@ function harness(options = {}) {
         emitPlayer('create', { data, abort() { run = false; } });
         if (!run) return null;
         emitPlayer('start', data);
+        if (options.androidTimelineRefresh) {
+            const refresh = (item) => {
+                if (!item || !item.timeline || !item.timeline.hash) return;
+                const road = Lampa.Timeline.view(item.timeline.hash) || {
+                    hash: item.timeline.hash, time: 0, duration: 0, percent: 0, updated: 0
+                };
+                item.timeline.time = Number(road.time || 0);
+                item.timeline.duration = Number(road.duration || 0);
+                item.timeline.percent = Number(road.percent || 0);
+                item.timeline.updated = Number(road.updated || 0);
+            };
+            refresh(data);
+            (data.playlist || []).forEach(refresh);
+        }
         return Android.openPlayer(data.url, data);
     }
 
@@ -106,7 +125,7 @@ function harness(options = {}) {
         Controller: { enabled() { return null; }, collectionAppend() {} },
         Listener: { follow(name, callback) { (listeners[name] ||= []).push(callback); } },
         Noty: { show() {} },
-        Platform: { is() { return false; } },
+        Platform: { is(name) { return !!(options.androidPlatform || options.justExternal) && name === 'android'; } },
         Android,
         Player: {
             listener: { follow(name, callback) { (playerListeners[name] ||= []).push(callback); } },
@@ -115,14 +134,24 @@ function harness(options = {}) {
         },
         Storage: {
             listener: { follow(name, callback) { if (name === 'change') storageListeners.push(callback); } },
-            field() { return ''; },
+            field(name) {
+                if (name === 'player') return options.player || '';
+                if (name === 'player_torrent') return options.playerTorrent || (options.justExternal ? 'android' : '');
+                return '';
+            },
             get(key, fallback) { return Object.prototype.hasOwnProperty.call(storage, key) ? storage[key] : fallback; },
             set(key, value) { storage[key] = value; },
             sync() { storageSyncCalls += 1; }
         },
         Timeline: {
             listener: { follow(name, callback) { if (name === 'update') timelineListeners.push(callback); } },
-            view(hash) { return roads[hash] || null; }
+            view(hash) { return roads[hash] || null; },
+            update(params) {
+                const road = JSON.parse(JSON.stringify(params));
+                roads[params.hash] = road;
+                timelineUpdates.push(road);
+                timelineListeners.forEach((callback) => callback({ hash: params.hash, road }));
+            }
         },
         Utils: {
             hash(value) {
@@ -201,6 +230,7 @@ function harness(options = {}) {
         roads,
         listeners,
         timelineListeners,
+        timelineUpdates,
         androidLaunches,
         playlistCalls,
         requests,
@@ -216,6 +246,7 @@ function harness(options = {}) {
         },
         setScripts(scripts) { document.scripts = (scripts || []).map((src) => ({ src })); },
         setAccountProfile(id) { Lampa.Account.Permit.account = id === null ? {} : { profile: { id } }; },
+        dispatchPlayerEvent(name, event) { emitPlayer(name, event); },
         dispatchStorageChange(name) { storageListeners.forEach((callback) => callback({ name })); },
         dispatchWindowEvent(name) { (listeners['window:' + name] || []).forEach((callback) => callback()); },
         setVisibility(value) { document.visibilityState = value; (listeners['document:visibilitychange'] || []).forEach((callback) => callback()); },
@@ -265,7 +296,108 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.11-window-capture-20260904');
+assert.equal(h.api.version, 'v6.2.12-native-resume-segments-20260904');
+
+assert.deepEqual(
+    t.normalizeSegments('{"duration_ms":2696000,"skip":[{"start":62,"end":152}],"ad":[{"start":0,"end":12}]}', 3697),
+    { duration_ms: 2_696_000, skip: [{ start: 62, end: 152 }], ad: [{ start: 0, end: 12 }] },
+    'canonical Just+ reference duration must survive even when runtime file duration differs'
+);
+assert.deepEqual(
+    t.normalizeSegments({ intro: [0, 75], recap: [{ from: 76, to: 90 }], commercial: [[100, 120]] }, 3697),
+    { duration_ms: 3_697_000, skip: [{ start: 0, end: 75 }, { start: 76, end: 90 }], ad: [{ start: 100, end: 120 }] },
+    'legacy Lampac segment shapes must map to Just+ skip/ad arrays'
+);
+assert.equal(t.normalizeSegments({ intro: [5, 5], unknown: [{ start: 1, end: 2 }] }, 100), null,
+    'invalid or unknown segment metadata must be omitted so Just+ online fallback remains enabled');
+
+{
+    const onlineAndroid = harness({ androidPlatform: true, player: 'android' });
+    assert.equal(onlineAndroid.api.testing.isJustExternal({ isonline: true, url: 'https://media.example/online.m3u8' }), true,
+        'online Android routing must read the player setting');
+    const torrentAndroid = harness({ androidPlatform: true, playerTorrent: 'android' });
+    assert.equal(torrentAndroid.api.testing.isJustExternal({ torrent_hash: 'route-hash', url: 'http://127.0.0.1/stream/e1?link=route-hash&index=0' }), true,
+        'torrent Android routing must read the player_torrent setting');
+    const desktop = harness({ player: 'android', playerTorrent: 'android' });
+    assert.equal(desktop.api.testing.isJustExternal({ isonline: true }), false,
+        'desktop playback must not be classified as Android external');
+    const forcedAndroid = harness({ androidPlatform: true });
+    assert.equal(forcedAndroid.api.testing.isJustExternal({ isonline: true, launch_player: 'android' }), true,
+        'an explicit Android launch override must be classified as external');
+    const forcedInner = harness({ androidPlatform: true, player: 'android', playerTorrent: 'android' });
+    assert.equal(forcedInner.api.testing.isJustExternal({ isonline: true, launch_player: 'inner' }), false,
+        'an explicit inner override must beat the stored Android player setting');
+    assert.equal(forcedInner.api.testing.isJustExternal({ torrent_hash: 'forced-lampa', launch_player: 'lampa' }), false,
+        'an explicit Lampa override must beat the stored Android torrent player setting');
+    const torrentFallback = harness({ androidPlatform: true });
+    torrentFallback.Lampa.Torserver = { gstWork() { return false; } };
+    assert.equal(torrentFallback.api.testing.isJustExternal({ torrent_hash: 'fallback-hash' }), true,
+        'torrent playback must follow Lampa Android fallback when the internal GST player is unavailable');
+}
+
+{
+    const env = harness({ androidPlatform: true, player: 'inner', playerTorrent: 'inner' });
+    const movie = { id: 7784, media_type: 'tv', title: 'External event authority', original_name: 'External event authority' };
+    const data = {
+        card: movie, movie, torrent_hash: 'external-event-torrent', season: 1, episode: 1,
+        url: 'http://127.0.0.1:8090/stream/S01E01.mkv?link=external-event-torrent&index=0&play',
+        timeline: { hash: 'external-event-e1', time: 0, duration: 3000, percent: 0 },
+        playlist: [{
+            torrent_hash: 'external-event-torrent', file_name: 'S01E01.mkv', file_index: 0,
+            season: 1, episode: 1,
+            url: 'http://127.0.0.1:8090/stream/S01E01.mkv?link=external-event-torrent&index=0&play',
+            timeline: { hash: 'external-event-e1', time: 0, duration: 3000, percent: 0 }
+        }]
+    };
+    env.setActive(movie);
+    env.Lampa.Player.play(data);
+    assert.equal(env.api.session().external, false,
+        'storage inference remains false before Lampa confirms the external route');
+    assert.equal(env.api.pending(), null);
+    env.dispatchPlayerEvent('external', data);
+    assert.equal(env.api.session().external, true,
+        'the authoritative Lampa external event must upgrade the captured session');
+    assert.equal(env.api.pending().torrent.hash, 'external-event-torrent',
+        'an externally launched torrent must persist a return checkpoint');
+}
+
+{
+    const env = harness({ androidPlatform: true, player: 'android', playerTorrent: 'android' });
+    const collisionHash = 'cross-source-collision';
+    const torrentMovie = { id: 7785, media_type: 'tv', title: 'Old torrent pending', original_name: 'Old torrent pending' };
+    const torrentData = {
+        card: torrentMovie, movie: torrentMovie, torrent_hash: 'collision-torrent', season: 1, episode: 1,
+        url: 'http://127.0.0.1:8090/stream/S01E01.mkv?link=collision-torrent&index=0&play',
+        timeline: { hash: collisionHash, time: 10, duration: 3000, percent: 1 },
+        playlist: [{ torrent_hash: 'collision-torrent', file_name: 'S01E01.mkv', file_index: 0, season: 1, episode: 1,
+            url: 'http://127.0.0.1:8090/stream/S01E01.mkv?link=collision-torrent&index=0&play',
+            timeline: { hash: collisionHash, time: 10, duration: 3000, percent: 1 } }]
+    };
+    env.setActive(torrentMovie);
+    env.Lampa.Player.play(torrentData);
+    assert.equal(env.api.pending().torrent.hash, 'collision-torrent');
+    const pendingEventsBefore = (env.api.pending().events || []).length;
+
+    const onlineMovie = { id: 7786, media_type: 'tv', title: 'Current online session', original_name: 'Current online session' };
+    const onlineData = {
+        card: onlineMovie, movie: onlineMovie, isonline: true, season: 1, episode: 1,
+        url: 'https://media.example/collision-online-e1.m3u8',
+        timeline: { hash: collisionHash, time: 10, duration: 3000, percent: 1 },
+        playlist: [{ isonline: true, season: 1, episode: 1, url: 'https://media.example/collision-online-e1.m3u8',
+            timeline: { hash: collisionHash, time: 10, duration: 3000, percent: 1 } }]
+    };
+    env.setActive(onlineMovie);
+    env.Lampa.Player.play(onlineData);
+    env.timelineListeners.forEach((listener) => listener({
+        hash: collisionHash, road: { time: 55, duration: 3000, percent: 2, updated: 2_000_100 }
+    }));
+    const saved = env.api.record();
+    assert.equal(saved.source, 'online',
+        'a current online update must not be intercepted by an unrelated torrent pending entry');
+    assert.equal(saved.time, 55);
+    assert.equal((env.api.pending().events || []).length, pendingEventsBefore,
+        'the stale torrent pending must not collect current online events');
+}
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -517,6 +649,11 @@ function seedDelayedOnline(env, id) {
     const cardKey = t.cardKey(movie);
     const recordKey = 'c_' + h.Lampa.Utils.hash(cardKey);
     const segments = [{ start: 0, end: 75, type: 'intro' }, { start: 3480, end: 3697, type: 'credits' }];
+    const canonicalSegments = {
+        duration_ms: 3_697_000,
+        skip: [{ start: 0, end: 75 }, { start: 3480, end: 3697 }],
+        ad: []
+    };
     h.storage[storageKey] ||= {};
     h.storage[storageKey][recordKey] = {
         v: 6,
@@ -571,11 +708,107 @@ function seedDelayedOnline(env, id) {
     assert.equal(payload.currentItem.position, 320);
     assert.equal(payload.playlist[1].title, 'The Kingsroad');
     assert.equal(payload.playlist[1].position, 320);
-    assert.deepEqual(payload.segments, segments);
-    assert.deepEqual(payload.currentItem.segments, segments);
-    assert.deepEqual(payload.playlist[1].segments, segments);
+    assert.deepEqual(payload.segments, canonicalSegments,
+        'legacy Lampac segments must be normalized to the Just+ 1.3.10 Intent contract');
+    assert.deepEqual(payload.currentItem.segments, canonicalSegments);
+    assert.deepEqual(payload.playlist[1].segments, canonicalSegments);
     assert.equal(payload.currentItem.playlist, undefined);
     assert.equal(payload.playlist[1].playlist, undefined);
+}
+
+{
+    const env = harness({ androidPlatform: true, player: 'android', androidTimelineRefresh: true });
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 7782, media_type: 'tv', title: 'Newer native timeline', original_name: 'Newer native timeline' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    env.storage[storageKey] = {
+        [recordKey]: {
+            v: 6, card_key: cardKey, source: 'online', activity_at: 2_000_075,
+            season: 1, episode: 2, episode_title: 'E2', timeline_hash: 'newer-native-e2',
+            time: 332, duration: 5401, percent: 6, current_index: 0,
+            online: {
+                index: 0,
+                items: [{ title: 'E2', season: 1, episode: 2, hash: 'newer-native-e2', direct_url: 'https://media.example/newer-native-e2.m3u8', meta: {} }]
+            }
+        }
+    };
+    env.roads['newer-native-e2'] = { hash: 'newer-native-e2', time: 401, duration: 5401, percent: 7, updated: 2_000_100 };
+    env.setActive(movie);
+    env.api.launch();
+    assert.equal(env.androidLaunches[0].nativePositionMs, 401000,
+        'a newer native position must remain authoritative at launch');
+    assert.equal(env.timelineUpdates.length, 0,
+        'remote hydration must not overwrite a newer native timeline road');
+}
+
+{
+    const env = harness({ androidPlatform: true, player: 'android', androidTimelineRefresh: true });
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 7781, media_type: 'tv', title: 'Native timeline refresh', original_name: 'Native timeline refresh' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    env.storage[storageKey] = {
+        [recordKey]: {
+            v: 6, card_key: cardKey, source: 'online', activity_at: 2_000_075,
+            season: 1, episode: 2, episode_title: 'E2', timeline_hash: 'native-refresh-e2',
+            time: 332.040333, duration: 5401.24, percent: 6, current_index: 1,
+            online: {
+                index: 1,
+                items: [
+                    { title: 'E1', season: 1, episode: 1, hash: 'native-refresh-e1', direct_url: 'https://media.example/native-e1.m3u8', meta: {} },
+                    { title: 'E2', season: 1, episode: 2, hash: 'native-refresh-e2', direct_url: 'https://media.example/native-e2.m3u8', meta: {} }
+                ]
+            }
+        }
+    };
+    env.setActive(movie);
+    env.api.launch();
+    const launch = env.androidLaunches[0];
+    assert.equal(launch.nativePositionMs, 332040,
+        'receiver launch must survive Lampa Android refreshing timeline from its local file_view snapshot');
+    assert.equal(env.timelineUpdates.length, 1,
+        'Continue must prime only the selected episode timeline before native launch');
+    assert.equal(env.timelineUpdates[0].hash, 'native-refresh-e2');
+    assert.equal(env.timelineUpdates[0].received, true,
+        'timeline hydration must be marked received so Lampa does not echo it to CUB');
+    assert.equal(env.timelineUpdates[0].updated, 2_000_075,
+        'remote activity timestamp must remain authoritative during local hydration');
+    assert.equal(env.storage[storageKey][recordKey].activity_at, 2_000_075,
+        'synthetic timeline hydration must not create a newer Continue record');
+}
+
+{
+    const env = harness({ androidPlatform: true, playerTorrent: 'android', androidTimelineRefresh: true });
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 7783, media_type: 'tv', title: 'Torrent native timeline refresh', original_name: 'Torrent native timeline refresh' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const torrentHash = 'native-torrent-7783';
+    env.storage.torrserver_url = 'http://127.0.0.1:8090';
+    env.storage[storageKey] = {
+        [recordKey]: {
+            v: 6, card_key: cardKey, source: 'torrent', activity_at: 2_000_080,
+            season: 1, episode: 2, episode_title: 'E2', timeline_hash: 'native-torrent-e2',
+            time: 210.125, duration: 3000, percent: 7, current_index: 1,
+            torrent: {
+                hash: torrentHash, index: 1,
+                items: [
+                    { file_id: 0, file_name: 'S01E01.mkv', title: 'E1', season: 1, episode: 1, hash: 'native-torrent-e1', meta: {} },
+                    { file_id: 1, file_name: 'S01E02.mkv', title: 'E2', season: 1, episode: 2, hash: 'native-torrent-e2', meta: {} }
+                ]
+            }
+        }
+    };
+    env.setActive(movie);
+    env.api.launch();
+    const launch = env.androidLaunches[0];
+    assert.equal(launch.nativePositionMs, 210125,
+        'torrent Continue must survive Lampa Android refreshing the active file timeline');
+    assert.equal(env.timelineUpdates.length, 1,
+        'torrent Continue must prime only the selected file timeline before native launch');
+    assert.equal(env.timelineUpdates[0].hash, 'native-torrent-e2');
+    assert.equal(env.timelineUpdates[0].received, true);
 }
 
 {
@@ -800,7 +1033,7 @@ function seedDelayedOnline(env, id) {
     assert.deepEqual(payload.playlist.map((item) => item.episode), [1, 2, 3]);
     assert.equal(payload.playlist[1].url, 'https://media.example/r2.m3u8');
     assert.equal(payload.playlist[1].headers.Referer, 'https://metadata.example/e2');
-    assert.deepEqual(payload.playlist[1].segments, [{ start: 2, end: 6, type: 'intro' }]);
+    assert.deepEqual(payload.playlist[1].segments, { skip: [{ start: 2, end: 6 }], ad: [] });
     h.setRchHook(null);
 }
 
@@ -2652,6 +2885,48 @@ function syncRecord(env, id, activityAt, itemCount) {
 }
 
 {
+    const env = harness({
+        scripts: ['https://lampac.fun/sync/js/arx.lamp'],
+        androidPlatform: true,
+        player: 'android'
+    });
+    let remoteDocument = null;
+    env.setRequestHandler(({ post, ok }) => {
+        if (post) {
+            remoteDocument = JSON.parse(post);
+            return ok({ success: true });
+        }
+        if (!remoteDocument) return ok({ success: false, msg: 'outFile' });
+        return ok({ success: true, data: JSON.stringify(remoteDocument) });
+    });
+    const movie = { id: 7787, media_type: 'tv', title: 'Android return to Lampac', original_name: 'Android return to Lampac' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const resolverUrl = 'https://lampac.fun/lite/hdvb/serial?id=7787&s=1&e=2&t=Dub';
+    const mediaUrl = 'https://media.example/android-return-e2.m3u8';
+    env.setActive(movie);
+    env.listeners.request_secuses[0]({ params: { url: resolverUrl, headers: {} }, data: { url: mediaUrl } });
+    env.Lampa.Player.play({
+        card: movie, movie, isonline: true, season: 1, episode: 2, title: 'E2',
+        url: mediaUrl,
+        timeline: { hash: 'android-return-e2', time: 332, duration: 3000, percent: 11 },
+        playlist: [{ isonline: true, season: 1, episode: 2, title: 'E2', url: mediaUrl,
+            timeline: { hash: 'android-return-e2', time: 332, duration: 3000, percent: 11 } }]
+    });
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'android-return-e2', road: { time: 375, duration: 3000, percent: 13, updated: 2_000_100 }
+    }));
+    assert.equal(env.storage.continue_watch_v6_7[recordKey].time, 375,
+        'the Just+ return timeline must update the local Continue record immediately');
+    env.advance(7_150);
+    assert.ok(remoteDocument && remoteDocument.records[recordKey],
+        'the Android online return must reach the Lampac key-selected document after the flush timer');
+    assert.equal(remoteDocument.records[recordKey].source, 'online');
+    assert.equal(remoteDocument.records[recordKey].episode, 2);
+    assert.equal(remoteDocument.records[recordKey].time, 375);
+}
+
+{
     const phone = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
     phone.setAccountProfile('phone-profile');
     phone.storage.lampac_profile_id = 'phone-internal-profile';
@@ -3084,4 +3359,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.11 regression fixtures: PASS');
+console.log('ContinueWatching v6.2.12 regression fixtures: PASS');
