@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.14-live-card-pull-20260904';
+    var VERSION = 'v6.2.15-browser-timeline-prime-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -1168,7 +1168,7 @@
         return out;
     }
     function primeResumeTimeline(record, hash, road) {
-        if (!isAndroidPlatform() || !hash || !road || num(road.time) <= 0 ||
+        if (!hash || !road || num(road.time) <= 0 ||
             !Lampa.Timeline || typeof Lampa.Timeline.update !== 'function') return false;
         var local = timelineView(hash) || {};
         var stamp = num(record && record.activity_at);
