@@ -1916,10 +1916,10 @@ function seedDelayedOnline(env, id) {
     assert.equal(setUrl.pathname, '/storage/set');
     assert.equal(getUrl.searchParams.get('token'), 'nast');
     assert.equal(getUrl.searchParams.get('path'), 'continuewatch');
-    assert.equal(getUrl.searchParams.get('pathfile'), 'continue_watch_v6_7');
+    assert.equal(getUrl.searchParams.get('pathfile'), 'continue_watch_v6_family room');
     assert.equal(getUrl.searchParams.get('account_email'), 'viewer@example.test');
     assert.equal(getUrl.searchParams.get('uid'), 'device-id');
-    assert.equal(getUrl.searchParams.get('profile_id'), '7');
+    assert.equal(getUrl.searchParams.get('profile_id'), 'family room');
     changedToken.setScripts(['https://untrusted.example/sync/js/evil']);
     assert.equal(changedToken.api.testing.discoverLampacToken(), '');
     assert.equal(changedToken.requests.length, requestsBeforeUrlHelpers, 'identity/URL helpers must not themselves make network requests');
@@ -2019,6 +2019,7 @@ function syncRecord(env, id, activityAt, itemCount) {
     local.value.online.items[0].meta.transport = {
         url: 'https://media.example/nested-url.m3u8', uri: 'https://media.example/nested-uri.m3u8', src: 'https://media.example/nested-src.m3u8'
     };
+    local.value.online.items[0].meta.quality = { '1080': 'https://signed.example/video.m3u8?token=private' };
     local.value.online.items[0].meta.headers = { Authorization: 'Bearer nested-private' };
     local.value.online.items[0].meta.rch = { body: 'source-rch-body' };
     env.storage.continue_watch_v6_7 = { [local.key]: local.value };
@@ -2054,6 +2055,9 @@ function syncRecord(env, id, activityAt, itemCount) {
     ['segment.example', 'nested-url.m3u8', 'nested-uri.m3u8', 'nested-src.m3u8'].forEach((needle) => {
         assert.equal(JSON.stringify(firstBody).includes(needle), false, 'remote body must not retain nested transient media URL ' + needle);
     });
+    assert.equal(JSON.stringify(firstBody).includes('signed.example'), false, 'remote body must not retain scalar signed URL maps');
+    assert.equal(env.storage.continue_watch_v6_7[local.key].online.direct_url, 'https://media.example/transient-proxy/video.m3u8', 'remote sync must not strip same-device direct playback URLs from the local store');
+    assert.equal(env.storage.continue_watch_v6_7[local.key].online.resolver_headers.Authorization, 'Bearer private', 'remote sync must not strip same-device resolver headers from the local store');
     assert.equal(posts.length, 2, 'a verification document missing the local record must produce one merged repair POST');
     const repair = JSON.parse(posts[1].params);
     assert.ok(repair.records[local.key]);
@@ -2092,6 +2096,100 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(diagnostic.includes('arx.lamp'), false);
     assert.equal(diagnostic.includes('account_email'), false);
     assert.equal(diagnostic.includes('lampac_unic_id'), false);
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/a%20token%2Fwith%3Fchars'] });
+    env.setAccountProfile('device-profile');
+    env.storage.lampac_profile_id = 'shared-lampac-profile';
+    assert.equal(env.api.sync().key, 'continue_watch_v6_device-profile', 'local state remains scoped to the active Lampa profile');
+    const remoteUrl = new URL(env.api.testing.lampacStorageUrl('get'));
+    assert.equal(env.api.testing.discoverLampacToken(), 'a token/with?chars');
+    assert.equal(remoteUrl.searchParams.get('token'), 'a token/with?chars');
+    assert.equal(remoteUrl.searchParams.get('pathfile'), 'continue_watch_v6_shared-lampac-profile', 'configured Lampac profile must select the shared remote document');
+    assert.equal(remoteUrl.searchParams.get('profile_id'), 'shared-lampac-profile');
+}
+
+{
+    const emailOnly = harness();
+    emailOnly.storage.account_email = 'email-only@example.test';
+    const emailUrl = new URL(emailOnly.api.testing.lampacStorageUrl('get'));
+    assert.equal(emailUrl.searchParams.get('account_email'), 'email-only@example.test');
+    assert.equal(emailUrl.searchParams.has('uid'), false);
+    const uidOnly = harness();
+    uidOnly.storage.lampac_unic_id = 'uid-only-device';
+    const uidUrl = new URL(uidOnly.api.testing.lampacStorageUrl('get'));
+    assert.equal(uidUrl.searchParams.get('uid'), 'uid-only-device');
+    assert.equal(uidUrl.searchParams.has('account_email'), false);
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
+    const local = syncRecord(env, 950, 3_500_000, 1);
+    const newer = syncRecord(env, 950, 3_500_100, 1);
+    newer.value.time = 99;
+    env.storage.continue_watch_v6_7 = { [local.key]: local.value };
+    env.setRequestHandler(({ ok }) => ok({ schema: 1, updated_at: 3_500_100, records: { [newer.key]: newer.value } }));
+    env.api.testing.pullRemote(() => {});
+    assert.equal(env.api.sync().store[local.key].time, 99, 'a valid newer remote record must win the same-key merge');
+
+    const partial = syncRecord(env, 951, 3_500_200, 1);
+    partial.value.time = 300; partial.value.duration = 3000; partial.value.percent = 10;
+    const falseComplete = syncRecord(env, 951, 3_500_300, 1);
+    falseComplete.value.time = 20; falseComplete.value.duration = 3000; falseComplete.value.percent = 100;
+    env.storage.continue_watch_v6_7 = { [partial.key]: partial.value };
+    env.setRequestHandler(({ ok }) => ok({ schema: 1, updated_at: 3_500_300, records: { [falseComplete.key]: falseComplete.value } }));
+    env.api.testing.pullRemote(() => {});
+    assert.equal(env.api.sync().store[partial.key].time, 300, 'an implausible remote completion must not replace valid partial local progress');
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
+    const torrent = syncRecord(env, 960, 3_600_000, 1);
+    torrent.value.source = 'torrent';
+    torrent.value.season = 2; torrent.value.episode = 5; torrent.value.current_index = 3;
+    torrent.value.torrent = { index: 3, hash: 'torrent-hash', magnet: 'magnet:?xt=urn:btih:abc', items: [{ hash: 'torrent-e5', season: 2, episode: 5, file_name: 'E5.mkv', meta: { segments: [{ duration: 4, type: 'video/mp2t' }] } }] };
+    delete torrent.value.online;
+    env.setRequestHandler(({ ok }) => ok({ success: false, msg: 'outFile' }));
+    env.storage.continue_watch_v6_7 = { [torrent.key]: torrent.value };
+    env.api.testing.syncRemote('torrent');
+    const body = JSON.parse(env.requests.filter((request) => request.post)[0].params);
+    assert.equal(body.records[torrent.key].season, 2);
+    assert.equal(body.records[torrent.key].episode, 5);
+    assert.equal(body.records[torrent.key].current_index, 3);
+    assert.equal(body.records[torrent.key].torrent.index, 3);
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
+    const local = syncRecord(env, 970, 3_700_000, 1);
+    const late = syncRecord(env, 971, 3_700_100, 1);
+    env.storage.continue_watch_v6_7 = { [local.key]: local.value };
+    let lateGet = null;
+    env.setRequestHandler(({ post, ok }) => { if (!post && !lateGet) lateGet = ok; });
+    env.api.testing.syncRemote('timeout');
+    env.advance(8_000);
+    lateGet({ schema: 1, updated_at: 3_700_100, records: { [late.key]: late.value } });
+    assert.deepEqual(Object.keys(env.api.sync().store), [local.key], 'a late GET callback after timeout must be ignored exactly once');
+    assert.equal(env.requests.filter((request) => request.post).length, 0, 'a timed-out GET must not initiate a late POST');
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
+    let held = null;
+    let getCalls = 0;
+    env.setRequestHandler(({ post, ok, fail }) => {
+        if (post) return fail();
+        getCalls += 1;
+        if (!held) { held = ok; return; }
+        fail();
+    });
+    env.api.testing.syncRemote('first');
+    env.api.testing.syncRemote('coalesced-one');
+    env.api.testing.syncRemote('coalesced-two');
+    held({ schema: 1, updated_at: 0, records: {} });
+    env.advance(650);
+    assert.equal(getCalls, 2, 'busy sync calls must coalesce to one serialized follow-up cycle');
 }
 
 {

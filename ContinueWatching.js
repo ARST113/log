@@ -204,7 +204,13 @@
         } catch (e0) {}
         return 'default';
     }
-    function remoteProfileId() { return profileId(); }
+    function remoteProfileId() {
+        try {
+            var configured = str(Lampa.Storage.get('lampac_profile_id', '')).trim();
+            if (configured) return configured;
+        } catch (e) {}
+        return profileId();
+    }
     function storageKeyForProfile(profile) { return STORAGE_BASE + '_' + profile; }
     function pendingKeyForProfile(profile) { return PENDING_BASE + '_' + profile; }
     function outboxKeyForProfile(profile) { return OUTBOX_BASE + '_' + profile; }
@@ -303,20 +309,21 @@
             typeof value.records !== 'object' || Array.isArray(value.records)) return null;
         return { schema: REMOTE_SCHEMA, updated_at: num(value.updated_at), records: value.records };
     }
-    function portableRecord(record) {
+    function copyRecord(record) {
         var copy = deepCopy(record);
         if (!copy || !copy.card_key) return null;
+        return copy;
+    }
+    function remoteProjectionRecord(record) {
+        var copy = copyRecord(record);
+        if (!copy) return null;
         sanitizeRecordResolvers(copy);
-        function stripRemoteFields(entry) {
-            if (!entry || typeof entry !== 'object') return;
-            delete entry.direct_url;
-            delete entry.proxy_url;
-            delete entry.resolver_headers;
-            delete entry.rch;
-            delete entry.rch_body;
-        }
-        function stripNestedCredentials(value) {
-            if (!value || typeof value !== 'object') return;
+        function stripNestedCredentials(value, key) {
+            if (typeof value === 'string') {
+                if (key !== 'resolver_url' && /^(?:https?:)?\/\//i.test(value)) return undefined;
+                return value;
+            }
+            if (!value || typeof value !== 'object') return value;
             Object.keys(value).forEach(function (key) {
                 var normalized = str(key).toLowerCase();
                 if (normalized === 'token' || normalized === 'account_email' || normalized === 'uid' ||
@@ -325,23 +332,30 @@
                     delete value[key];
                     return;
                 }
-                if (normalized === 'url' || normalized === 'uri' || normalized === 'src') {
+                if (normalized === 'url' || normalized === 'uri' || normalized === 'src' || normalized === 'direct_url' || normalized === 'proxy_url') {
                     delete value[key];
                     return;
                 }
-                stripNestedCredentials(value[key]);
+                var cleaned = stripNestedCredentials(value[key], normalized);
+                if (cleaned === undefined) delete value[key]; else value[key] = cleaned;
             });
+            return value;
         }
-        stripRemoteFields(copy.online);
-        if (copy.online && Array.isArray(copy.online.items)) copy.online.items.forEach(stripRemoteFields);
-        stripRemoteFields(copy.torrent);
-        if (copy.torrent && Array.isArray(copy.torrent.items)) copy.torrent.items.forEach(stripRemoteFields);
-        stripNestedCredentials(copy);
+        stripNestedCredentials(copy, '');
+        var corrected = normalizeRoad(copy, { external: false, initial_time: num(copy.time), created_at: now() });
+        if (corrected.completion_guard) {
+            copy.time = corrected.time;
+            copy.duration = corrected.duration;
+            copy.percent = corrected.percent;
+            copy.completion_guard = corrected.completion_guard;
+        }
         compactRecord(copy);
         return copy;
     }
     function chooseMergedRecord(oldRecord, candidate) {
         if (!oldRecord) return candidate;
+        if (candidate.completion_guard && !oldRecord.completion_guard && num(oldRecord.percent) < 100 && num(candidate.percent) <= num(oldRecord.percent)) return oldRecord;
+        if (oldRecord.completion_guard && !candidate.completion_guard && num(candidate.percent) < 100 && num(oldRecord.percent) <= num(candidate.percent)) return candidate;
         if (num(candidate.activity_at) > num(oldRecord.activity_at)) return candidate;
         if (num(candidate.activity_at) < num(oldRecord.activity_at)) return oldRecord;
         if (rejectEqualTimeDowngrade(oldRecord, candidate)) return oldRecord;
@@ -353,12 +367,20 @@
         for (var i = 0; i < arguments.length; i++) {
             var map = arguments[i] || {};
             Object.keys(map).forEach(function (key) {
-                var candidate = portableRecord(map[key]);
+                var candidate = copyRecord(map[key]);
                 if (!candidate) return;
                 merged[key] = chooseMergedRecord(merged[key], candidate);
             });
         }
         return merged;
+    }
+    function remoteProjectionMaps(records) {
+        var projected = {};
+        Object.keys(records || {}).forEach(function (key) {
+            var record = remoteProjectionRecord(records[key]);
+            if (record) projected[key] = record;
+        });
+        return projected;
     }
     function pullRemote(callback) {
         var context = remoteContext();
@@ -367,21 +389,21 @@
             if (!remoteContextCurrent(context)) return callback(false, null);
             var document = parseRemoteDocument(response);
             if (!document) return callback(false, null);
-            var merged = mergeRecordMaps(document.records, readStore(context.storageKey), readOutboxByKey(context.outboxKey));
+            var merged = mergeRecordMaps(remoteProjectionMaps(document.records), readStore(context.storageKey), readOutboxByKey(context.outboxKey));
             writeStoreByKey(context.storageKey, merged);
             refreshUI();
             callback(true, document);
         }, context.getUrl);
     }
     function pushRemote(records, callback, requestUrl) {
-        var document = { schema: REMOTE_SCHEMA, updated_at: now(), records: mergeRecordMaps(records) };
+        var document = { schema: REMOTE_SCHEMA, updated_at: now(), records: remoteProjectionMaps(records) };
         remoteRequest('set', JSON.stringify(document), function (response) {
             if (typeof response === 'string') { try { response = JSON.parse(response); } catch (e) { response = null; } }
             callback(!!response && !(response.success === false), document);
         }, requestUrl);
     }
     function recordMapsEqual(a, b) {
-        var left = mergeRecordMaps(a), right = mergeRecordMaps(b);
+        var left = remoteProjectionMaps(a), right = remoteProjectionMaps(b);
         var leftKeys = Object.keys(left).sort(), rightKeys = Object.keys(right).sort();
         if (leftKeys.length !== rightKeys.length) return false;
         for (var i = 0; i < leftKeys.length; i++) {
@@ -407,7 +429,7 @@
             scheduleRemoteSync('queued');
         }
         function apply(document) {
-            var merged = mergeRecordMaps(document.records, readStore(context.storageKey), readOutboxByKey(context.outboxKey));
+            var merged = mergeRecordMaps(remoteProjectionMaps(document.records), readStore(context.storageKey), readOutboxByKey(context.outboxKey));
             writeStoreByKey(context.storageKey, merged);
             refreshUI();
             return merged;
