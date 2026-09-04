@@ -194,7 +194,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.0-lampac-storage-sync-20260904');
+assert.equal(h.api.version, 'v6.2.1-lampac-key-sync-20260904');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -1155,6 +1155,114 @@ function seedDelayedOnline(env, id) {
 }
 
 {
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 19885, media_type: 'tv', title: 'Sherlock', original_name: 'Sherlock' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const resolver = 'https://lampac.fun/lite/hdvb/video?id=19885&s=1&e=2&t=Dub&token=hdvb-e2-token';
+    const responseMedia = 'https://lampac.fun/proxy/hdvb-response-e2.m3u8';
+    const playerMedia = 'https://lampac.fun/proxy/hdvb-player-rewritten-e2.m3u8';
+    const episode = {
+        title: 'Этюд в розовых тонах', url: playerMedia, season: 1, episode: 2,
+        timeline: { hash: 'sherlock-19885-2' }
+    };
+
+    env.setActive(movie);
+    env.listeners.request_secuses.forEach((listener) => listener({
+        params: { url: resolver }, data: { url: responseMedia }
+    }));
+    env.Lampa.Player.play(Object.assign({}, episode, {
+        card: movie, movie, isonline: true, playlist: [episode], playlist_index: 0
+    }));
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'sherlock-19885-2', road: { time: 277, duration: 5381, percent: 5, updated: 4_110_100 }
+    }));
+
+    const saved = env.storage[storageKey][recordKey];
+    assert.equal(new URL(saved.online.resolver_url).searchParams.get('token'), 'hdvb-e2-token',
+        'a same-card HDVB resolver must survive when the player rewrites the response media URL');
+
+    env.setRequestHandler(({ url, ok, fail }) => {
+        if (new URL(url).searchParams.get('token') !== 'hdvb-e2-token') return fail();
+        ok({ url: 'https://media.example/sherlock-s1e2-fresh.m3u8' });
+    });
+    const before = env.androidLaunches.length;
+    env.api.launch();
+    assert.equal(env.androidLaunches.length, before + 1,
+        'direct Continue must resolve a rewritten HDVB playback URL through the fresh same-card resolver');
+    assert.equal(env.androidLaunches[before].parsed.episode, 2);
+    assert.equal(env.androidLaunches[before].parsed.time, 277);
+}
+
+{
+    const env = harness();
+    const movieA = { id: 111, media_type: 'tv', title: 'Late A', original_name: 'Late A' };
+    const movieB = { id: 222, kinopoisk_id: 111, media_type: 'tv', title: 'Current B', original_name: 'Current B' };
+    const resolverA = 'https://lampac.fun/lite/hdvb/video?id=111&s=1&e=2&t=Dub&token=late-a-token';
+    env.setActive(movieB);
+    env.listeners.request_secuses.forEach((listener) => listener({
+        params: { url: resolverA }, data: { url: 'https://lampac.fun/proxy/late-a-response.m3u8' }
+    }));
+    env.Lampa.Player.play({
+        card: movieB, movie: movieB, isonline: true, season: 1, episode: 2,
+        title: 'B E2', url: 'https://lampac.fun/proxy/current-b-rewritten.m3u8',
+        timeline: { hash: 'current-b-e2' }
+    });
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'current-b-e2', road: { time: 90, duration: 1000, percent: 9, updated: 4_111_100 }
+    }));
+    const saved = env.api.record();
+    assert.equal(saved.online.resolver_url, '',
+        'a late response from card A must never become the rewritten-media resolver for card B');
+}
+
+{
+    const env = harness();
+    const movie = { id: 333, media_type: 'tv', title: 'Ambiguous voice', original_name: 'Ambiguous voice' };
+    env.setActive(movie);
+    ['MVO', 'DVO'].forEach((voice, index) => {
+        env.setClock(4_112_000 + index);
+        env.listeners.request_secuses.forEach((listener) => listener({
+            params: { url: 'https://lampac.fun/lite/hdvb/video?id=333&s=1&e=2&t=' + voice + '&token=' + voice.toLowerCase() },
+            data: { url: 'https://lampac.fun/proxy/voice-' + voice.toLowerCase() + '.m3u8' }
+        }));
+    });
+    env.Lampa.Player.play({
+        card: movie, movie: movie, isonline: true, season: 1, episode: 2,
+        title: 'E2', url: 'https://lampac.fun/proxy/ambiguous-rewritten.m3u8',
+        timeline: { hash: 'ambiguous-e2' }
+    });
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'ambiguous-e2', road: { time: 91, duration: 1000, percent: 9, updated: 4_112_100 }
+    }));
+    assert.equal(env.api.record().online.resolver_url, '',
+        'rewritten media without a voice selection must fail closed when multiple fresh translations match');
+}
+
+{
+    const env = harness();
+    const movie = { id: 444, media_type: 'tv', title: 'Expired resolver', original_name: 'Expired resolver' };
+    env.setActive(movie);
+    env.setClock(4_113_000);
+    env.listeners.request_secuses.forEach((listener) => listener({
+        params: { url: 'https://lampac.fun/lite/hdvb/video?id=444&s=1&e=2&t=Dub&token=expired-token' },
+        data: { url: 'https://lampac.fun/proxy/expired-response.m3u8' }
+    }));
+    env.setClock(4_129_001);
+    env.Lampa.Player.play({
+        card: movie, movie: movie, isonline: true, season: 1, episode: 2,
+        title: 'E2', url: 'https://lampac.fun/proxy/expired-rewritten.m3u8',
+        timeline: { hash: 'expired-e2' }
+    });
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'expired-e2', road: { time: 92, duration: 1000, percent: 9, updated: 4_129_100 }
+    }));
+    assert.equal(env.api.record().online.resolver_url, '',
+        'the card-scoped rewritten-media fallback must reject resolver captures older than 15 seconds');
+}
+
+{
     const storageKey = 'continue_watch_v6_7';
     const movie = { id: 801, media_type: 'tv', title: 'Unsupported resolver schema', original_name: 'Unsupported resolver schema' };
     const cardKey = h.api.testing.cardKey(movie);
@@ -1959,8 +2067,8 @@ function seedDelayedOnline(env, id) {
     assert.equal(getUrl.searchParams.get('token'), 'nast');
     assert.equal(getUrl.searchParams.get('path'), 'continuewatch');
     assert.equal(getUrl.searchParams.get('pathfile'), 'continue_watch_v6_family room');
-    assert.equal(getUrl.searchParams.get('account_email'), 'viewer@example.test');
-    assert.equal(getUrl.searchParams.get('uid'), 'device-id');
+    assert.equal(getUrl.searchParams.has('account_email'), false, 'storage sync must not expose the Lampa email');
+    assert.equal(getUrl.searchParams.has('uid'), false, 'storage sync must not expose the device uid');
     assert.equal(getUrl.searchParams.get('profile_id'), 'family room');
     changedToken.setScripts(['https://untrusted.example/sync/js/evil']);
     assert.equal(changedToken.api.testing.discoverLampacToken(), '');
@@ -1977,6 +2085,23 @@ function seedDelayedOnline(env, id) {
     assert.equal(env.api.sync().key, 'continue_watch_v6_lampac-profile', 'lampac_profile_id must be used when the active account has no profile');
     delete env.storage.lampac_profile_id;
     assert.equal(env.api.sync().key, 'continue_watch_v6_default', 'default must be used when neither active nor Lampac profile is available');
+}
+
+{
+    const phone = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    phone.setAccountProfile('phone-account-profile');
+    const browser = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    browser.setAccountProfile(null);
+    const phoneUrl = new URL(phone.api.testing.lampacStorageUrl('get'));
+    const browserUrl = new URL(browser.api.testing.lampacStorageUrl('get'));
+    assert.equal(phoneUrl.searchParams.get('pathfile'), 'continue_watch_v6',
+        'the shared Lampac key must not be split by the phone Lampa account profile');
+    assert.equal(browserUrl.searchParams.get('pathfile'), 'continue_watch_v6',
+        'a fresh browser using the same Lampac key must address the same remote document');
+    assert.equal(phoneUrl.searchParams.has('profile_id'), false);
+    assert.equal(browserUrl.searchParams.has('profile_id'), false);
+    assert.notEqual(phone.api.sync().key, browser.api.sync().key,
+        'local stores remain isolated even though the Lampac key selects one shared remote namespace');
 }
 
 function syncRecord(env, id, activityAt, itemCount) {
@@ -2001,6 +2126,39 @@ function syncRecord(env, id, activityAt, itemCount) {
             }
         }
     };
+}
+
+{
+    const phone = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    phone.setAccountProfile('phone-profile');
+    const browser = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    browser.setAccountProfile(null);
+    const seeded = syncRecord(phone, 900, 2_990_000, 2);
+    phone.storage['continue_watch_v6_phone-profile'] = { [seeded.key]: seeded.value };
+    let remoteDocument = null;
+    function bindSharedLampac(env) {
+        env.setRequestHandler(({ url, post, params, ok }) => {
+            const parsed = new URL(url);
+            assert.equal(parsed.searchParams.get('token'), 'arx.lamp');
+            assert.equal(parsed.searchParams.get('pathfile'), 'continue_watch_v6');
+            if (post) {
+                remoteDocument = JSON.parse(params);
+                return ok({ success: true });
+            }
+            if (!remoteDocument) return ok({ success: false, msg: 'outFile' });
+            return ok({ success: true, data: JSON.stringify(remoteDocument) });
+        });
+    }
+    bindSharedLampac(phone);
+    phone.api.testing.syncRemote('phone-seed');
+    assert.ok(remoteDocument && remoteDocument.records[seeded.key],
+        'the account-profile phone must publish into the key-selected Lampac document');
+
+    bindSharedLampac(browser);
+    browser.api.testing.pullRemote(() => {});
+    assert.ok(browser.storage.continue_watch_v6_default[seeded.key],
+        'a default-profile browser with the same key must hydrate the phone record');
+    assert.equal(browser.storage.continue_watch_v6_default[seeded.key].episode, 1);
 }
 
 {
@@ -2212,13 +2370,17 @@ function syncRecord(env, id, activityAt, itemCount) {
     const emailOnly = harness();
     emailOnly.storage.account_email = 'email-only@example.test';
     const emailUrl = new URL(emailOnly.api.testing.lampacStorageUrl('get'));
-    assert.equal(emailUrl.searchParams.get('account_email'), 'email-only@example.test');
+    assert.equal(emailUrl.searchParams.has('account_email'), false);
     assert.equal(emailUrl.searchParams.has('uid'), false);
+    emailOnly.api.testing.syncRemote('email-only');
+    assert.equal(emailOnly.requests.length, 0, 'email without a Lampac sync key must not enable remote storage');
     const uidOnly = harness();
     uidOnly.storage.lampac_unic_id = 'uid-only-device';
     const uidUrl = new URL(uidOnly.api.testing.lampacStorageUrl('get'));
-    assert.equal(uidUrl.searchParams.get('uid'), 'uid-only-device');
+    assert.equal(uidUrl.searchParams.has('uid'), false);
     assert.equal(uidUrl.searchParams.has('account_email'), false);
+    uidOnly.api.testing.syncRemote('uid-only');
+    assert.equal(uidOnly.requests.length, 0, 'device uid without a Lampac sync key must not enable remote storage');
 }
 
 {
