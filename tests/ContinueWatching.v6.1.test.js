@@ -2260,12 +2260,33 @@ function syncRecord(env, id, activityAt, itemCount) {
     const e2 = { title: 'Первый танец', season: 1, episode: 2, url: 'https://media.example/reacher-e2.m3u8', timeline: { hash: 'reacher-e2' } };
     env.setActive(movie);
     env.Lampa.Player.play(Object.assign({}, e1, { card: movie, movie, isonline: true, playlist: [e1], playlist_index: 0, duration: 3275 }));
+    env.timelineListeners.forEach((listener) => listener({ hash: 'reacher-e1', road: { time: 143, duration: 3275, percent: 4, updated: 3_899_000 } }));
+    let saved = env.api.sync().store['c_' + env.Lampa.Utils.hash(env.api.testing.cardKey(movie))];
+    assert.equal(saved.episode, 1);
+    assert.equal(saved.time, 143);
     env.Lampa.Player.playlist([Object.assign({}, e2, { duration: 3205 })]);
     env.timelineListeners.forEach((listener) => listener({ hash: 'reacher-e2', road: { time: 198, duration: 3205, percent: 6, updated: 3_900_000 } }));
-    const saved = env.api.sync().store['c_' + env.Lampa.Utils.hash(env.api.testing.cardKey(movie))];
+    saved = env.api.sync().store['c_' + env.Lampa.Utils.hash(env.api.testing.cardKey(movie))];
     assert.equal(saved.episode, 2, 'a web-player Next metadata transition must save episode 2');
     assert.equal(saved.episode_title, 'Первый танец');
     assert.equal(saved.time, 198);
+}
+
+{
+    const env = harness();
+    const reacher = { id: 108978, media_type: 'tv', title: 'Reacher', original_name: 'Reacher' };
+    const other = { id: 999999, media_type: 'tv', title: 'Other', original_name: 'Other' };
+    const e1 = { title: 'E1', season: 1, episode: 1, url: 'https://media.example/e1.m3u8', timeline: { hash: 'safe-e1' } };
+    const unrelated = { title: 'Other E2', season: 1, episode: 2, url: 'https://media.example/other-e2.m3u8', timeline: { hash: 'other-e2' } };
+    env.setActive(reacher);
+    env.Lampa.Player.play(Object.assign({}, e1, { card: reacher, movie: reacher, isonline: true, playlist: [e1], playlist_index: 0 }));
+    env.timelineListeners.forEach((listener) => listener({ hash: 'safe-e1', road: { time: 143, duration: 3275, percent: 4, updated: 4_000_000 } }));
+    env.setActive(other);
+    env.Lampa.Player.playlist([unrelated]);
+    env.timelineListeners.forEach((listener) => listener({ hash: 'other-e2', road: { time: 198, duration: 3205, percent: 6, updated: 4_001_000 } }));
+    const saved = env.storage['continue_watch_v6_7']['c_' + env.Lampa.Utils.hash(env.api.testing.cardKey(reacher))];
+    assert.equal(saved.episode, 1, 'unrelated singleton playlist metadata must not overwrite the active Reacher session');
+    assert.equal(saved.time, 143);
 }
 
 console.log('ContinueWatching v6.2: identity fixtures plus 53 prior fixtures passed');

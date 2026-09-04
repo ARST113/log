@@ -1863,7 +1863,15 @@
                 if (itemUrl && itemUrl === currentUrl) { matched = j; break; }
             }
         }
-        if (matched < 0 && list.length === 1) matched = 0;
+        if (matched < 0 && list.length === 1) {
+            var replacement = list[0] || {};
+            var active = currentActivityMovie();
+            var replacementMovie = replacement.card || replacement.movie || null;
+            var replacementSE = itemSE(replacement, 0);
+            var sameActiveCard = active && cardKey(active) === session.card_key;
+            var sameReplacementCard = !replacementMovie || cardKey(replacementMovie) === session.card_key;
+            if (sameActiveCard && sameReplacementCard && mediaType(session.movie) === 'tv' && replacementSE.season && replacementSE.episode) matched = 0;
+        }
         if (matched < 0) return false;
         for (var k = 0; k < list.length; k++) {
             var itemSEValue = itemSE(list[k], k);
