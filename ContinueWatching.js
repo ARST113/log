@@ -314,34 +314,35 @@
         if (!copy || !copy.card_key) return null;
         return copy;
     }
+    function redactRemoteValue(value, key) {
+        if (typeof value === 'string') {
+            if (key === 'resolver_url') return portableRemoteResolver(value);
+            if (/^(?:https?:)?\/\//i.test(value)) return undefined;
+            return value;
+        }
+        if (!value || typeof value !== 'object') return value;
+        Object.keys(value).forEach(function (childKey) {
+            var normalized = str(childKey).toLowerCase();
+            if (normalized === 'token' || normalized === 'account_email' || normalized === 'uid' ||
+                normalized === 'nws_id' || normalized === 'aesgcmkey' || normalized === 'headers' ||
+                normalized === 'resolver_headers' || normalized === 'rch' || normalized === 'rch_body') {
+                delete value[childKey];
+                return;
+            }
+            if (normalized === 'url' || normalized === 'uri' || normalized === 'src' || normalized === 'direct_url' || normalized === 'proxy_url') {
+                delete value[childKey];
+                return;
+            }
+            var cleaned = redactRemoteValue(value[childKey], normalized);
+            if (cleaned === undefined) delete value[childKey]; else value[childKey] = cleaned;
+        });
+        return value;
+    }
     function remoteProjectionRecord(record) {
         var copy = copyRecord(record);
         if (!copy) return null;
         sanitizeRemoteRecordResolvers(copy);
-        function stripNestedCredentials(value, key) {
-            if (typeof value === 'string') {
-                if (key !== 'resolver_url' && /^(?:https?:)?\/\//i.test(value)) return undefined;
-                return value;
-            }
-            if (!value || typeof value !== 'object') return value;
-            Object.keys(value).forEach(function (key) {
-                var normalized = str(key).toLowerCase();
-                if (normalized === 'token' || normalized === 'account_email' || normalized === 'uid' ||
-                    normalized === 'nws_id' || normalized === 'aesgcmkey' || normalized === 'headers' ||
-                    normalized === 'resolver_headers' || normalized === 'rch' || normalized === 'rch_body') {
-                    delete value[key];
-                    return;
-                }
-                if (normalized === 'url' || normalized === 'uri' || normalized === 'src' || normalized === 'direct_url' || normalized === 'proxy_url') {
-                    delete value[key];
-                    return;
-                }
-                var cleaned = stripNestedCredentials(value[key], normalized);
-                if (cleaned === undefined) delete value[key]; else value[key] = cleaned;
-            });
-            return value;
-        }
-        stripNestedCredentials(copy, '');
+        redactRemoteValue(copy, '');
         var corrected = normalizeRoad(copy, { external: false, initial_time: num(copy.time), created_at: now() });
         if (corrected.completion_guard) {
             copy.time = corrected.time;
@@ -379,6 +380,18 @@
         Object.keys(records || {}).forEach(function (key) {
             var record = remoteProjectionRecord(records[key]);
             if (record) projected[key] = record;
+        });
+        return projected;
+    }
+    function diagnosticProjection(value) {
+        var record = remoteProjectionRecord(value);
+        if (record) return record;
+        return redactRemoteValue(deepCopy(value), '');
+    }
+    function diagnosticProjectionMaps(records) {
+        var projected = {};
+        Object.keys(records || {}).forEach(function (key) {
+            projected[key] = diagnosticProjection(records[key]);
         });
         return projected;
     }
@@ -1273,7 +1286,7 @@
             stripLocalResolverParams(u);
             stripRemoteResolverParams(u);
             return u.toString();
-        } catch (e) { return url; }
+        } catch (e) { return ''; }
     }
     function stripLocalResolverParams(u) {
         var remove = [];
@@ -2093,13 +2106,13 @@
 
         window.ContinueWatchV6 = {
             version: VERSION,
-            record: function () { var m = activeMovie(); return m ? getRecord(m) : null; },
+            record: function () { var m = activeMovie(); return m ? remoteProjectionRecord(getRecord(m)) : null; },
             session: function () { return state.session; },
             pending: readPending,
             reconcile: reconcilePending,
             launch: function () { var m = activeMovie(); if (m) launch(m); },
             source: function () { var r = activeMovie() ? getRecord(activeMovie()) : null; return r && r.source; },
-            sync: function () { return { key: storageKey(), outbox: readOutbox(), store: store() }; }
+            sync: function () { return { key: storageKey(), outbox: diagnosticProjectionMaps(readOutbox()), store: diagnosticProjectionMaps(store()) }; }
         };
         if (window.__CONTINUE_WATCH_TEST_MODE__) {
             window.ContinueWatchV6.testing = {

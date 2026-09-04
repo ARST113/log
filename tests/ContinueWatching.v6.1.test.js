@@ -1146,6 +1146,8 @@ function seedDelayedOnline(env, id) {
     assert.equal(env.androidLaunches.length, 2,
         'direct Continue must resolve the saved HDVB episode into a fresh Android player link');
     assert.equal(env.androidLaunches[1].parsed.url, 'https://media.example/sherlock-s1e1-fresh.m3u8');
+    assert.equal(env.androidLaunches[1].parsed.time, 343,
+        'direct Continue must pass the saved Sherlock position to the resumed Android player');
 }
 
 {
@@ -2101,6 +2103,46 @@ function syncRecord(env, id, activityAt, itemCount) {
     const repair = JSON.parse(posts[1].params);
     assert.ok(repair.records[local.key]);
     assert.ok(repair.records[server.key]);
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/security-probe'] });
+    const storageKey = 'continue_watch_v6_7';
+    const local = syncRecord(env, 922, 3_210_000, 1);
+    const malformed = syncRecord(env, 923, 3_210_100, 1);
+    local.value.account_email = 'diagnostic@example.test';
+    local.value.uid = 'diagnostic-device';
+    local.value.online.resolver_url += '&token=diagnostic-token&aesgcmkey=diagnostic-aes&account_email=diagnostic%40example.test&uid=diagnostic-device';
+    local.value.online.resolver_headers = { Authorization: 'Bearer diagnostic-secret' };
+    local.value.online.direct_url = 'https://media.example/diagnostic-transient.m3u8';
+    local.value.online.items[0].meta.transport = { url: 'https://media.example/diagnostic-nested.m3u8' };
+    malformed.value.online.resolver_url = 'https://[invalid/?token=malformed-token&aesgcmkey=malformed-aes';
+    malformed.value.online.items[0].resolver_url = malformed.value.online.resolver_url;
+    env.storage[storageKey] = { [local.key]: local.value, [malformed.key]: malformed.value };
+    env.local.continue_watch_v6_outbox_7 = JSON.stringify({ [local.key]: local.value, [malformed.key]: malformed.value });
+    env.setActive(local.movie);
+
+    const diagnostic = JSON.stringify({ record: env.api.record(), sync: env.api.sync() });
+    const posted = [];
+    let serverRecords = {};
+    env.setRequestHandler(({ post, params, ok }) => {
+        if (post) {
+            const body = JSON.parse(params);
+            posted.push(body);
+            serverRecords = body.records;
+            return ok({ success: true });
+        }
+        return ok({ schema: 1, updated_at: 3_210_200, records: serverRecords });
+    });
+    env.api.testing.syncRemote('security-probe');
+    const remoteBody = JSON.stringify(posted[0] || {});
+    const publicSecrets = ['diagnostic-token', 'diagnostic-aes', 'Bearer diagnostic-secret', 'diagnostic@example.test', 'diagnostic-device', 'diagnostic-transient.m3u8', 'diagnostic-nested.m3u8'];
+    const malformedSecrets = ['malformed-token', 'malformed-aes'];
+    assert.deepEqual({
+        diagnostic: publicSecrets.filter((secret) => diagnostic.includes(secret)),
+        remote: malformedSecrets.filter((secret) => remoteBody.includes(secret))
+    }, { diagnostic: [], remote: [] },
+    'public diagnostics and remote POSTs must never expose retained local resolver credentials or transient media URLs');
 }
 
 {
