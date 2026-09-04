@@ -1,10 +1,12 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.12-native-resume-segments-20260904';
+    var VERSION = 'v6.2.13-persistent-lampac-key-20260904';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
+    var TOKEN_CACHE_KEY = 'continue_watch_v6_lampac_token';
+    var TOKEN_VETO_KEY = 'continue_watch_v6_lampac_token_veto';
     var LAMPAC_BASE = 'https://lampac.fun';
     var REMOTE_SCHEMA = 1;
     var REMOTE_PATH = 'continuewatch';
@@ -49,6 +51,12 @@
         remoteIdentityKey: null,
         remoteGetOk: 0,
         remoteSetOk: 0,
+        lampacMemoryToken: '',
+        lampacMemoryScope: '',
+        lampacMemoryAccount: '',
+        lampacConfiguredSeen: false,
+        lampacConfiguredTokens: Object.create(null),
+        lampacDisabledTokens: Object.create(null),
         controllerNode: null,
         controllerState: '',
         onlineLaunchSeed: null,
@@ -299,45 +307,271 @@
     function storageKey() { return storageKeyForProfile(profileId()); }
     function pendingKey() { return pendingKeyForProfile(profileId()); }
     function outboxKey() { return outboxKeyForProfile(profileId()); }
-    function lampacTokenFromUrl(value) {
+    function normalizedLampacToken(value) {
+        var token = str(value).trim();
+        return token && token.length <= 512 ? token : '';
+    }
+    function lampacTokenCandidate(value) {
         try {
             var u = new URL(str(value), location.href);
-            if (str(u.hostname).toLowerCase() !== 'lampac.fun') return '';
-            var pathMatch = u.pathname.match(/^\/sync\/js\/([^/]+)$/i);
+            if (str(u.hostname).toLowerCase() !== 'lampac.fun') return null;
+            var pathname = str(u.pathname);
+            var pathMatch = pathname.match(/^\/sync\/js\/([^/]+)\/?$/i);
+            var childMatch = pathname.match(/^\/(?:bookmark|timecode)\/js\/([^/]+)\/?$/i);
             var token = pathMatch ? decodeURIComponent(pathMatch[1]) :
-                (u.pathname === '/sync.js' ? str(u.searchParams.get('token') || '') : '');
-            return str(token).trim();
+                (childMatch ? decodeURIComponent(childMatch[1]) :
+                (/^\/sync\.js\/?$/i.test(pathname) ? u.searchParams.get('token') : ''));
+            token = normalizedLampacToken(token);
+            if (token) return { token: token, priority: 2 };
+            if (/^\/(?:privateinit|invc-ws)\.js\/?$/i.test(pathname)) {
+                token = normalizedLampacToken(u.searchParams.get('token'));
+                if (token) return { token: token, priority: 1 };
+            }
+        } catch (e) {}
+        return null;
+    }
+    function lampacAccountAccess() {
+        try { return !!(Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.access); }
+        catch (e) { return false; }
+    }
+    function lampacAccountFingerprint() {
+        try {
+            var account = Lampa.Account && Lampa.Account.Permit && Lampa.Account.Permit.account;
+            return str(account && account.profile && account.profile.id);
         } catch (e) { return ''; }
     }
-    function registeredLampacToken() {
-        var plugins = [];
-        try { plugins = Lampa.Storage.get('plugins', []); } catch (e) {}
-        if (typeof plugins === 'string') {
-            try { plugins = JSON.parse(plugins); } catch (e2) { plugins = []; }
+    function lampacTokenCacheRecord(ignoreAccount) {
+        var storage = null;
+        var raw = '';
+        try { storage = window.localStorage; } catch (e) {}
+        if (!storage) return null;
+        try { raw = str(storage.getItem(TOKEN_CACHE_KEY)); } catch (e2) { return null; }
+        if (!raw) return null;
+        var record = null;
+        try { record = JSON.parse(raw); } catch (e3) {}
+        if (!record || typeof record !== 'object') record = { v: 0, token: raw, scope: 'local', account: '' };
+        record.token = normalizedLampacToken(record.token);
+        record.scope = str(record.scope || 'local');
+        record.account = str(record.account || '');
+        record.disabled = record.disabled === true;
+        record.block_runtime = record.block_runtime === true;
+        if (!record.token) return record.disabled ? record : null;
+        if (!ignoreAccount && record.scope === 'account' &&
+            (!lampacAccountAccess() || (record.account && record.account !== lampacAccountFingerprint()))) return null;
+        return record;
+    }
+    function lampacTokenVetoes() {
+        var value = [];
+        try { value = Lampa.Storage.get(TOKEN_VETO_KEY, []); } catch (e) { return []; }
+        if (typeof value === 'string') {
+            try { value = JSON.parse(value); } catch (e2) { value = []; }
         }
-        if (!Array.isArray(plugins)) return '';
-        for (var i = 0; i < plugins.length; i++) {
-            var plugin = plugins[i];
-            var enabled = true;
-            var url = plugin;
-            if (plugin && typeof plugin === 'object') {
-                url = plugin.url;
-                enabled = plugin.status === true || str(plugin.status) === '1';
+        if (!Array.isArray(value)) return [];
+        var result = [];
+        for (var i = 0; i < value.length; i++) {
+            var token = normalizedLampacToken(value[i]);
+            if (token && result.indexOf(token) === -1) result.push(token);
+        }
+        return result;
+    }
+    function persistLampacTokenVeto(token, disabled) {
+        token = normalizedLampacToken(token);
+        if (!token) return;
+        var list = lampacTokenVetoes();
+        var index = list.indexOf(token);
+        if (disabled && index === -1) list.push(token);
+        else if (!disabled && index !== -1) list.splice(index, 1);
+        else return;
+        try { Lampa.Storage.set(TOKEN_VETO_KEY, list, true); } catch (e) {}
+    }
+    function lampacTokenDisabled(token) {
+        token = normalizedLampacToken(token);
+        if (!token) return false;
+        return Object.prototype.hasOwnProperty.call(state.lampacDisabledTokens, token) || lampacTokenVetoes().indexOf(token) !== -1;
+    }
+    function tombstoneLampacToken(token, omitToken) {
+        token = normalizedLampacToken(token);
+        if (!token) return;
+        var encoded = JSON.stringify({
+            v: 2,
+            token: omitToken ? '' : token,
+            scope: omitToken ? 'account' : 'local',
+            account: '',
+            disabled: true,
+            block_runtime: !!omitToken
+        });
+        try { if (window.localStorage) window.localStorage.setItem(TOKEN_CACHE_KEY, encoded); } catch (e) {}
+        if (!omitToken) {
+            try { if (window.localStorage) window.localStorage.removeItem(TOKEN_CACHE_KEY); } catch (e2) {}
+        }
+    }
+    function cachedLampacToken() {
+        var memory = normalizedLampacToken(state.lampacMemoryToken);
+        if (memory && !lampacTokenDisabled(memory) && (state.lampacMemoryScope !== 'account' || (lampacAccountAccess() &&
+            (!state.lampacMemoryAccount || state.lampacMemoryAccount === lampacAccountFingerprint())))) return memory;
+        var record = lampacTokenCacheRecord(false);
+        return record && !record.disabled && !lampacTokenDisabled(record.token) ? record.token : '';
+    }
+    function rememberLampacToken(token, scope) {
+        token = normalizedLampacToken(token);
+        if (!token) return '';
+        scope = str(scope || 'runtime');
+        var previousMemory = normalizedLampacToken(state.lampacMemoryToken);
+        if (previousMemory && previousMemory !== token) {
+            state.lampacDisabledTokens[previousMemory] = true;
+            persistLampacTokenVeto(previousMemory, true);
+        }
+        delete state.lampacDisabledTokens[token];
+        state.lampacMemoryToken = token;
+        state.lampacMemoryScope = scope;
+        state.lampacMemoryAccount = scope === 'account' ? lampacAccountFingerprint() : '';
+        persistLampacTokenVeto(token, false);
+        var storage = null;
+        try { storage = window.localStorage; } catch (e) {}
+        if (!storage) return token;
+        var previousRecord = lampacTokenCacheRecord(true);
+        if (previousRecord && previousRecord.token !== token) {
+            state.lampacDisabledTokens[previousRecord.token] = true;
+            persistLampacTokenVeto(previousRecord.token, true);
+        }
+        if (scope === 'account') {
+            tombstoneLampacToken(token, true);
+            return token;
+        }
+        var encoded = JSON.stringify({ v: 1, token: token, scope: scope, account: scope === 'account' ? lampacAccountFingerprint() : '' });
+        var current = '';
+        try { current = str(storage.getItem(TOKEN_CACHE_KEY)); } catch (e2) {}
+        if (current === encoded) return token;
+        if (current) {
+            try { storage.removeItem(TOKEN_CACHE_KEY); } catch (e3) {}
+        }
+        try { storage.setItem(TOKEN_CACHE_KEY, encoded); } catch (e4) {}
+        return token;
+    }
+    function forgetLampacToken(token, accountScoped) {
+        token = normalizedLampacToken(token);
+        var previousMemory = normalizedLampacToken(state.lampacMemoryToken);
+        accountScoped = !!accountScoped || (previousMemory === token && state.lampacMemoryScope === 'account');
+        if (!token || state.lampacMemoryToken === token) {
+            state.lampacMemoryToken = '';
+            state.lampacMemoryScope = '';
+            state.lampacMemoryAccount = '';
+        }
+        if (token) {
+            state.lampacDisabledTokens[token] = true;
+            persistLampacTokenVeto(token, !accountScoped);
+        }
+        var record = lampacTokenCacheRecord(true);
+        if (token && record && record.token !== token) return;
+        if (token && !record && previousMemory && previousMemory !== token) return;
+        tombstoneLampacToken(token || (record && record.token), accountScoped);
+    }
+    function pluginList(value) {
+        if (typeof value === 'string') {
+            try { value = JSON.parse(value); } catch (e) { value = []; }
+        }
+        return Array.isArray(value) ? value : [];
+    }
+    function storagePluginList(name) {
+        try { return pluginList(Lampa.Storage.get(name, [])); } catch (e) { return []; }
+    }
+    function runtimePluginList(name) {
+        try {
+            var method = Lampa.Plugins && Lampa.Plugins[name];
+            return typeof method === 'function' ? pluginList(method()) : [];
+        } catch (e) { return []; }
+    }
+    function considerLampacPlugin(best, plugin, requireEnabled, veto) {
+        var enabled = true;
+        var url = plugin;
+        if (plugin && typeof plugin === 'object') {
+            url = plugin.url || plugin.src || plugin.link;
+            enabled = !requireEnabled || plugin.status === true || str(plugin.status) === '1';
+        }
+        if (!enabled) return best;
+        var candidate = lampacTokenCandidate(url);
+        var disabled = candidate && veto && (typeof veto === 'function'
+            ? veto(candidate.token)
+            : Object.prototype.hasOwnProperty.call(veto, candidate.token));
+        if (!candidate || disabled) return best;
+        if (!best || candidate.priority >= best.priority) return candidate;
+        return best;
+    }
+    function considerLampacPlugins(best, plugins, requireEnabled, veto) {
+        plugins = pluginList(plugins);
+        for (var i = 0; i < plugins.length; i++) best = considerLampacPlugin(best, plugins[i], requireEnabled, veto);
+        return best;
+    }
+    function configuredLampacState() {
+        var result = { best: null, enabled: Object.create(null), disabled: Object.create(null) };
+        function scan(plugins, scope) {
+            plugins = pluginList(plugins);
+            for (var i = 0; i < plugins.length; i++) {
+                var plugin = plugins[i];
+                var url = plugin;
+                var enabled = true;
+                if (plugin && typeof plugin === 'object') {
+                    url = plugin.url || plugin.src || plugin.link;
+                    enabled = plugin.status === true || str(plugin.status) === '1';
+                }
+                var candidate = lampacTokenCandidate(url);
+                if (!candidate) continue;
+                if (enabled) {
+                    result.enabled[candidate.token] = scope;
+                    if (!result.best || candidate.priority >= result.best.priority) {
+                        result.best = { token: candidate.token, scope: scope, priority: candidate.priority };
+                    }
+                }
+                else result.disabled[candidate.token] = scope;
             }
-            if (!enabled) continue;
-            var token = lampacTokenFromUrl(url);
-            if (token) return token;
         }
-        return '';
+        if (lampacAccountAccess()) scan(storagePluginList('account_plugins'), 'account');
+        scan(storagePluginList('plugins'), 'local');
+        return result;
     }
     function discoverLampacToken() {
+        var configured = configuredLampacState();
+        for (var disabledToken in configured.disabled) {
+            if (Object.prototype.hasOwnProperty.call(configured.disabled, disabledToken)) {
+                state.lampacDisabledTokens[disabledToken] = true;
+                forgetLampacToken(disabledToken, configured.disabled[disabledToken] === 'account');
+            }
+        }
+        if (configured.best) {
+            for (var removedToken in state.lampacConfiguredTokens) {
+                if (Object.prototype.hasOwnProperty.call(state.lampacConfiguredTokens, removedToken) &&
+                    !Object.prototype.hasOwnProperty.call(configured.enabled, removedToken)) {
+                    forgetLampacToken(removedToken, state.lampacConfiguredTokens[removedToken] === 'account');
+                }
+            }
+            delete state.lampacDisabledTokens[configured.best.token];
+            state.lampacConfiguredSeen = true;
+            state.lampacConfiguredTokens = configured.enabled;
+            return rememberLampacToken(configured.best.token, configured.best.scope);
+        }
+        if (state.lampacConfiguredSeen) {
+            for (var configuredToken in state.lampacConfiguredTokens) {
+                if (Object.prototype.hasOwnProperty.call(state.lampacConfiguredTokens, configuredToken)) {
+                    forgetLampacToken(configuredToken, state.lampacConfiguredTokens[configuredToken] === 'account');
+                }
+            }
+            state.lampacConfiguredSeen = false;
+            state.lampacConfiguredTokens = Object.create(null);
+            return '';
+        }
+        var cacheRecord = lampacTokenCacheRecord(true);
+        if (cacheRecord && cacheRecord.disabled && cacheRecord.block_runtime) return '';
+        var best = null;
         var scripts = [];
         try { scripts = document && document.scripts ? document.scripts : []; } catch (e) {}
         for (var i = 0; i < scripts.length; i++) {
-            var token = lampacTokenFromUrl(scripts[i] && scripts[i].src);
-            if (token) return token;
+            var candidate = lampacTokenCandidate(scripts[i] && scripts[i].src);
+            if (candidate && !lampacTokenDisabled(candidate.token) && (!best || candidate.priority >= best.priority)) best = candidate;
         }
-        return registeredLampacToken();
+        if (!best) best = considerLampacPlugins(best, runtimePluginList('loaded'), false, lampacTokenDisabled);
+        if (!best) best = considerLampacPlugins(best, runtimePluginList('get'), true, lampacTokenDisabled);
+        if (!best) best = considerLampacPlugins(best, runtimePluginList('awaits'), false, lampacTokenDisabled);
+        return best ? rememberLampacToken(best.token, 'runtime') : cachedLampacToken();
     }
     function lampacIdentity() {
         return { token: discoverLampacToken(), profile_id: remoteProfileId() };
@@ -2623,7 +2857,7 @@
                 Lampa.Storage.listener.follow('change', function (e) {
                     if (!e) return;
                     if (e.name === storageKey()) refreshUI();
-                    if (e.name === 'plugins') {
+                    if (e.name === 'plugins' || e.name === 'account_plugins') {
                         detectRemoteIdentityChange();
                     }
                     if (e.name === 'account' || e.name === 'account_email' || e.name === 'lampac_unic_id' || e.name === 'lampac_profile_id') {

@@ -49,6 +49,9 @@ function harness(options = {}) {
     const storageListeners = [];
     const requests = [];
     let storageSyncCalls = 0;
+    let localStorageGetError = false;
+    let localStorageSetError = false;
+    let localStorageRemoveError = false;
     const $ = jqueryStub();
 
     $.ajax = function (settings) {
@@ -120,12 +123,17 @@ function harness(options = {}) {
     };
 
     const Lampa = {
-        Account: { Permit: { account: { profile: { id: 7 } } } },
+        Account: { Permit: { access: options.accountAccess !== false, account: { profile: { id: 7 } } } },
         Activity: { active: () => active ? { movie: active } : null },
         Controller: { enabled() { return null; }, collectionAppend() {} },
         Listener: { follow(name, callback) { (listeners[name] ||= []).push(callback); } },
         Noty: { show() {} },
         Platform: { is(name) { return !!(options.androidPlatform || options.justExternal) && name === 'android'; } },
+        Plugins: {
+            awaits() { return Array.isArray(options.pluginAwaits) ? options.pluginAwaits.slice() : []; },
+            loaded() { return Array.isArray(options.pluginLoaded) ? options.pluginLoaded.slice() : []; },
+            get() { return Array.isArray(options.pluginGet) ? options.pluginGet.slice() : []; }
+        },
         Android,
         Player: {
             listener: { follow(name, callback) { (playerListeners[name] ||= []).push(callback); } },
@@ -188,9 +196,18 @@ function harness(options = {}) {
         rch_nws: { 'lampac.fun': { connectionId: 'live-rch-session' } },
         location: { href: 'https://lampac.fun/', protocol: 'https:' },
         localStorage: {
-            getItem(key) { return Object.prototype.hasOwnProperty.call(local, key) ? local[key] : null; },
-            setItem(key, value) { local[key] = String(value); },
-            removeItem(key) { delete local[key]; }
+            getItem(key) {
+                if (localStorageGetError) throw new Error('localStorage get blocked');
+                return Object.prototype.hasOwnProperty.call(local, key) ? local[key] : null;
+            },
+            setItem(key, value) {
+                if (localStorageSetError) throw new Error('localStorage set blocked');
+                local[key] = String(value);
+            },
+            removeItem(key) {
+                if (localStorageRemoveError) throw new Error('localStorage remove blocked');
+                delete local[key];
+            }
         },
         setTimeout(callback, delay) {
             const id = nextTimerId++;
@@ -246,6 +263,7 @@ function harness(options = {}) {
         },
         setScripts(scripts) { document.scripts = (scripts || []).map((src) => ({ src })); },
         setAccountProfile(id) { Lampa.Account.Permit.account = id === null ? {} : { profile: { id } }; },
+        setAccountAccess(value) { Lampa.Account.Permit.access = !!value; },
         dispatchPlayerEvent(name, event) { emitPlayer(name, event); },
         dispatchStorageChange(name) { storageListeners.forEach((callback) => callback({ name })); },
         dispatchWindowEvent(name) { (listeners['window:' + name] || []).forEach((callback) => callback()); },
@@ -254,6 +272,11 @@ function harness(options = {}) {
         setRchHook(handler) {
             if (handler) context.window.Online2RchHandshake = handler;
             else delete context.window.Online2RchHandshake;
+        },
+        setLocalStorageErrors(value = {}) {
+            localStorageGetError = !!value.get;
+            localStorageSetError = !!value.set;
+            localStorageRemoveError = !!value.remove;
         },
         setActive(movie) { active = movie; },
         internalPlayerPlay,
@@ -296,7 +319,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.12-native-resume-segments-20260904');
+assert.equal(h.api.version, 'v6.2.13-persistent-lampac-key-20260904');
 
 assert.deepEqual(
     t.normalizeSegments('{"duration_ms":2696000,"skip":[{"start":62,"end":152}],"ad":[{"start":0,"end":12}]}', 3697),
@@ -2770,9 +2793,230 @@ function seedDelayedOnline(env, id) {
     assert.equal(getUrl.searchParams.has('uid'), false, 'storage sync must not expose the device uid');
     assert.equal(getUrl.searchParams.has('profile_id'), false, 'the arbitrary key must not be split by an internal Lampac profile');
     changedToken.setScripts(['https://untrusted.example/sync/js/evil']);
-    assert.equal(changedToken.api.testing.discoverLampacToken(), '');
+    assert.equal(changedToken.api.testing.discoverLampacToken(), 'nast',
+        'an untrusted URL must not replace the last validated Lampac key');
     assert.equal(changedToken.requests.length, requestsBeforeUrlHelpers, 'identity/URL helpers must not themselves make network requests');
     assert.equal(changedToken.storageSyncCalls(), 0);
+}
+
+{
+    const persisted = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    assert.equal(persisted.api.testing.discoverLampacToken(), 'arx.lamp');
+    persisted.setScripts([]);
+    assert.equal(persisted.api.testing.discoverLampacToken(), 'arx.lamp',
+        'the last validated Lampac key must survive startup pruning of the temporary plugin entry');
+    persisted.setScripts(['https://lampac.fun/sync/js/tol']);
+    assert.equal(persisted.api.testing.discoverLampacToken(), 'tol',
+        'a newly configured arbitrary Lampac key must replace the persisted key');
+    persisted.setScripts([]);
+    assert.equal(persisted.api.testing.discoverLampacToken(), 'tol');
+}
+
+{
+    const rebooted = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    assert.equal(rebooted.api.testing.discoverLampacToken(), 'arx.lamp');
+    rebooted.setScripts([]);
+    rebooted.storage.plugins = [];
+    rebooted.storage.account_plugins = [];
+    rebooted.setRequestHandler(({ post, ok }) => ok(post ? { success: true } : { success: true, data: '' }));
+    const beforeReload = rebooted.requests.length;
+    rebooted.reloadPlugin('v6.2.13-reload-probe');
+    assert.ok(rebooted.requests.slice(beforeReload).some((request) =>
+        !request.post && new URL(request.url).searchParams.get('token') === 'arx.lamp'),
+    'a fresh plugin boot must contact Lampac with the persisted key even after both registries and script tags were pruned');
+}
+
+{
+    const privateInit = harness({ scripts: ['https://lampac.fun/privateinit.js?account_email=&uid=device-id'] });
+    assert.equal(privateInit.api.testing.discoverLampacToken(), '',
+        'Lampac device uid must not be reused as a storage synchronization key');
+    assert.equal(privateInit.requests.length, 0,
+        'private-init device identity alone must not enable the ContinueWatching storage lifecycle');
+    const invc = harness({ scripts: ['https://lampac.fun/invc-ws.js?uid=device-id&token=arx.lamp'] });
+    assert.equal(invc.api.testing.discoverLampacToken(), 'arx.lamp',
+        'an explicit token on the exact Lampac websocket bootstrap URL may expose the configured key');
+    const childSync = harness({ scripts: ['https://lampac.fun/timecode/js/nast'] });
+    assert.equal(childSync.api.testing.discoverLampacToken(), 'nast',
+        'Lampac timecode/bookmark child scripts must retain the explicit synchronization key');
+    const untrusted = harness({ scripts: [
+        'https://untrusted.example/invc-ws.js?uid=evil',
+        'https://lampac.fun/lite/hdvb/video?uid=provider-secret'
+    ] });
+    assert.equal(untrusted.api.testing.discoverLampacToken(), '',
+        'generic provider and foreign uid parameters must never become storage synchronization keys');
+}
+
+{
+    const accountRegistry = harness();
+    accountRegistry.storage.account_plugins = [{ url: 'https://lampac.fun/sync/js/tol', status: 1 }];
+    assert.equal(accountRegistry.api.testing.discoverLampacToken(), 'tol',
+        'enabled account plugins must participate in key discovery');
+    const runtimeRegistry = harness({ pluginLoaded: ['https://lampac.fun/sync/js/nast'] });
+    assert.equal(runtimeRegistry.api.testing.discoverLampacToken(), 'nast',
+        'the runtime loaded-plugin list must cover cached inline plugin execution without script.src');
+}
+
+{
+    const disabled = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    assert.equal(disabled.api.testing.discoverLampacToken(), 'arx.lamp');
+    disabled.setLocalStorageErrors({ remove: true });
+    disabled.storage.plugins = [{ url: 'https://lampac.fun/sync/js/arx.lamp', status: 0 }];
+    assert.equal(disabled.api.testing.discoverLampacToken(), '',
+        'an explicitly disabled key must veto runtime/cache fallback and clear the remembered identity');
+    disabled.storage.plugins = [];
+    assert.equal(disabled.api.testing.discoverLampacToken(), '',
+        'a disabled key must not revive after the disabled registry row disappears');
+    disabled.storage.plugins = [
+        { url: 'https://lampac.fun/sync/js/arx.lamp', status: 0 },
+        { url: 'https://lampac.fun/sync/js/nast', status: 1 }
+    ];
+    assert.equal(disabled.api.testing.discoverLampacToken(), 'nast',
+        'an enabled replacement key must win while the previous key remains explicitly disabled');
+}
+
+{
+    const removeFailure = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    assert.equal(removeFailure.api.testing.discoverLampacToken(), 'arx.lamp');
+    removeFailure.setLocalStorageErrors({ remove: true });
+    removeFailure.storage.plugins = [{ url: 'https://lampac.fun/sync/js/arx.lamp', status: 0 }];
+    assert.equal(removeFailure.api.testing.discoverLampacToken(), '');
+    removeFailure.setScripts([]);
+    removeFailure.storage.plugins = [];
+    const reloaded = removeFailure.reloadPlugin('v6.2.13-remove-failure-reload');
+    assert.equal(reloaded.testing.discoverLampacToken(), '',
+        'a disabled key must remain revoked after reload even when localStorage.removeItem fails');
+    assert.equal(removeFailure.storageSyncCalls(), 0,
+        'persisting the local Lampac token revocation must not invoke CUB synchronization');
+}
+
+{
+    const getFailure = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    assert.equal(getFailure.api.testing.discoverLampacToken(), 'arx.lamp');
+    getFailure.setLocalStorageErrors({ get: true });
+    getFailure.storage.plugins = [{ url: 'https://lampac.fun/sync/js/arx.lamp', status: 0 }];
+    assert.equal(getFailure.api.testing.discoverLampacToken(), '');
+    getFailure.setScripts([]);
+    getFailure.storage.plugins = [];
+    getFailure.setLocalStorageErrors({});
+    const reloaded = getFailure.reloadPlugin('v6.2.13-get-failure-reload');
+    assert.equal(reloaded.testing.discoverLampacToken(), '',
+        'a transient localStorage.getItem failure must not prevent durable revocation of the known key');
+}
+
+{
+    const changed = harness({
+        scripts: ['https://lampac.fun/sync/js/arx.lamp'],
+        pluginLoaded: ['https://lampac.fun/sync/js/arx.lamp'],
+        pluginAwaits: ['https://lampac.fun/sync/js/arx.lamp'],
+        pluginGet: [{ url: 'https://lampac.fun/sync/js/arx.lamp', status: 1 }]
+    });
+    assert.equal(changed.api.testing.discoverLampacToken(), 'arx.lamp');
+    changed.storage.plugins = [{ url: 'https://lampac.fun/sync/js/tol', status: 1 }];
+    assert.equal(changed.api.testing.discoverLampacToken(), 'tol',
+        'the newly configured local key must beat stale awaits/loaded/DOM entries');
+    changed.storage.plugins.push({ url: 'https://lampac.fun/sync/js/nast', status: 1 });
+    assert.equal(changed.api.testing.discoverLampacToken(), 'nast',
+        'the most recently configured arbitrary key must win among enabled local entries');
+    changed.storage.plugins = [];
+    assert.equal(changed.api.testing.discoverLampacToken(), '',
+        'removing the active replacement key must disable sync instead of reviving a stale runtime key');
+    assert.equal(changed.api.testing.discoverLampacToken(), '');
+}
+
+{
+    const multiple = harness({
+        scripts: [
+            'https://lampac.fun/timecode/js/arx.lamp',
+            'https://lampac.fun/bookmark/js/tol'
+        ]
+    });
+    multiple.storage.plugins = [
+        { url: 'https://lampac.fun/sync/js/arx.lamp', status: 1 },
+        { url: 'https://lampac.fun/sync/js/tol', status: 1 }
+    ];
+    assert.equal(multiple.api.testing.discoverLampacToken(), 'tol');
+    multiple.storage.plugins = [];
+    assert.equal(multiple.api.testing.discoverLampacToken(), '');
+    assert.equal(multiple.api.testing.discoverLampacToken(), '',
+        'removing multiple configured keys must revoke every stale child/runtime candidate, not only the selected key');
+}
+
+{
+    const removed = harness();
+    removed.storage.plugins = [{ url: 'https://lampac.fun/sync/js/arx.lamp', status: 1 }];
+    assert.equal(removed.api.testing.discoverLampacToken(), 'arx.lamp');
+    removed.storage.plugins = [];
+    assert.equal(removed.api.testing.discoverLampacToken(), '',
+        'removing a key after this runtime observed it must revoke the in-memory and persistent identity');
+    assert.equal(removed.api.testing.discoverLampacToken(), '');
+}
+
+{
+    const storageFailure = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    assert.equal(storageFailure.api.testing.discoverLampacToken(), 'arx.lamp');
+    storageFailure.setLocalStorageErrors({ set: true });
+    storageFailure.setScripts(['https://lampac.fun/sync/js/tol']);
+    assert.equal(storageFailure.api.testing.discoverLampacToken(), 'tol');
+    storageFailure.setScripts([]);
+    assert.equal(storageFailure.api.testing.discoverLampacToken(), 'tol',
+        'an in-memory validated switch must not fall back to the old key when localStorage set fails');
+    const reloaded = storageFailure.reloadPlugin('v6.2.13-set-failure-reload');
+    assert.equal(reloaded.testing.discoverLampacToken(), '',
+        'after a failed replacement write, reload must fail closed instead of reviving the superseded cached key');
+}
+
+{
+    const loggedOut = harness({ accountAccess: false });
+    loggedOut.storage.account_plugins = [{ url: 'https://lampac.fun/sync/js/arx.lamp', status: 1 }];
+    assert.equal(loggedOut.api.testing.discoverLampacToken(), '',
+        'a stale account_plugins cache must not reactivate sync after account logout');
+}
+
+{
+    const accountLogout = harness();
+    accountLogout.storage.account_plugins = [{ url: 'https://lampac.fun/sync/js/arx.lamp', status: 1 }];
+    assert.equal(accountLogout.api.testing.discoverLampacToken(), 'arx.lamp');
+    accountLogout.setAccountAccess(false);
+    assert.equal(accountLogout.api.testing.discoverLampacToken(), '',
+        'an account-scoped key must be forgotten immediately when the active account logs out');
+}
+
+{
+    const accountPrivacy = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    assert.equal(accountPrivacy.api.testing.discoverLampacToken(), 'arx.lamp');
+    accountPrivacy.setScripts([]);
+    accountPrivacy.storage.account_plugins = [{ url: 'https://lampac.fun/sync/js/arx.lamp', status: 1 }];
+    accountPrivacy.setLocalStorageErrors({ remove: true });
+    assert.equal(accountPrivacy.api.testing.discoverLampacToken(), 'arx.lamp');
+    const cacheRecord = JSON.parse(accountPrivacy.local.continue_watch_v6_lampac_token);
+    assert.equal(cacheRecord.disabled, true);
+    assert.equal(cacheRecord.token, '',
+        'an account-scoped key must leave only a token-free tombstone when raw cache removal is blocked');
+    assert.equal((accountPrivacy.storage.continue_watch_v6_lampac_token_veto || []).includes('arx.lamp'), false,
+        'an account-scoped key must not be persisted in the local veto registry');
+    accountPrivacy.setAccountAccess(false);
+    accountPrivacy.storage.account_plugins = [];
+    const reloaded = accountPrivacy.reloadPlugin('v6.2.13-account-privacy-reload');
+    assert.equal(reloaded.testing.discoverLampacToken(), '',
+        'the token-free tombstone must prevent account-key revival after logout and reload');
+}
+
+{
+    const accountStaleRuntime = harness({
+        scripts: ['https://lampac.fun/timecode/js/arx.lamp'],
+        pluginLoaded: ['https://lampac.fun/bookmark/js/arx.lamp']
+    });
+    accountStaleRuntime.storage.account_plugins = [{ url: 'https://lampac.fun/sync/js/arx.lamp', status: 1 }];
+    assert.equal(accountStaleRuntime.api.testing.discoverLampacToken(), 'arx.lamp');
+    accountStaleRuntime.setAccountAccess(false);
+    accountStaleRuntime.storage.account_plugins = [];
+    assert.equal(accountStaleRuntime.api.testing.discoverLampacToken(), '');
+    const reloaded = accountStaleRuntime.reloadPlugin('v6.2.13-account-stale-runtime-reload');
+    assert.equal(reloaded.testing.discoverLampacToken(), '',
+        'logout must keep stale account child/runtime URLs blocked after plugin reload without persisting the account key');
+    accountStaleRuntime.storage.plugins = [{ url: 'https://lampac.fun/sync/js/tol', status: 1 }];
+    assert.equal(reloaded.testing.discoverLampacToken(), 'tol',
+        'an explicit new local configuration must clear the account tombstone and enable its arbitrary key');
 }
 
 {
@@ -3285,6 +3529,29 @@ function syncRecord(env, id, activityAt, itemCount) {
 }
 
 {
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    const staleRemote = syncRecord(env, 943, 3_410_100, 1);
+    let heldArxGet = null;
+    let tolGets = 0;
+    env.setRequestHandler(({ url, post, ok, fail }) => {
+        if (post) return fail();
+        const token = new URL(url).searchParams.get('token');
+        if (token === 'arx.lamp' && !heldArxGet) { heldArxGet = ok; return; }
+        if (token === 'tol') { tolGets += 1; return ok({ schema: 1, updated_at: 0, records: {} }); }
+        fail();
+    });
+    env.api.testing.syncRemote('held-arx');
+    assert.ok(heldArxGet, 'the old-key GET must remain in flight for the key-switch regression');
+    env.storage.plugins = [{ url: 'https://lampac.fun/sync/js/tol', status: 1 }];
+    env.dispatchStorageChange('plugins');
+    heldArxGet({ schema: 1, updated_at: 3_410_100, records: { [staleRemote.key]: staleRemote.value } });
+    env.advance(650);
+    assert.equal(env.api.sync().store[staleRemote.key], undefined,
+        'a response from the previous Lampac key must not merge after the identity changes');
+    assert.ok(tolGets >= 1, 'the serialized follow-up cycle must target the newly configured key');
+}
+
+{
     const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
     const local = syncRecord(env, 980, 3_800_000, 1);
     local.value.time = 300; local.value.duration = 0; local.value.percent = 0;
@@ -3359,4 +3626,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.12 regression fixtures: PASS');
+console.log('ContinueWatching v6.2.13 regression fixtures: PASS');
