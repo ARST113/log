@@ -2222,16 +2222,35 @@ function syncRecord(env, id, activityAt, itemCount) {
     falseComplete.value.time = 20; falseComplete.value.duration = 3000; falseComplete.value.percent = 100;
     env.storage.continue_watch_v6_7 = { [local.key]: local.value };
     let gets = 0;
+    let serverDocument = null;
     env.setRequestHandler(({ post, params, ok }) => {
-        if (post) return ok({ success: true });
+        if (post) { serverDocument = JSON.parse(params); return ok({ success: true }); }
         gets += 1;
         return ok({ schema: 1, updated_at: gets === 1 ? 3_800_100 : 3_800_200,
-            records: { [local.key]: gets === 1 ? falseComplete.value : local.value } });
+            records: gets === 1 ? { [local.key]: falseComplete.value } : serverDocument.records });
     });
     env.api.testing.syncRemote('time-only-partial');
     const posts = env.requests.filter((request) => request.post);
     assert.equal(env.api.sync().store[local.key].time, 300, 'a guarded false completion must not replace a time-only local partial');
     assert.equal(JSON.parse(posts[0].params).records[local.key].time, 300, 'the repair POST must converge remote state to the valid local time-only partial');
+    assert.equal(gets, 2, 'the completed repair must perform one initial and one verification GET');
+    assert.equal(posts.length, 1, 'the verification state must converge after one POST');
+    assert.equal(serverDocument.records[local.key].time, env.api.sync().store[local.key].time, 'verification must return the actual POST body as converged server state');
+}
+
+{
+    const env = harness();
+    const local = syncRecord(env, 981, 3_810_000, 1);
+    local.value.time = 300; local.value.duration = 0; local.value.percent = 0;
+    const guardedLower = JSON.parse(JSON.stringify(local.value));
+    guardedLower.activity_at = 3_810_100; guardedLower.time = 20; guardedLower.percent = 1; guardedLower.completion_guard = 'percent_time_mismatch';
+    const guardedAdvanced = JSON.parse(JSON.stringify(local.value));
+    guardedAdvanced.activity_at = 3_810_200; guardedAdvanced.time = 400; guardedAdvanced.percent = 1; guardedAdvanced.completion_guard = 'percent_time_mismatch';
+    const nextEpisode = JSON.parse(JSON.stringify(guardedLower));
+    nextEpisode.activity_at = 3_810_300; nextEpisode.episode = 2; nextEpisode.timeline_hash = 'sync-981-2';
+    assert.equal(env.api.testing.mergeRecordMaps({ [local.key]: local.value }, { [local.key]: guardedLower })[local.key].time, 300, 'same-position lower guarded time must lose');
+    assert.equal(env.api.testing.mergeRecordMaps({ [local.key]: local.value }, { [local.key]: guardedAdvanced })[local.key].time, 400, 'same-position guarded elapsed time that advances must win');
+    assert.equal(env.api.testing.mergeRecordMaps({ [local.key]: local.value }, { [local.key]: nextEpisode })[local.key].episode, 2, 'newer next-episode progress must use normal activity ordering even with lower elapsed time');
 }
 
 console.log('ContinueWatching v6.2: identity fixtures plus 53 prior fixtures passed');
