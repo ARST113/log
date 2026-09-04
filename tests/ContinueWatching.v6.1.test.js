@@ -194,7 +194,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.1-lampac-key-sync-20260904');
+assert.equal(h.api.version, 'v6.2.2-lampac-key-sync-20260904');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -2142,7 +2142,9 @@ function syncRecord(env, id, activityAt, itemCount) {
             assert.equal(parsed.searchParams.get('token'), 'arx.lamp');
             assert.equal(parsed.searchParams.get('pathfile'), 'continue_watch_v6');
             if (post) {
-                remoteDocument = JSON.parse(params);
+                assert.equal(typeof post, 'string', 'Lampac Storage body must be passed as Reguest.native post_data');
+                assert.equal(params, undefined, 'a JSON body must not be misused as the Reguest.native options argument');
+                remoteDocument = JSON.parse(post);
                 return ok({ success: true });
             }
             if (!remoteDocument) return ok({ success: false, msg: 'outFile' });
@@ -2236,7 +2238,7 @@ function syncRecord(env, id, activityAt, itemCount) {
     env.api.testing.syncRemote('test');
     const posts = env.requests.filter((request) => request.post);
     assert.equal(new URL(posts[0].url).pathname, '/storage/set');
-    const firstBody = JSON.parse(posts[0].params);
+    const firstBody = JSON.parse(posts[0].post);
     assert.equal(firstBody.schema, 1);
     assert.equal(firstBody.records[local.key].season, 1);
     assert.equal(firstBody.records[local.key].episode, 1);
@@ -2262,7 +2264,7 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(env.storage.continue_watch_v6_7[local.key].online.resolver_headers.Authorization, 'Bearer private', 'remote sync must not strip same-device resolver headers from the local store');
     assert.equal(new URL(env.storage.continue_watch_v6_7[local.key].online.resolver_url).searchParams.get('token'), 'source-resolver-token', 'remote sync must not strip same-device resolver tokens from the local store');
     assert.equal(posts.length, 2, 'a verification document missing the local record must produce one merged repair POST');
-    const repair = JSON.parse(posts[1].params);
+    const repair = JSON.parse(posts[1].post);
     assert.ok(repair.records[local.key]);
     assert.ok(repair.records[server.key]);
 }
@@ -2293,9 +2295,9 @@ function syncRecord(env, id, activityAt, itemCount) {
     const diagnostic = JSON.stringify({ record: env.api.record(), sync: env.api.sync() });
     const posted = [];
     let serverRecords = {};
-    env.setRequestHandler(({ post, params, ok }) => {
+    env.setRequestHandler(({ post, ok }) => {
         if (post) {
-            const body = JSON.parse(params);
+            const body = JSON.parse(post);
             posted.push(body);
             serverRecords = body.records;
             return ok({ success: true });
@@ -2413,7 +2415,7 @@ function syncRecord(env, id, activityAt, itemCount) {
     env.setRequestHandler(({ ok }) => ok({ success: false, msg: 'outFile' }));
     env.storage.continue_watch_v6_7 = { [torrent.key]: torrent.value };
     env.api.testing.syncRemote('torrent');
-    const body = JSON.parse(env.requests.filter((request) => request.post)[0].params);
+    const body = JSON.parse(env.requests.filter((request) => request.post)[0].post);
     assert.equal(body.records[torrent.key].season, 2);
     assert.equal(body.records[torrent.key].episode, 5);
     assert.equal(body.records[torrent.key].current_index, 3);
@@ -2483,8 +2485,8 @@ function syncRecord(env, id, activityAt, itemCount) {
     env.storage.continue_watch_v6_7 = { [local.key]: local.value };
     let gets = 0;
     let serverDocument = null;
-    env.setRequestHandler(({ post, params, ok }) => {
-        if (post) { serverDocument = JSON.parse(params); return ok({ success: true }); }
+    env.setRequestHandler(({ post, ok }) => {
+        if (post) { serverDocument = JSON.parse(post); return ok({ success: true }); }
         gets += 1;
         return ok({ schema: 1, updated_at: gets === 1 ? 3_800_100 : 3_800_200,
             records: gets === 1 ? { [local.key]: falseComplete.value } : serverDocument.records });
@@ -2492,7 +2494,7 @@ function syncRecord(env, id, activityAt, itemCount) {
     env.api.testing.syncRemote('time-only-partial');
     const posts = env.requests.filter((request) => request.post);
     assert.equal(env.api.sync().store[local.key].time, 300, 'a guarded false completion must not replace a time-only local partial');
-    assert.equal(JSON.parse(posts[0].params).records[local.key].time, 300, 'the repair POST must converge remote state to the valid local time-only partial');
+    assert.equal(JSON.parse(posts[0].post).records[local.key].time, 300, 'the repair POST must converge remote state to the valid local time-only partial');
     assert.equal(gets, 2, 'the completed repair must perform one initial and one verification GET');
     assert.equal(posts.length, 1, 'the verification state must converge after one POST');
     assert.equal(serverDocument.records[local.key].time, env.api.sync().store[local.key].time, 'verification must return the actual POST body as converged server state');
