@@ -29,7 +29,7 @@ function jqueryStub() {
     return function $() { return new Stub(); };
 }
 
-function harness() {
+function harness(options = {}) {
     let clock = 2_000_000;
     let nextTimerId = 1;
     let active = null;
@@ -42,6 +42,10 @@ function harness() {
     const timers = new Map();
     const androidLaunches = [];
     const playlistCalls = [];
+    const scriptUrls = Array.isArray(options.scripts) ? options.scripts.slice() : [];
+    const storageListeners = [];
+    const requests = [];
+    let storageSyncCalls = 0;
 
     const Android = {
         openPlayer(link, data) {
@@ -54,9 +58,10 @@ function harness() {
     const document = {
         head: { appendChild() {} },
         visibilityState: 'visible',
+        scripts: scriptUrls.map((src) => ({ src })),
         getElementById() { return null; },
         createElement() { return {}; },
-        addEventListener() {}
+        addEventListener(name, callback) { (listeners['document:' + name] ||= []).push(callback); }
     };
 
     const Lampa = {
@@ -69,11 +74,11 @@ function harness() {
         Android,
         Player: { play(data) { return Android.openPlayer(data.url, data); }, playlist(data) { playlistCalls.push(data); } },
         Storage: {
-            listener: { follow() {} },
+            listener: { follow(name, callback) { if (name === 'change') storageListeners.push(callback); } },
             field() { return ''; },
             get(key, fallback) { return Object.prototype.hasOwnProperty.call(storage, key) ? storage[key] : fallback; },
             set(key, value) { storage[key] = value; },
-            sync() {}
+            sync() { storageSyncCalls += 1; }
         },
         Timeline: {
             listener: { follow(name, callback) { if (name === 'update') timelineListeners.push(callback); } },
@@ -91,7 +96,9 @@ function harness() {
             let timeout = 0;
             this.timeout = function (value) { timeout = Number(value || 0); };
             this.native = function (url, ok, fail, post, params) {
-                if (requestHandler) return requestHandler({ url, ok, fail, post, params, timeout });
+                const request = { url, post, params, timeout };
+                requests.push(request);
+                if (requestHandler) return requestHandler({ ...request, ok, fail });
                 if (fail) fail();
             };
         }
@@ -126,6 +133,7 @@ function harness() {
         Lampa,
         $: jqueryStub()
     };
+    context.addEventListener = function (name, callback) { (listeners['window:' + name] ||= []).push(callback); };
     context.window = context;
     context.window.appready = true;
     context.window.__CONTINUE_WATCH_TEST_MODE__ = true;
@@ -142,8 +150,15 @@ function harness() {
         timelineListeners,
         androidLaunches,
         playlistCalls,
+        requests,
         rch_nws: context.rch_nws,
         setRequestHandler(handler) { requestHandler = handler; },
+        setScripts(scripts) { document.scripts = (scripts || []).map((src) => ({ src })); },
+        setAccountProfile(id) { Lampa.Account.Permit.account = id === null ? {} : { profile: { id } }; },
+        dispatchStorageChange(name) { storageListeners.forEach((callback) => callback({ name })); },
+        dispatchWindowEvent(name) { (listeners['window:' + name] || []).forEach((callback) => callback()); },
+        setVisibility(value) { document.visibilityState = value; (listeners['document:visibilitychange'] || []).forEach((callback) => callback()); },
+        storageSyncCalls() { return storageSyncCalls; },
         setRchHook(handler) {
             if (handler) context.window.Online2RchHandshake = handler;
             else delete context.window.Online2RchHandshake;
@@ -179,7 +194,7 @@ function harness() {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.1.10-online-series-index-20260902');
+assert.equal(h.api.version, 'v6.2.0-lampac-storage-sync-20260904');
 
 function seedDelayedOnline(env, id) {
     const movie = { id, media_type: 'tv', title: 'Delayed ' + id, original_name: 'Delayed ' + id };
@@ -1098,6 +1113,48 @@ function seedDelayedOnline(env, id) {
 }
 
 {
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 108978, media_type: 'tv', title: 'Sherlock', original_name: 'Sherlock' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    const resolver = 'https://lampac.fun/lite/hdvb/video?id=108978&s=1&e=1&t=HDVB&token=hdvb-session-token';
+    const media = 'https://media.example/sherlock-s1e1.m3u8';
+    const episode = {
+        title: 'S1 E1', url: media, season: 1, episode: 1,
+        timeline: { hash: 'sherlock-108978-1' }
+    };
+
+    env.setActive(movie);
+    env.listeners.request_secuses.forEach((listener) => listener({
+        params: { url: resolver }, data: { url: media }
+    }));
+    env.Lampa.Player.play(Object.assign({}, episode, { card: movie, movie, isonline: true, playlist: [episode], playlist_index: 0 }));
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'sherlock-108978-1', road: { time: 343, duration: 5280, percent: 6, updated: 4_100_100 }
+    }));
+
+    const saved = env.storage[storageKey][recordKey];
+    assert.equal(new URL(saved.online.resolver_url).searchParams.get('token'), 'hdvb-session-token',
+        'same-device Sherlock resume must retain the HDVB resolver token locally');
+
+    let resumeResolverUrl = '';
+    env.setRequestHandler(({ url, ok, fail }) => {
+        resumeResolverUrl = url;
+        if (new URL(url).searchParams.get('token') !== 'hdvb-session-token') return fail();
+        ok({ url: 'https://media.example/sherlock-s1e1-fresh.m3u8' });
+    });
+    env.api.launch();
+    assert.equal(env.androidLaunches.length, 2,
+        'direct Continue must resolve the saved HDVB episode into a fresh Android player link');
+    assert.equal(env.androidLaunches[1].parsed.url, 'https://media.example/sherlock-s1e1-fresh.m3u8');
+    assert.equal(env.androidLaunches[1].parsed.time, 343,
+        'direct Continue must pass the saved Sherlock position to the resumed Android player');
+    assert.equal(new URL(resumeResolverUrl).searchParams.get('token'), 'hdvb-session-token',
+        'direct Continue must preserve the local HDVB provider token through Reguest.native');
+}
+
+{
     const storageKey = 'continue_watch_v6_7';
     const movie = { id: 801, media_type: 'tv', title: 'Unsupported resolver schema', original_name: 'Unsupported resolver schema' };
     const cardKey = h.api.testing.cardKey(movie);
@@ -1881,4 +1938,453 @@ function seedDelayedOnline(env, id) {
     h.setRequestHandler(null);
 }
 
-console.log('ContinueWatching v6.1.10: 53 fixtures passed');
+{
+    const pathToken = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    assert.equal(pathToken.api.testing.discoverLampacToken(), 'arx.lamp');
+
+    const queryToken = harness({ scripts: ['https://lampac.fun/sync.js?token=tol'] });
+    assert.equal(queryToken.api.testing.discoverLampacToken(), 'tol');
+
+    const changedToken = harness({ scripts: ['https://lampac.fun/sync/js/nast'] });
+    changedToken.storage.account_email = 'viewer@example.test';
+    changedToken.storage.lampac_unic_id = 'device-id';
+    changedToken.storage.lampac_profile_id = 'family room';
+    const requestsBeforeUrlHelpers = changedToken.requests.length;
+    const getUrl = new URL(changedToken.api.testing.lampacStorageUrl('get'));
+    const setUrl = new URL(changedToken.api.testing.lampacStorageUrl('set'));
+    assert.equal(getUrl.protocol, 'https:');
+    assert.equal(getUrl.host, 'lampac.fun');
+    assert.equal(getUrl.pathname, '/storage/get');
+    assert.equal(setUrl.pathname, '/storage/set');
+    assert.equal(getUrl.searchParams.get('token'), 'nast');
+    assert.equal(getUrl.searchParams.get('path'), 'continuewatch');
+    assert.equal(getUrl.searchParams.get('pathfile'), 'continue_watch_v6_family room');
+    assert.equal(getUrl.searchParams.get('account_email'), 'viewer@example.test');
+    assert.equal(getUrl.searchParams.get('uid'), 'device-id');
+    assert.equal(getUrl.searchParams.get('profile_id'), 'family room');
+    changedToken.setScripts(['https://untrusted.example/sync/js/evil']);
+    assert.equal(changedToken.api.testing.discoverLampacToken(), '');
+    assert.equal(changedToken.requests.length, requestsBeforeUrlHelpers, 'identity/URL helpers must not themselves make network requests');
+    assert.equal(changedToken.storageSyncCalls(), 0);
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    env.storage.lampac_profile_id = 'lampac-profile';
+    env.setAccountProfile('account-profile');
+    assert.equal(env.api.sync().key, 'continue_watch_v6_account-profile', 'the active account profile must select the local store before the Lampac fallback');
+    env.setAccountProfile(null);
+    assert.equal(env.api.sync().key, 'continue_watch_v6_lampac-profile', 'lampac_profile_id must be used when the active account has no profile');
+    delete env.storage.lampac_profile_id;
+    assert.equal(env.api.sync().key, 'continue_watch_v6_default', 'default must be used when neither active nor Lampac profile is available');
+}
+
+function syncRecord(env, id, activityAt, itemCount) {
+    const movie = { id, media_type: 'tv', title: 'Synced ' + id, original_name: 'Synced ' + id };
+    const cardKey = env.api.testing.cardKey(movie);
+    return {
+        key: 'c_' + env.Lampa.Utils.hash(cardKey),
+        movie,
+        value: {
+            v: 6, card_key: cardKey, source: 'online', activity_at: activityAt,
+            season: 1, episode: 1, episode_title: 'E1', timeline_hash: 'sync-' + id + '-1',
+            time: 42, duration: 3000, percent: 2, current_index: 0,
+            online: {
+                index: 0,
+                resolver_url: 'https://lampac.fun/lite/zetflix/video?id=' + id + '&s=1&e=1&t=Original',
+                selection: { provider: 'zetflix', translation: 'original' },
+                items: Array.from({ length: itemCount || 1 }, (_value, index) => ({
+                    title: 'E' + (index + 1), season: 1, episode: index + 1, hash: 'sync-' + id + '-' + (index + 1),
+                    resolver_url: 'https://lampac.fun/lite/zetflix/video?id=' + id + '&s=1&e=' + (index + 1) + '&t=Original',
+                    selection: { provider: 'zetflix', translation: 'original' }, meta: {}
+                }))
+            }
+        }
+    };
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    const remoteMovie = syncRecord(env, 901, 3_000_000, 1);
+    env.setRequestHandler(({ ok }) => ok({ schema: 1, updated_at: 3_000_000, records: { [remoteMovie.key]: remoteMovie.value } }));
+    env.api.testing.pullRemote(() => {});
+    env.setActive(remoteMovie.movie);
+    assert.equal(env.api.record().card_key, remoteMovie.value.card_key, 'a schema-1 remote movie must hydrate the local record store');
+    assert.equal(new URL(env.requests[0].url).pathname, '/storage/get');
+
+    const localMovie = syncRecord(env, 902, 3_010_000, 1);
+    env.storage.continue_watch_v6_7 = { [localMovie.key]: localMovie.value };
+    const remoteSeries = syncRecord(env, 903, 3_020_000, 2);
+    env.setRequestHandler(({ ok }) => ok({ schema: 1, updated_at: 3_020_000, records: { [remoteSeries.key]: remoteSeries.value } }));
+    env.api.testing.pullRemote(() => {});
+    assert.deepEqual(Object.keys(env.api.sync().store).sort(), [localMovie.key, remoteSeries.key].sort(), 'pull must union disjoint remote and local records');
+
+    const rich = syncRecord(env, 904, 3_030_000, 10);
+    const poor = syncRecord(env, 904, 3_030_000, 1);
+    env.storage.continue_watch_v6_7 = { [poor.key]: poor.value };
+    env.local.continue_watch_v6_outbox_7 = JSON.stringify({ [rich.key]: rich.value });
+    env.setRequestHandler(({ ok }) => ok({ schema: 1, updated_at: 3_030_000, records: { [poor.key]: poor.value } }));
+    env.api.testing.pullRemote(() => {});
+    assert.equal(env.api.sync().store[rich.key].online.items.length, 10, 'equal-time rich outbox playlist must not be downgraded by a poorer remote playlist');
+}
+
+{
+    [
+        'not-json',
+        { schema: 2, updated_at: 1, records: {} },
+        { accsdb: { stale: true } },
+        null
+    ].forEach((response, index) => {
+        const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
+        const original = syncRecord(env, 910 + index, 3_100_000 + index, 2);
+        const originalStore = { [original.key]: original.value };
+        const originalOutbox = { [original.key]: original.value };
+        env.storage.continue_watch_v6_7 = JSON.parse(JSON.stringify(originalStore));
+        env.local.continue_watch_v6_outbox_7 = JSON.stringify(originalOutbox);
+        env.setRequestHandler(({ ok, fail }) => response === null ? fail() : ok(response));
+        env.api.testing.pullRemote(() => {});
+        assert.equal(JSON.stringify(env.storage.continue_watch_v6_7), JSON.stringify(originalStore), 'invalid remote response ' + index + ' must leave local store byte-for-byte intact');
+        assert.equal(env.local.continue_watch_v6_outbox_7, JSON.stringify(originalOutbox), 'invalid remote response ' + index + ' must leave outbox byte-for-byte intact');
+    });
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/nast'] });
+    const local = syncRecord(env, 920, 3_200_000, 2);
+    local.value.online.direct_url = 'https://media.example/transient-proxy/video.m3u8';
+    local.value.online.resolver_url += '&account_email=source%40example.test&uid=source-device&nws_id=source-rch&token=source-resolver-token&aesgcmkey=source-resolver-aes';
+    local.value.online.resolver_headers = { 'X-Kit-AesGcm': 'secret', Authorization: 'Bearer private' };
+    local.value.online.items[0].meta.segments = [{
+        duration: 4, type: 'video/mp2t', url: 'https://segment.example/part-1.ts',
+        uri: 'https://segment.example/part-1-uri.ts', src: 'https://segment.example/part-1-src.ts'
+    }];
+    local.value.online.items[0].meta.transport = {
+        url: 'https://media.example/nested-url.m3u8', uri: 'https://media.example/nested-uri.m3u8', src: 'https://media.example/nested-src.m3u8'
+    };
+    local.value.online.items[0].meta.quality = { '1080': 'https://signed.example/video.m3u8?token=private' };
+    local.value.online.items[0].meta.headers = { Authorization: 'Bearer nested-private' };
+    local.value.online.items[0].meta.rch = { body: 'source-rch-body' };
+    env.storage.continue_watch_v6_7 = { [local.key]: local.value };
+    env.local.continue_watch_v6_outbox_7 = JSON.stringify({ [local.key]: local.value });
+    let getCount = 0;
+    const server = syncRecord(env, 921, 3_200_100, 1);
+    env.setRequestHandler(({ url, post, params, ok }) => {
+        if (post) return ok({ success: true });
+        getCount += 1;
+        if (getCount === 1) return ok({ schema: 1, updated_at: 0, records: {} });
+        if (getCount === 2) return ok({ schema: 1, updated_at: 3_200_100, records: { [server.key]: server.value } });
+        return ok({ schema: 1, updated_at: 3_200_200, records: { [server.key]: server.value, [local.key]: local.value } });
+    });
+    env.api.testing.syncRemote('test');
+    const posts = env.requests.filter((request) => request.post);
+    assert.equal(new URL(posts[0].url).pathname, '/storage/set');
+    const firstBody = JSON.parse(posts[0].params);
+    assert.equal(firstBody.schema, 1);
+    assert.equal(firstBody.records[local.key].season, 1);
+    assert.equal(firstBody.records[local.key].episode, 1);
+    assert.equal(firstBody.records[local.key].current_index, 0);
+    assert.equal(firstBody.records[local.key].online.items.length, 2);
+    assert.deepEqual(firstBody.records[local.key].online.items[0].meta.segments, [{ duration: 4, type: 'video/mp2t' }], 'remote segments must retain timing/type but not media locations');
+    const normalizedBodyKeys = Object.keys(firstBody.records[local.key].online).map((key) => key.toLowerCase());
+    assert.equal(normalizedBodyKeys.some((key) => ['token', 'account_email', 'uid', 'nws_id', 'aesgcmkey', 'rch'].includes(key)), false);
+    assert.equal(JSON.stringify(firstBody).includes('source@example.test'), false);
+    assert.equal(JSON.stringify(firstBody).includes('source-device'), false);
+    assert.equal(JSON.stringify(firstBody).includes('source-rch'), false);
+    assert.equal(JSON.stringify(firstBody).includes('source-resolver-token'), false, 'remote body must not retain resolver query credentials');
+    assert.equal(JSON.stringify(firstBody).includes('source-resolver-aes'), false, 'remote body must not retain resolver AES query credentials');
+    assert.equal(JSON.stringify(firstBody).includes('Bearer private'), false);
+    assert.equal(JSON.stringify(firstBody).includes('Bearer nested-private'), false);
+    assert.equal(JSON.stringify(firstBody).includes('source-rch-body'), false);
+    assert.equal(JSON.stringify(firstBody).includes('transient-proxy'), false);
+    ['segment.example', 'nested-url.m3u8', 'nested-uri.m3u8', 'nested-src.m3u8'].forEach((needle) => {
+        assert.equal(JSON.stringify(firstBody).includes(needle), false, 'remote body must not retain nested transient media URL ' + needle);
+    });
+    assert.equal(JSON.stringify(firstBody).includes('signed.example'), false, 'remote body must not retain scalar signed URL maps');
+    assert.equal(env.storage.continue_watch_v6_7[local.key].online.direct_url, 'https://media.example/transient-proxy/video.m3u8', 'remote sync must not strip same-device direct playback URLs from the local store');
+    assert.equal(env.storage.continue_watch_v6_7[local.key].online.resolver_headers.Authorization, 'Bearer private', 'remote sync must not strip same-device resolver headers from the local store');
+    assert.equal(new URL(env.storage.continue_watch_v6_7[local.key].online.resolver_url).searchParams.get('token'), 'source-resolver-token', 'remote sync must not strip same-device resolver tokens from the local store');
+    assert.equal(posts.length, 2, 'a verification document missing the local record must produce one merged repair POST');
+    const repair = JSON.parse(posts[1].params);
+    assert.ok(repair.records[local.key]);
+    assert.ok(repair.records[server.key]);
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/security-probe'] });
+    const storageKey = 'continue_watch_v6_7';
+    const local = syncRecord(env, 922, 3_210_000, 1);
+    const malformed = syncRecord(env, 923, 3_210_100, 1);
+    const sensitiveSentinels = ['legitimate-hdvb-token', 'adversarial-aes', 'adversarial-authorization', 'adversarial-account', 'adversarial-headers'];
+    const resolver = 'https://lampac.fun/lite/hdvb/video?id=922&s=1&e=1&t=HDVB&ToKeN=legitimate-hdvb-token&AeSgCmKeY=adversarial-aes&AUTHORIZATION=adversarial-authorization&AcCoUnT=adversarial-account&HeAdErS=adversarial-headers&AcCoUnT_EmAiL=adversarial-account&UiD=adversarial-account&NwS_iD=adversarial-account';
+    local.value.time = 343;
+    local.value.online.resolver_url = resolver;
+    local.value.online.selection = { provider: 'hdvb', translation: 'hdvb' };
+    local.value.online.items[0].resolver_url = resolver;
+    local.value.online.items[0].selection = { provider: 'hdvb', translation: 'hdvb' };
+    local.value.online.Authorization = 'adversarial-authorization';
+    local.value.online.AcCoUnT = 'adversarial-account';
+    local.value.online.HeAdErS = 'adversarial-headers';
+    local.value.online.direct_url = 'https://media.example/diagnostic-transient.m3u8';
+    local.value.online.items[0].meta.transport = { url: 'https://media.example/diagnostic-nested.m3u8' };
+    malformed.value.online.resolver_url = 'https://[invalid/?ToKeN=legitimate-hdvb-token&AeSgCmKeY=adversarial-aes&AUTHORIZATION=adversarial-authorization&AcCoUnT=adversarial-account&HeAdErS=adversarial-headers';
+    malformed.value.online.items[0].resolver_url = malformed.value.online.resolver_url;
+    env.storage[storageKey] = { [local.key]: local.value, [malformed.key]: malformed.value };
+    env.local.continue_watch_v6_outbox_7 = JSON.stringify({ [local.key]: local.value, [malformed.key]: malformed.value });
+    env.setActive(local.movie);
+
+    const diagnostic = JSON.stringify({ record: env.api.record(), sync: env.api.sync() });
+    const posted = [];
+    let serverRecords = {};
+    env.setRequestHandler(({ post, params, ok }) => {
+        if (post) {
+            const body = JSON.parse(params);
+            posted.push(body);
+            serverRecords = body.records;
+            return ok({ success: true });
+        }
+        return ok({ schema: 1, updated_at: 3_210_200, records: serverRecords });
+    });
+    env.api.testing.syncRemote('security-probe');
+    const remoteBody = JSON.stringify(posted[0] || {});
+    let nativeResolverUrl = '';
+    env.setRequestHandler(({ url, ok, fail }) => {
+        nativeResolverUrl = url;
+        if (new URL(url).searchParams.get('ToKeN') !== 'legitimate-hdvb-token') return fail();
+        ok({ url: 'https://media.example/security-probe-fresh.m3u8' });
+    });
+    env.api.launch();
+    assert.deepEqual({
+        diagnostic: sensitiveSentinels.filter((secret) => diagnostic.includes(secret)),
+        remote: sensitiveSentinels.filter((secret) => remoteBody.includes(secret)),
+        nativeToken: new URL(nativeResolverUrl).searchParams.get('ToKeN'),
+        resumeTime: env.androidLaunches[0] && env.androidLaunches[0].parsed.time
+    }, { diagnostic: [], remote: [], nativeToken: 'legitimate-hdvb-token', resumeTime: 343 },
+    'mixed-case credential aliases must be hidden publicly/remotely while the local HDVB token still resumes at 343 seconds');
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
+    const local = syncRecord(env, 930, 3_300_000, 1);
+    env.storage.continue_watch_v6_7 = { [local.key]: local.value };
+    env.local.continue_watch_v6_outbox_7 = JSON.stringify({ [local.key]: local.value });
+    env.setRequestHandler(({ post, ok }) => ok(post ? { success: true } : { schema: 1, updated_at: 0, records: {} }));
+    env.api.testing.syncRemote('conflict');
+    assert.equal(env.requests.filter((request) => request.post).length, 3, 'one cycle must make no more than three conflict-repair POST attempts');
+    assert.ok(env.local.continue_watch_v6_outbox_7, 'bounded conflict retries must retain the durable outbox');
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    const installedRequests = env.requests.length;
+    assert.ok(installedRequests >= 1, 'install with a Lampac identity must start remote hydration');
+    env.setRequestHandler(({ ok }) => ok({ schema: 1, updated_at: 0, records: {} }));
+    env.dispatchWindowEvent('focus');
+    assert.ok(env.requests.length > installedRequests, 'focus must cause a later Lampac pull');
+    const afterFocus = env.requests.length;
+    env.setVisibility('visible');
+    assert.ok(env.requests.length > afterFocus, 'visible visibilitychange must cause a later Lampac pull');
+    ['account', 'account_email', 'lampac_unic_id', 'lampac_profile_id'].forEach((name) => {
+        const before = env.requests.length;
+        env.dispatchStorageChange(name);
+        env.advance(5_500);
+        assert.ok(env.requests.length > before, name + ' changes must cause a later Lampac pull');
+    });
+    assert.equal(env.storageSyncCalls(), 0, 'no lifecycle path may invoke CUB Storage.sync');
+    const diagnostic = JSON.stringify(env.api.sync());
+    assert.equal(diagnostic.includes('arx.lamp'), false);
+    assert.equal(diagnostic.includes('account_email'), false);
+    assert.equal(diagnostic.includes('lampac_unic_id'), false);
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/a%20token%2Fwith%3Fchars'] });
+    env.setAccountProfile('device-profile');
+    env.storage.lampac_profile_id = 'shared-lampac-profile';
+    assert.equal(env.api.sync().key, 'continue_watch_v6_device-profile', 'local state remains scoped to the active Lampa profile');
+    const remoteUrl = new URL(env.api.testing.lampacStorageUrl('get'));
+    assert.equal(env.api.testing.discoverLampacToken(), 'a token/with?chars');
+    assert.equal(remoteUrl.searchParams.get('token'), 'a token/with?chars');
+    assert.equal(remoteUrl.searchParams.get('pathfile'), 'continue_watch_v6_shared-lampac-profile', 'configured Lampac profile must select the shared remote document');
+    assert.equal(remoteUrl.searchParams.get('profile_id'), 'shared-lampac-profile');
+}
+
+{
+    const emailOnly = harness();
+    emailOnly.storage.account_email = 'email-only@example.test';
+    const emailUrl = new URL(emailOnly.api.testing.lampacStorageUrl('get'));
+    assert.equal(emailUrl.searchParams.get('account_email'), 'email-only@example.test');
+    assert.equal(emailUrl.searchParams.has('uid'), false);
+    const uidOnly = harness();
+    uidOnly.storage.lampac_unic_id = 'uid-only-device';
+    const uidUrl = new URL(uidOnly.api.testing.lampacStorageUrl('get'));
+    assert.equal(uidUrl.searchParams.get('uid'), 'uid-only-device');
+    assert.equal(uidUrl.searchParams.has('account_email'), false);
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
+    const local = syncRecord(env, 950, 3_500_000, 1);
+    const newer = syncRecord(env, 950, 3_500_100, 1);
+    newer.value.time = 99;
+    env.storage.continue_watch_v6_7 = { [local.key]: local.value };
+    env.setRequestHandler(({ ok }) => ok({ schema: 1, updated_at: 3_500_100, records: { [newer.key]: newer.value } }));
+    env.api.testing.pullRemote(() => {});
+    assert.equal(env.api.sync().store[local.key].time, 99, 'a valid newer remote record must win the same-key merge');
+
+    const partial = syncRecord(env, 951, 3_500_200, 1);
+    partial.value.time = 300; partial.value.duration = 3000; partial.value.percent = 10;
+    const falseComplete = syncRecord(env, 951, 3_500_300, 1);
+    falseComplete.value.time = 20; falseComplete.value.duration = 3000; falseComplete.value.percent = 100;
+    env.storage.continue_watch_v6_7 = { [partial.key]: partial.value };
+    env.setRequestHandler(({ ok }) => ok({ schema: 1, updated_at: 3_500_300, records: { [falseComplete.key]: falseComplete.value } }));
+    env.api.testing.pullRemote(() => {});
+    assert.equal(env.api.sync().store[partial.key].time, 300, 'an implausible remote completion must not replace valid partial local progress');
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
+    const torrent = syncRecord(env, 960, 3_600_000, 1);
+    torrent.value.source = 'torrent';
+    torrent.value.season = 2; torrent.value.episode = 5; torrent.value.current_index = 3;
+    torrent.value.torrent = { index: 3, hash: 'torrent-hash', magnet: 'magnet:?xt=urn:btih:abc', items: [{ hash: 'torrent-e5', season: 2, episode: 5, file_name: 'E5.mkv', meta: { segments: [{ duration: 4, type: 'video/mp2t' }] } }] };
+    delete torrent.value.online;
+    env.setRequestHandler(({ ok }) => ok({ success: false, msg: 'outFile' }));
+    env.storage.continue_watch_v6_7 = { [torrent.key]: torrent.value };
+    env.api.testing.syncRemote('torrent');
+    const body = JSON.parse(env.requests.filter((request) => request.post)[0].params);
+    assert.equal(body.records[torrent.key].season, 2);
+    assert.equal(body.records[torrent.key].episode, 5);
+    assert.equal(body.records[torrent.key].current_index, 3);
+    assert.equal(body.records[torrent.key].torrent.index, 3);
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
+    const local = syncRecord(env, 970, 3_700_000, 1);
+    const late = syncRecord(env, 971, 3_700_100, 1);
+    env.storage.continue_watch_v6_7 = { [local.key]: local.value };
+    let lateGet = null;
+    env.setRequestHandler(({ post, ok }) => { if (!post && !lateGet) lateGet = ok; });
+    env.api.testing.syncRemote('timeout');
+    env.advance(8_000);
+    lateGet({ schema: 1, updated_at: 3_700_100, records: { [late.key]: late.value } });
+    assert.deepEqual(Object.keys(env.api.sync().store), [local.key], 'a late GET callback after timeout must be ignored exactly once');
+    assert.equal(env.requests.filter((request) => request.post).length, 0, 'a timed-out GET must not initiate a late POST');
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
+    let held = null;
+    let getCalls = 0;
+    env.setRequestHandler(({ post, ok, fail }) => {
+        if (post) return fail();
+        getCalls += 1;
+        if (!held) { held = ok; return; }
+        fail();
+    });
+    env.api.testing.syncRemote('first');
+    env.api.testing.syncRemote('coalesced-one');
+    env.api.testing.syncRemote('coalesced-two');
+    held({ schema: 1, updated_at: 0, records: {} });
+    env.advance(650);
+    assert.equal(getCalls, 2, 'busy sync calls must coalesce to one serialized follow-up cycle');
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    env.setAccountProfile('profile-a');
+    const localA = syncRecord(env, 940, 3_400_000, 1);
+    const remoteA = syncRecord(env, 941, 3_400_100, 1);
+    const localB = syncRecord(env, 942, 3_400_200, 1);
+    env.storage['continue_watch_v6_profile-a'] = { [localA.key]: localA.value };
+    env.storage['continue_watch_v6_profile-b'] = { [localB.key]: localB.value };
+    let heldGet = null;
+    env.setRequestHandler(({ post, ok, fail }) => {
+        if (!post && !heldGet) { heldGet = ok; return; }
+        fail();
+    });
+    env.api.testing.syncRemote('profile-a');
+    assert.ok(heldGet, 'the profile-A GET must remain in flight for the profile-switch regression');
+    env.setAccountProfile('profile-b');
+    env.dispatchStorageChange('account');
+    heldGet({ schema: 1, updated_at: 3_400_100, records: { [remoteA.key]: remoteA.value } });
+    assert.deepEqual(Object.keys(env.storage['continue_watch_v6_profile-b']).sort(), [localB.key], 'a stale profile-A response must not merge into profile B local storage');
+    assert.equal(env.requests.filter((request) => request.post).length, 0, 'a stale profile-A response must never POST its records to profile B');
+}
+
+{
+    const env = harness({ scripts: ['https://lampac.fun/sync/js/tol'] });
+    const local = syncRecord(env, 980, 3_800_000, 1);
+    local.value.time = 300; local.value.duration = 0; local.value.percent = 0;
+    const falseComplete = syncRecord(env, 980, 3_800_100, 1);
+    falseComplete.value.time = 20; falseComplete.value.duration = 3000; falseComplete.value.percent = 100;
+    env.storage.continue_watch_v6_7 = { [local.key]: local.value };
+    let gets = 0;
+    let serverDocument = null;
+    env.setRequestHandler(({ post, params, ok }) => {
+        if (post) { serverDocument = JSON.parse(params); return ok({ success: true }); }
+        gets += 1;
+        return ok({ schema: 1, updated_at: gets === 1 ? 3_800_100 : 3_800_200,
+            records: gets === 1 ? { [local.key]: falseComplete.value } : serverDocument.records });
+    });
+    env.api.testing.syncRemote('time-only-partial');
+    const posts = env.requests.filter((request) => request.post);
+    assert.equal(env.api.sync().store[local.key].time, 300, 'a guarded false completion must not replace a time-only local partial');
+    assert.equal(JSON.parse(posts[0].params).records[local.key].time, 300, 'the repair POST must converge remote state to the valid local time-only partial');
+    assert.equal(gets, 2, 'the completed repair must perform one initial and one verification GET');
+    assert.equal(posts.length, 1, 'the verification state must converge after one POST');
+    assert.equal(serverDocument.records[local.key].time, env.api.sync().store[local.key].time, 'verification must return the actual POST body as converged server state');
+}
+
+{
+    const env = harness();
+    const local = syncRecord(env, 981, 3_810_000, 1);
+    local.value.time = 300; local.value.duration = 0; local.value.percent = 0;
+    const guardedLower = JSON.parse(JSON.stringify(local.value));
+    guardedLower.activity_at = 3_810_100; guardedLower.time = 20; guardedLower.percent = 1; guardedLower.completion_guard = 'percent_time_mismatch';
+    const guardedAdvanced = JSON.parse(JSON.stringify(local.value));
+    guardedAdvanced.activity_at = 3_810_200; guardedAdvanced.time = 400; guardedAdvanced.percent = 1; guardedAdvanced.completion_guard = 'percent_time_mismatch';
+    const nextEpisode = JSON.parse(JSON.stringify(guardedLower));
+    nextEpisode.activity_at = 3_810_300; nextEpisode.episode = 2; nextEpisode.timeline_hash = 'sync-981-2';
+    assert.equal(env.api.testing.mergeRecordMaps({ [local.key]: local.value }, { [local.key]: guardedLower })[local.key].time, 300, 'same-position lower guarded time must lose');
+    assert.equal(env.api.testing.mergeRecordMaps({ [local.key]: local.value }, { [local.key]: guardedAdvanced })[local.key].time, 400, 'same-position guarded elapsed time that advances must win');
+    assert.equal(env.api.testing.mergeRecordMaps({ [local.key]: local.value }, { [local.key]: nextEpisode })[local.key].episode, 2, 'newer next-episode progress must use normal activity ordering even with lower elapsed time');
+}
+
+{
+    const env = harness();
+    const movie = { id: 108978, media_type: 'tv', title: 'Reacher', original_name: 'Reacher' };
+    const e1 = { title: 'Episode 1', season: 1, episode: 1, url: 'https://media.example/reacher-e1.m3u8', timeline: { hash: 'reacher-e1' } };
+    const e2 = { title: 'Первый танец', season: 1, episode: 2, url: 'https://media.example/reacher-e2.m3u8', timeline: { hash: 'reacher-e2' } };
+    env.setActive(movie);
+    env.Lampa.Player.play(Object.assign({}, e1, { card: movie, movie, isonline: true, playlist: [e1], playlist_index: 0, duration: 3275 }));
+    env.timelineListeners.forEach((listener) => listener({ hash: 'reacher-e1', road: { time: 143, duration: 3275, percent: 4, updated: 3_899_000 } }));
+    let saved = env.api.sync().store['c_' + env.Lampa.Utils.hash(env.api.testing.cardKey(movie))];
+    assert.equal(saved.episode, 1);
+    assert.equal(saved.time, 143);
+    env.Lampa.Player.playlist([Object.assign({}, e2, { duration: 3205 })]);
+    env.timelineListeners.forEach((listener) => listener({ hash: 'reacher-e2', road: { time: 198, duration: 3205, percent: 6, updated: 3_900_000 } }));
+    saved = env.api.sync().store['c_' + env.Lampa.Utils.hash(env.api.testing.cardKey(movie))];
+    assert.equal(saved.episode, 2, 'a web-player Next metadata transition must save episode 2');
+    assert.equal(saved.episode_title, 'Первый танец');
+    assert.equal(saved.time, 198);
+}
+
+{
+    const env = harness();
+    const reacher = { id: 108978, media_type: 'tv', title: 'Reacher', original_name: 'Reacher' };
+    const other = { id: 999999, media_type: 'tv', title: 'Other', original_name: 'Other' };
+    const e1 = { title: 'E1', season: 1, episode: 1, url: 'https://media.example/e1.m3u8', timeline: { hash: 'safe-e1' } };
+    const unrelated = { title: 'Other E2', season: 1, episode: 2, url: 'https://media.example/other-e2.m3u8', timeline: { hash: 'other-e2' } };
+    env.setActive(reacher);
+    env.Lampa.Player.play(Object.assign({}, e1, { card: reacher, movie: reacher, isonline: true, playlist: [e1], playlist_index: 0 }));
+    env.timelineListeners.forEach((listener) => listener({ hash: 'safe-e1', road: { time: 143, duration: 3275, percent: 4, updated: 4_000_000 } }));
+    env.setActive(other);
+    env.Lampa.Player.playlist([unrelated]);
+    env.timelineListeners.forEach((listener) => listener({ hash: 'other-e2', road: { time: 198, duration: 3205, percent: 6, updated: 4_001_000 } }));
+    const saved = env.storage['continue_watch_v6_7']['c_' + env.Lampa.Utils.hash(env.api.testing.cardKey(reacher))];
+    assert.equal(saved.episode, 1, 'unrelated singleton playlist metadata must not overwrite the active Reacher session');
+    assert.equal(saved.time, 143);
+}
+
+console.log('ContinueWatching v6.2: identity fixtures plus 53 prior fixtures passed');
