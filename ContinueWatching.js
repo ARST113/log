@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.17-remote-rch-redaction-20260904';
+    var VERSION = 'v6.2.18-online-episode-order-20260905';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -1196,9 +1196,24 @@
             ? out.torrent.items
             : (out.source === 'online' && out.online && out.online.items ? out.online.items : []);
         if (!items.length) return out;
+        var onlineIndex = -1;
+        if (out.source === 'online') {
+            for (var oi = 0; oi < items.length; oi++) {
+                if (items[oi] && str(items[oi].hash) === str(out.timeline_hash)) { onlineIndex = oi; break; }
+            }
+            if (onlineIndex < 0 && (num(out.season) || num(out.episode))) {
+                for (var os = 0; os < items.length; os++) {
+                    if (items[os] && num(items[os].season) === num(out.season) && num(items[os].episode) === num(out.episode)) {
+                        onlineIndex = os; break;
+                    }
+                }
+            }
+            if (onlineIndex < 0 && num(out.current_index) >= 0 && num(out.current_index) < items.length) onlineIndex = num(out.current_index);
+        }
         var best = null;
         items.forEach(function (it, idx) {
             if (!it || !it.hash) return;
+            if (out.source === 'online' && idx !== onlineIndex) return;
             var road = timelineView(it.hash) || {};
             var updated = num(road.updated);
             if (!updated || (!num(road.time) && !num(road.percent))) return;
@@ -1597,6 +1612,20 @@
         return -1;
     }
 
+    function onlineTimelineCanSelect(session, idx) {
+        if (!session || session.source !== 'online' || idx === num(session.index)) return true;
+        var currentIndex = num(session.index);
+        var current = session.playlist[currentIndex] || {};
+        var candidate = session.playlist[idx] || {};
+        var currentSE = itemSE(current, currentIndex);
+        var candidateSE = itemSE(candidate, idx);
+        if (currentSE.season && currentSE.episode && candidateSE.season && candidateSE.episode) {
+            if (candidateSE.season !== currentSE.season) return candidateSE.season > currentSE.season;
+            return candidateSE.episode > currentSE.episode;
+        }
+        return idx > currentIndex;
+    }
+
     function writePending(session) {
         if (!runtimeCurrent()) return;
         if (!session || session.source !== 'torrent') return;
@@ -1763,6 +1792,7 @@
             return;
         }
         if (!meaningfulRoad(road)) return;
+        if (!onlineTimelineCanSelect(state.session, idx)) return;
         var saveIndex = idx;
         var saveRoad = road;
         if (state.session.source === 'torrent' && num(road.percent) >= 100 && idx + 1 < state.session.playlist.length) {
