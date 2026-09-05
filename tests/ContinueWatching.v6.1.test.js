@@ -319,7 +319,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.20-online-catalog-resolver-20260905');
+assert.equal(h.api.version, 'v6.2.21-online-catalog-owner-20260905');
 
 {
     const encoded = JSON.stringify({
@@ -4195,11 +4195,14 @@ function syncRecord(env, id, activityAt, itemCount) {
         timeline: { hash: 'aniliberty-31724-' + episode }
     }));
     source.setActive(movie);
+    source.api.record();
+    source.setActive({ id: 999998, media_type: 'tv', title: 'Transient online activity', original_name: 'Transient online activity' });
     source.setClock(4_500_000);
     source.listeners.request_secuses[0]({
         params: { url: catalogUrl, headers: { 'X-Kit-AesGcm': 'source-aes' } },
         data: rows('old')
     });
+    source.setActive(movie);
     source.Lampa.Player.play(Object.assign({}, sourcePlaylist[2], {
         card: movie, movie, isonline: true, playlist: sourcePlaylist, playlist_index: 2
     }));
@@ -4359,4 +4362,4 @@ function syncRecord(env, id, activityAt, itemCount) {
         'a late catalog response must not be attached to a different active card');
 }
 
-console.log('ContinueWatching v6.2.20 regression fixtures: PASS');
+console.log('ContinueWatching v6.2.21 regression fixtures: PASS');
