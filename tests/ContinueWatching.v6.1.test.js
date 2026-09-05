@@ -319,7 +319,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.17-remote-rch-redaction-20260904');
+assert.equal(h.api.version, 'v6.2.18-online-episode-order-20260905');
 
 assert.deepEqual(
     t.normalizeSegments('{"duration_ms":2696000,"skip":[{"start":62,"end":152}],"ad":[{"start":0,"end":12}]}', 3697),
@@ -4019,6 +4019,78 @@ function syncRecord(env, id, activityAt, itemCount) {
 
 {
     const env = harness();
+    const movie = { id: 31724, media_type: 'tv', title: 'Code Geass', original_name: 'Code Geass: Lelouch of the Rebellion' };
+    const episodes = [1, 2, 3].map((episode) => ({
+        title: 'Episode ' + episode,
+        season: 1,
+        episode,
+        url: 'https://media.example/code-geass-e' + episode + '.m3u8',
+        timeline: { hash: 'code-geass-e' + episode }
+    }));
+    env.setActive(movie);
+    env.Lampa.Player.play(Object.assign({}, episodes[1], {
+        card: movie, movie, isonline: true, playlist: episodes, playlist_index: 1
+    }));
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'code-geass-e2', road: { time: 360, duration: 1450, percent: 25, updated: 4_200_000 }
+    }));
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'code-geass-e3', road: { time: 390, duration: 1450, percent: 27, updated: 4_200_100 }
+    }));
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'code-geass-e2', road: { time: 376, duration: 1450, percent: 26, updated: 4_200_200 }
+    }));
+    const saved = env.api.sync().store['c_' + env.Lampa.Utils.hash(env.api.testing.cardKey(movie))];
+    assert.equal(saved.episode, 3,
+        'a delayed previous-episode timecode must not move an active online session from E3 back to E2');
+    assert.equal(saved.timeline_hash, 'code-geass-e3');
+    assert.equal(saved.current_index, 2);
+    assert.equal(saved.time, 390);
+
+    env.internalPlayerPlay(Object.assign({}, episodes[1], { url: episodes[1].url }));
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'code-geass-e2', road: { time: 410, duration: 1450, percent: 28, updated: 4_200_300 }
+    }));
+    const explicitlyReturned = env.api.sync().store['c_' + env.Lampa.Utils.hash(env.api.testing.cardKey(movie))];
+    assert.equal(explicitlyReturned.episode, 2,
+        'an explicit player capture must still allow the viewer to navigate back from E3 to E2');
+    assert.equal(explicitlyReturned.timeline_hash, 'code-geass-e2');
+    assert.equal(explicitlyReturned.time, 410);
+}
+
+{
+    const env = harness();
+    const storageKey = 'continue_watch_v6_7';
+    const movie = { id: 31724, media_type: 'tv', title: 'Code Geass', original_name: 'Code Geass: Lelouch of the Rebellion' };
+    const cardKey = env.api.testing.cardKey(movie);
+    const recordKey = 'c_' + env.Lampa.Utils.hash(cardKey);
+    env.storage[storageKey] = {
+        [recordKey]: {
+            v: 6, card_key: cardKey, source: 'online', activity_at: 4_300_100,
+            season: 1, episode: 3, episode_title: 'Episode 3', timeline_hash: 'code-geass-reopen-e3',
+            time: 390, duration: 1450, percent: 27, current_index: 2,
+            online: {
+                index: 2,
+                items: [1, 2, 3].map((episode) => ({
+                    title: 'Episode ' + episode, season: 1, episode,
+                    hash: 'code-geass-reopen-e' + episode,
+                    direct_url: 'https://media.example/code-geass-reopen-e' + episode + '.m3u8', meta: {}
+                }))
+            }
+        }
+    };
+    env.roads['code-geass-reopen-e2'] = { time: 376, duration: 1450, percent: 26, updated: 4_300_200 };
+    env.roads['code-geass-reopen-e3'] = { time: 390, duration: 1450, percent: 27, updated: 4_300_100 };
+    env.setActive(movie);
+    const reopened = env.api.record();
+    assert.equal(reopened.episode, 3,
+        'opening the card must not replace the saved online episode with a newer sibling Timeline road');
+    assert.equal(reopened.timeline_hash, 'code-geass-reopen-e3');
+    assert.equal(reopened.time, 390);
+}
+
+{
+    const env = harness();
     const reacher = { id: 108978, media_type: 'tv', title: 'Reacher', original_name: 'Reacher' };
     const other = { id: 999999, media_type: 'tv', title: 'Other', original_name: 'Other' };
     const e1 = { title: 'E1', season: 1, episode: 1, url: 'https://media.example/e1.m3u8', timeline: { hash: 'safe-e1' } };
@@ -4034,4 +4106,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.17 regression fixtures: PASS');
+console.log('ContinueWatching v6.2.18 regression fixtures: PASS');
