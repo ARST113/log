@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.20-online-catalog-resolver-20260905';
+    var VERSION = 'v6.2.21-online-catalog-owner-20260905';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -1926,13 +1926,36 @@
         } catch (e) { return ''; }
     }
     function captureCatalogResolver(event) {
-        var catalogUrl = safeCatalogUrl(event && event.params && event.params.url, false);
+        var rawCatalogUrl = str(event && event.params && event.params.url);
+        if (!/\/lite\//i.test(rawCatalogUrl)) return;
+        var catalogUrl = safeCatalogUrl(rawCatalogUrl, false);
+        if (!catalogUrl) {
+            diagnosticMarkerAttr('data-cw-catalog-probe', 'unsafe-url');
+            return;
+        }
         var items = catalogResponseItems(event && event.data);
-        if (!catalogUrl || !items.length) return;
-        var captureMovie = currentActivityMovie() || state.lastMovie;
-        var captureCardKey = cardKey(captureMovie);
-        if (!captureCardKey || !catalogIdentityMatchesMovie(catalogUrl, captureMovie)) return;
+        if (!items.length) {
+            diagnosticMarkerAttr('data-cw-catalog-probe', 'no-items:' + typeof (event && event.data));
+            return;
+        }
+        var captureMovie = null;
+        var captureCardKey = '';
+        var movieCandidates = [currentActivityMovie(), state.lastMovie];
+        for (var i = 0; i < movieCandidates.length; i++) {
+            var candidateMovie = movieCandidates[i];
+            var candidateCardKey = cardKey(candidateMovie);
+            if (candidateCardKey && catalogIdentityMatchesMovie(catalogUrl, candidateMovie)) {
+                captureMovie = candidateMovie;
+                captureCardKey = candidateCardKey;
+                break;
+            }
+        }
+        if (!captureMovie) {
+            diagnosticMarkerAttr('data-cw-catalog-probe', 'owner-mismatch');
+            return;
+        }
         var provider = catalogProvider(catalogUrl);
+        diagnosticMarkerAttr('data-cw-catalog-probe', 'captured:' + provider);
         diagnosticMarkerAttr('data-cw-catalog-capture', provider + ':' + items.length);
         items.forEach(function (item) {
             var target = explicitItemSE(item);
