@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.19-online-active-identity-20260905';
+    var VERSION = 'v6.2.20-online-catalog-resolver-20260905';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -24,6 +24,7 @@
     var ONLINE_LAUNCH_DEADLINE = 30000;
     var ONLINE_RESOLVER_CAPTURE_MAX_AGE = 5 * 60 * 1000;
     var ONLINE_RESOLVER_CARD_FALLBACK_MAX_AGE = 15000;
+    var ONLINE_CATALOG_CAPTURE_MAX_AGE = 5 * 60 * 1000;
 
     if (!window.Lampa) return;
     if (window.__CW_V6_VERSION__ === VERSION) return;
@@ -32,6 +33,7 @@
     var state = {
         session: null,
         resolverByMedia: {},
+        catalogByMedia: {},
         torrentSeedByCard: {},
         lastMovie: null,
         settleTimer: null,
@@ -716,6 +718,7 @@
     function redactRemoteValue(value, key) {
         if (typeof value === 'string') {
             if (key === 'resolver_url') return portableRemoteResolver(value);
+            if (key === 'catalog_url') return safeCatalogUrl(value, true);
             if (/^(?:https?:)?\/\//i.test(value)) return undefined;
             return value;
         }
@@ -725,7 +728,7 @@
             if (normalized === 'token' || normalized === 'account_email' || normalized === 'uid' ||
                 normalized === 'nws_id' || normalized === 'aesgcmkey' || normalized === 'headers' ||
                 normalized === 'authorization' || normalized === 'account' || normalized === 'resolver_headers' ||
-                normalized === 'rch' || normalized === 'rch_body') {
+                normalized === 'catalog_headers' || normalized === 'rch' || normalized === 'rch_body') {
                 delete value[childKey];
                 return;
             }
@@ -1395,6 +1398,7 @@
             timeline_rebound: timelineRebound,
             torrent_hash: str(data.torrent_hash || (item && item.torrent_hash) || ''),
             resolver: null,
+            catalog: null,
             active_meta: playbackMeta(data),
             created_at: now(),
             initial_time: num(data.time || data.position || (data.timeline && data.timeline.time)),
@@ -1410,6 +1414,15 @@
             session.magnet = str(data.magnet || (item && item.magnet) || (seed && seed.magnet) || inheritedTorrentMagnet || '');
         } else if (source === 'online') {
             session.resolver = lookupResolver(url, session.card_key, item, session.movie);
+            session.catalog = lookupCatalog(url, session.card_key, item);
+            if (session.catalog) {
+                session.catalog = clone(session.catalog);
+                session.catalog.selection = resolverSelection('', {
+                    provider: session.catalog.selection && session.catalog.selection.provider || catalogProvider(session.catalog.url),
+                    translation: item && (item.voice_name || item.voice || item.translation) ||
+                        (session.catalog.selection && session.catalog.selection.translation) || ''
+                });
+            }
             var onlineSeed = state.onlineLaunchSeed;
             if (onlineSeed && onlineSeed.card_key === session.card_key) {
                 session.online_full_defs = deepCopy(onlineSeed.defs) || [];
@@ -1472,9 +1485,12 @@
             var h = exactHash(item, session.movie, se.season, se.episode);
             var raw = typeof item.url === 'string' ? cleanUrl(item.url) : '';
             var resolver = lookupResolver(raw, session.card_key, item, session.movie);
+            var catalog = lookupCatalog(raw, session.card_key, item);
             if (resolver && !resolverMatchesItem(resolver.url, item)) resolver = null;
             if (idx === captureIndex && session.resolver && resolverMatchesItem(session.resolver.url, item)) resolver = session.resolver;
+            if (idx === captureIndex && session.catalog) catalog = session.catalog;
             var explicitResolver = str(item.resolver_url).trim();
+            var explicitCatalog = safeCatalogUrl(item.catalog_url, false);
             var carriedResolver = !resolver && explicitResolver ? portableResolver(explicitResolver) : '';
             if (carriedResolver && !carriedResolverCompatible(carriedResolver, item, synthesisBase)) carriedResolver = '';
             var carriedSelection = carriedResolver ? resolverSelection(carriedResolver, item.selection || {}) : {};
@@ -1486,10 +1502,14 @@
                 season: num(se.season), episode: num(se.episode), hash: h,
                 img: str(item.thumbnail || item.img || ''),
                 voice_name: str(item.voice_name || ''),
-                direct_url: raw && !isTransientOnline(raw) ? raw : '',
+                direct_url: raw && !isTransientOnline(raw) && !catalog ? raw : '',
                 resolver_url: resolver ? portableResolver(resolver.url) : (carriedResolver || str(synthesized && synthesized.url)),
                 resolver_headers: resolver ? portableResolverHeaders(resolver.headers) : portableResolverHeaders(carriedResolver ? item.resolver_headers : (synthesized && synthesized.headers)),
-                selection: resolver ? resolverSelection(resolver.url, {}) : (selectionKey(carriedSelection) ? carriedSelection : clone(synthesized && synthesized.selection || {})),
+                catalog_url: catalog ? safeCatalogUrl(catalog.url, false) : explicitCatalog,
+                catalog_headers: portableResolverHeaders(catalog ? catalog.headers : (explicitCatalog ? item.catalog_headers : {})),
+                selection: resolver ? resolverSelection(resolver.url, {}) :
+                    (catalog && selectionKey(catalog.selection) ? clone(catalog.selection) :
+                        (selectionKey(carriedSelection) ? carriedSelection : clone(synthesized && synthesized.selection || {}))),
                 meta: meta
             };
         });
@@ -1533,7 +1553,7 @@
                 var saved = merged[fullIndex] || {};
                 Object.keys(live || {}).forEach(function (key) {
                     var value = live[key];
-                    if ((key === 'resolver_url' || key === 'direct_url') && !value) return;
+                    if ((key === 'resolver_url' || key === 'catalog_url' || key === 'direct_url') && !value) return;
                     if (key === 'selection' && !selectionKey(value)) return;
                     if (key === 'meta') saved.meta = mergeMeta(saved.meta || {}, value || {});
                     else saved[key] = value;
@@ -1547,11 +1567,17 @@
             if (!item) return;
             item.resolver_url = item.resolver_url && resolverMatchesItem(item.resolver_url, item) ? portableResolver(item.resolver_url) : '';
             item.resolver_headers = item.resolver_url ? portableResolverHeaders(item.resolver_headers) : {};
+            item.catalog_url = safeCatalogUrl(item.catalog_url, false);
+            item.catalog_headers = item.catalog_url ? portableResolverHeaders(item.catalog_headers) : {};
+            if (item.catalog_url || isTransientOnline(item.direct_url)) item.direct_url = '';
         });
         var activeDescriptor = items[descriptorIndex] || {};
         var sessionResolver = session.resolver ? portableResolver(session.resolver.url) : '';
         var sessionSelection = session.resolver ? resolverSelection(session.resolver.url, {}) : {};
-        var sessionDirect = isTransientOnline(session.url) ? '' : session.url;
+        var sessionCatalog = session.catalog ? safeCatalogUrl(session.catalog.url, false) : '';
+        var sessionDirect = sessionCatalog || isTransientOnline(session.url) ? '' : session.url;
+        var baseCatalog = safeCatalogUrl(baseOnline.catalog_url, false);
+        var baseDirect = baseCatalog || isTransientOnline(baseOnline.direct_url) ? '' : str(baseOnline.direct_url || '');
         var baseMatchesActive = descriptorIndex === num(baseOnline.index);
         var captureMatchesActive = selectedRuntimeIndex === captureIndex && resolverMatchesItem(sessionResolver, activeDescriptor);
         var baseResolver = baseMatchesActive && baseOnline.resolver_url && resolverMatchesItem(baseOnline.resolver_url, activeDescriptor)
@@ -1564,8 +1590,11 @@
         return {
             resolver_url: activeResolver,
             resolver_headers: portableResolverHeaders(activeHeaders),
+            catalog_url: str(activeDescriptor.catalog_url || '') || (captureMatchesActive ? sessionCatalog : '') || str(baseMatchesActive ? baseOnline.catalog_url || '' : ''),
+            catalog_headers: portableResolverHeaders(activeDescriptor.catalog_url ? activeDescriptor.catalog_headers :
+                (captureMatchesActive && session.catalog ? session.catalog.headers : (baseMatchesActive ? baseOnline.catalog_headers : {}))),
             selection: selectionKey(activeSelection) ? activeSelection : (captureMatchesActive && selectionKey(sessionSelection) ? sessionSelection : clone(baseMatchesActive ? baseOnline.selection || {} : {})),
-            direct_url: str(activeDescriptor.direct_url || '') || (captureMatchesActive ? sessionDirect : '') || str(baseMatchesActive ? baseOnline.direct_url || '' : ''),
+            direct_url: str(activeDescriptor.direct_url || '') || (captureMatchesActive ? sessionDirect : '') || (baseMatchesActive ? baseDirect : ''),
             index: descriptorIndex,
             items: items
         };
@@ -1831,8 +1860,147 @@
         return url;
     }
     function isPlayable(url) { return /^https?:\/\//i.test(url) && (/\/proxy(?:-dash)?\//i.test(url) || /\.(m3u8?|mpd|mp4|mkv|webm|mov|ts)(?:$|[?#])/i.test(url)); }
+    function decodeHtmlAttribute(value) {
+        return str(value)
+            .replace(/&#x([0-9a-f]+);/gi, function (_all, code) { return String.fromCharCode(parseInt(code, 16)); })
+            .replace(/&#(\d+);/g, function (_all, code) { return String.fromCharCode(parseInt(code, 10)); })
+            .replace(/&quot;/gi, '"').replace(/&apos;|&#39;/gi, "'")
+            .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&amp;/gi, '&');
+    }
+    function tagAttribute(tag, name) {
+        var escaped = str(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        var match = str(tag).match(new RegExp('(?:^|\\s)' + escaped + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\'|([^\\s>]+))', 'i'));
+        return match ? decodeHtmlAttribute(match[1] !== undefined ? match[1] : (match[2] !== undefined ? match[2] : match[3])) : '';
+    }
+    function catalogResponseItems(payload) {
+        if (typeof payload !== 'string' || payload.indexOf('videos__item') < 0) return [];
+        var tags = payload.match(/<[^>]*\bclass\s*=\s*(?:"[^"]*\bvideos__item\b[^"]*"|'[^']*\bvideos__item\b[^']*')[^>]*>/gi) || [];
+        var items = [];
+        tags.forEach(function (tag) {
+            var raw = tagAttribute(tag, 'data-json');
+            if (!raw) return;
+            var item = null;
+            try { item = JSON.parse(raw); } catch (e) {
+                try { if (Lampa.Arrays && Lampa.Arrays.decodeJson) item = Lampa.Arrays.decodeJson(raw, null); } catch (ee) {}
+            }
+            if (!item || typeof item !== 'object') return;
+            var season = positiveInteger(tagAttribute(tag, 's') || item.season || item.season_number || item.s);
+            var episode = positiveInteger(tagAttribute(tag, 'e') || item.episode || item.episode_number || item.e);
+            if (season) item.season = season;
+            if (episode) item.episode = episode;
+            if (!item.title && item.text) item.title = item.text;
+            items.push(item);
+        });
+        return items;
+    }
+    function safeCatalogUrl(url, remote) {
+        try {
+            var parsed = new URL(str(url), location.href);
+            var lampac = new URL(LAMPAC_BASE);
+            if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.username || parsed.password ||
+                str(parsed.origin).toLowerCase() !== str(lampac.origin).toLowerCase() ||
+                !/^\/lite\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\/?$/i.test(parsed.pathname)) return '';
+            var allowed = {
+                id: true, imdb_id: true, kinopoisk_id: true, tmdb_id: true, shikimori_id: true,
+                anime_id: true, postid: true, season_id: true, episode_id: true,
+                title: true, original_title: true, original_language: true, year: true, source: true,
+                serial: true, clarification: true, similar: true, season: true, episode: true,
+                s: true, e: true, t: true, translation: true, voice: true, voice_name: true,
+                voiceover: true, dub: true, folder: true, quality: true, media: true,
+                media_type: true, type: true, kid: true, sid: true
+            };
+            var safeParams = new URLSearchParams();
+            parsed.searchParams.forEach(function (value, key) {
+                var normalized = str(key).trim().toLowerCase();
+                if (allowed[normalized] && str(value).length <= 512) safeParams.append(normalized, value);
+            });
+            parsed.search = safeParams.toString() ? '?' + safeParams.toString() : '';
+            parsed.hash = '';
+            return parsed.toString();
+        } catch (e) { return ''; }
+    }
+    function catalogProvider(url) {
+        try {
+            var match = new URL(str(url), location.href).pathname.match(/^\/lite\/([^/]+)/i);
+            return match ? str(match[1]).trim().toLowerCase() : '';
+        } catch (e) { return ''; }
+    }
+    function captureCatalogResolver(event) {
+        var catalogUrl = safeCatalogUrl(event && event.params && event.params.url, false);
+        var items = catalogResponseItems(event && event.data);
+        if (!catalogUrl || !items.length) return;
+        var captureMovie = currentActivityMovie() || state.lastMovie;
+        var captureCardKey = cardKey(captureMovie);
+        if (!captureCardKey || !catalogIdentityMatchesMovie(catalogUrl, captureMovie)) return;
+        var provider = catalogProvider(catalogUrl);
+        diagnosticMarkerAttr('data-cw-catalog-capture', provider + ':' + items.length);
+        items.forEach(function (item) {
+            var target = explicitItemSE(item);
+            var selection = resolverSelection('', {
+                provider: provider,
+                translation: item.voice_name || item.voice || item.translation || ''
+            });
+            var recipe = {
+                url: catalogUrl,
+                headers: {},
+                at: now(),
+                card_key: captureCardKey,
+                season: target ? target.season : 0,
+                episode: target ? target.episode : 0,
+                selection: selection
+            };
+            var media = [];
+            if (typeof item.url === 'string') media = media.concat(item.url.split(' or '));
+            var quality = item.quality || item.qualitys;
+            if (quality && typeof quality === 'object') Object.keys(quality).forEach(function (key) {
+                if (typeof quality[key] === 'string') media = media.concat(quality[key].split(' or '));
+            });
+            media.forEach(function (value) {
+                var normalized = normalizeMedia(value);
+                if (isPlayable(normalized)) state.catalogByMedia[normalized] = recipe;
+            });
+        });
+    }
+    function lookupCatalog(media, expectedCardKey, item) {
+        var target = explicitItemSE(item);
+        var expected = resolverSelection('', {
+            provider: item && (item.provider || item.balanser) || '',
+            translation: item && (item.voice_name || item.voice || item.translation) || ''
+        });
+        function accepted(candidate) {
+            if (!candidate || candidate.card_key !== expectedCardKey || !safeCatalogUrl(candidate.url, false)) return false;
+            var capturedAt = num(candidate.at);
+            if (!capturedAt || now() < capturedAt - 1000 || now() - capturedAt > ONLINE_CATALOG_CAPTURE_MAX_AGE) return false;
+            if (target && (num(candidate.season) !== target.season || num(candidate.episode) !== target.episode)) return false;
+            if (!catalogSelectionMatches(expected, candidate.selection || {})) return false;
+            return true;
+        }
+        var exact = state.catalogByMedia[normalizeMedia(media)] || null;
+        if (accepted(exact)) return exact;
+        var matches = [];
+        var seen = {};
+        Object.keys(state.catalogByMedia).forEach(function (key) {
+            var candidate = state.catalogByMedia[key];
+            if (!accepted(candidate) || !selectionMatches(expected, candidate.selection || {})) return;
+            var identity = safeCatalogUrl(candidate.url, false) + '|' + selectionKey(candidate.selection);
+            if (!seen[identity]) { seen[identity] = true; matches.push(candidate); }
+        });
+        return matches.length === 1 ? matches[0] : null;
+    }
+    function catalogSelectionMatches(expected, actual) {
+        expected = expected || {};
+        actual = actual || {};
+        var expectedProvider = str(expected.provider).trim().toLowerCase();
+        var actualProvider = str(actual.provider).trim().toLowerCase();
+        var expectedTranslation = str(expected.translation).trim().toLowerCase();
+        var actualTranslation = str(actual.translation).trim().toLowerCase();
+        if (expectedProvider && actualProvider && expectedProvider !== actualProvider) return false;
+        if (expectedTranslation && actualTranslation && expectedTranslation !== actualTranslation) return false;
+        return true;
+    }
     function captureResolver(event) {
         if (!runtimeCurrent()) return;
+        captureCatalogResolver(event);
         if (!event || !event.params || !event.params.url) return;
         var data = event.data;
         if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
@@ -1934,7 +2102,8 @@
             u.searchParams.forEach(function (_value, key) {
                 var normalized = str(key).toLowerCase();
                 if (normalized === 'authorization' || normalized === 'account' || normalized === 'headers' ||
-                    normalized === 'account_email' || normalized === 'uid' || normalized === 'nws_id') remove.push(key);
+                    normalized === 'account_email' || normalized === 'uid' || normalized === 'nws_id' ||
+                    normalized === 'cub_id' || normalized === 'rchtype') remove.push(key);
             });
             remove.forEach(function (key) { u.searchParams.delete(key); });
         } catch (e) {}
@@ -1947,7 +2116,8 @@
                 var normalized = str(key).toLowerCase();
                 if (normalized === 'token' || normalized === 'aesgcmkey' || normalized === 'authorization' ||
                     normalized === 'account' || normalized === 'headers' || normalized === 'account_email' ||
-                    normalized === 'uid' || normalized === 'nws_id' || normalized === 'rch' ||
+                    normalized === 'uid' || normalized === 'nws_id' || normalized === 'cub_id' ||
+                    normalized === 'rchtype' || normalized === 'rch' ||
                     normalized === 'rch_body') remove.push(key);
             });
             remove.forEach(function (key) { u.searchParams.delete(key); });
@@ -1969,9 +2139,14 @@
             if (!entry) return;
             var oldUrl = str(entry.resolver_url || '');
             var oldHeaders = json(entry.resolver_headers || {});
+            var oldCatalogUrl = str(entry.catalog_url || '');
+            var oldCatalogHeaders = json(entry.catalog_headers || {});
             entry.resolver_url = oldUrl ? portableResolver(oldUrl) : '';
             entry.resolver_headers = portableResolverHeaders(entry.resolver_headers);
-            if (entry.resolver_url !== oldUrl || json(entry.resolver_headers) !== oldHeaders) changed = true;
+            entry.catalog_url = oldCatalogUrl ? safeCatalogUrl(oldCatalogUrl, false) : '';
+            entry.catalog_headers = entry.catalog_url ? portableResolverHeaders(entry.catalog_headers) : {};
+            if (entry.resolver_url !== oldUrl || json(entry.resolver_headers) !== oldHeaders ||
+                entry.catalog_url !== oldCatalogUrl || json(entry.catalog_headers) !== oldCatalogHeaders) changed = true;
         }
         sanitize(online);
         (online.items || []).forEach(sanitize);
@@ -1984,6 +2159,8 @@
             if (!entry) return;
             entry.resolver_url = entry.resolver_url ? portableRemoteResolver(entry.resolver_url) : '';
             entry.resolver_headers = portableResolverHeaders(entry.resolver_headers);
+            entry.catalog_url = entry.catalog_url ? safeCatalogUrl(entry.catalog_url, true) : '';
+            entry.catalog_headers = {};
         }
         sanitize(online);
         (online.items || []).forEach(sanitize);
@@ -2109,18 +2286,32 @@
             return str(entry && entry.connectionId || '');
         } catch (e) { return ''; }
     }
+    function activeRchType(host) {
+        try {
+            var name = str(host).split(':')[0];
+            var registry = window.rch_nws || {};
+            var fallback = window.rch || {};
+            var entry = registry[str(host)] || registry[name] || fallback[str(host)] || fallback[name];
+            return str(entry && entry.type || '');
+        } catch (e) { return ''; }
+    }
     function localizeResolver(url) {
         url = str(url);
         if (!url) return '';
         try {
             var u = new URL(url, location.href);
             stripLocalResolverParams(u);
+            var lampac = new URL(LAMPAC_BASE);
+            if (str(u.origin).toLowerCase() !== str(lampac.origin).toLowerCase()) return u.toString();
             var email = str(Lampa.Storage.get('account_email', ''));
             var uid = str(Lampa.Storage.get('lampac_unic_id', ''));
             var nws = activeRchConnectionId(u.host) || str(Lampa.Storage.get('lampac_nws_id', ''));
+            var rchType = activeRchType(u.host);
             if (email) u.searchParams.set('account_email', email);
             if (uid) u.searchParams.set('uid', uid);
             if (nws) u.searchParams.set('nws_id', nws);
+            if (email && Lampa.Utils && Lampa.Utils.hash) u.searchParams.set('cub_id', Lampa.Utils.hash(email));
+            if (rchType) u.searchParams.set('rchtype', rchType);
             return u.toString();
         } catch (e) { return url; }
     }
@@ -2221,6 +2412,133 @@
         }
         return null;
     }
+    function catalogIdentityMatchesMovie(url, movie) {
+        try {
+            var parsed = new URL(str(url), location.href);
+            var serial = parsed.searchParams.get('serial');
+            if (serial !== null && (str(serial) === '1') !== (mediaType(movie) === 'tv')) return false;
+            var identity = {};
+            ['id','tmdb_id','kinopoisk_id','imdb_id'].forEach(function (key) {
+                var values = parsed.searchParams.getAll(key);
+                if (values.length === 1 && str(values[0]).trim()) identity[key] = str(values[0]);
+            });
+            return resolverIdentityMatchesMovie({ identity: identity }, movie);
+        } catch (e) { return false; }
+    }
+    function onlineCatalogForRecord(record, movie) {
+        var online = record && record.online || {};
+        var idx = onlineRecordIndex(record);
+        if (idx < 0) return null;
+        var item = online.items && online.items[idx] || {};
+        var savedIndex = normalizedOnlineIndex(online);
+        var expected = resolverSelection('', item.selection || online.selection || {});
+        var candidates = [
+            { url: item.catalog_url || '', headers: item.catalog_headers || {}, top: false },
+            { url: online.catalog_url || '', headers: online.catalog_headers || {}, top: true }
+        ];
+        for (var i = 0; i < candidates.length; i++) {
+            var portable = safeCatalogUrl(candidates[i].url, false);
+            if (!portable || (candidates[i].top && idx !== savedIndex) || !catalogIdentityMatchesMovie(portable, movie)) continue;
+            var actual = resolverSelection('', { provider: catalogProvider(portable) });
+            if (expected.provider && actual.provider && expected.provider !== actual.provider) continue;
+            return { url: portable, headers: candidates[i].headers || {}, selection: expected, origin: 'catalog' };
+        }
+        return null;
+    }
+    function catalogItemForRecord(items, record, selection) {
+        var target = explicitItemSE(record);
+        if (!target) return null;
+        var expected = resolverSelection('', selection || {});
+        var matches = (items || []).filter(function (item) {
+            var actualTarget = explicitItemSE(item);
+            if (!actualTarget || actualTarget.season !== target.season || actualTarget.episode !== target.episode) return false;
+            var actual = resolverSelection('', {
+                provider: expected.provider,
+                translation: item.voice_name || item.voice || item.translation || ''
+            });
+            return catalogSelectionMatches(expected, actual);
+        });
+        if (matches.length === 1) return matches[0];
+        var wantedTitle = str(record && record.episode_title).trim().toLowerCase().replace(/\s+/g, ' ');
+        if (wantedTitle) {
+            var byTitle = matches.filter(function (item) {
+                return str(item && (item.title || item.text)).trim().toLowerCase().replace(/\s+/g, ' ') === wantedTitle;
+            });
+            if (byTitle.length === 1) return byTitle[0];
+        }
+        return matches.length === 1 ? matches[0] : null;
+    }
+    function resolveOnlineCatalogCandidate(catalog, record, callback, launchDeadline) {
+        if (!catalog || !catalog.url || !Lampa.Reguest) return callback(null);
+        var deadline = Math.min(num(launchDeadline) || now() + ONLINE_CANDIDATE_TIMEOUT, now() + ONLINE_CANDIDATE_TIMEOUT);
+        if (now() >= deadline) return callback(null);
+        var settled = false;
+        var retried = false;
+        var timer = setTimeout(function () { finish(null); }, Math.max(1, deadline - now()));
+        function finish(result) {
+            if (settled) return;
+            settled = true;
+            if (timer) clearTimeout(timer);
+            callback(result);
+        }
+        function requestCatalog() {
+            if (settled || !runtimeCurrent() || now() >= deadline) return finish(null);
+            try {
+                var request = new Lampa.Reguest();
+                try { request.timeout(Math.max(1, deadline - now())); } catch (e) {}
+                request.native(localizeResolver(catalog.url), function (payload) {
+                if (!runtimeCurrent() || now() >= deadline) return finish(null);
+                var control = payload;
+                if (typeof control === 'string' && /^\s*\{/.test(control)) {
+                    try { control = JSON.parse(control); } catch (e2) {}
+                }
+                if (control && typeof control === 'object' && control.rch) {
+                    if (retried || typeof window.Online2RchHandshake !== 'function') return finish(null);
+                    retried = true;
+                    var ready = false;
+                    try {
+                        var accepted = window.Online2RchHandshake(control, function () {
+                            if (ready || settled || !runtimeCurrent()) return;
+                            ready = true;
+                            requestCatalog();
+                        }, function () { return runtimeCurrent() && !settled && now() < deadline; });
+                        if (accepted === false && !ready) finish(null);
+                    } catch (handshakeError) { finish(null); }
+                    return;
+                }
+                var items = catalogResponseItems(payload);
+                var selected = catalogItemForRecord(items, record, catalog.selection);
+                if (!selected || !selected.url) return finish(null);
+                var method = str(selected.method || 'play').toLowerCase();
+                if (method === 'call') {
+                    var nestedResolver = safeCatalogUrl(selected.url, false);
+                    if (!nestedResolver) return finish(null);
+                    return resolveOnlineCandidate({ url: nestedResolver, headers: catalog.headers || {}, selection: catalog.selection || {} }, function (resolved) {
+                        if (resolved) {
+                            resolved.catalog_items = items;
+                            resolved.catalog_url = catalog.url;
+                        }
+                        finish(resolved);
+                    }, deadline);
+                }
+                var direct = chooseOnlineUrl(selected);
+                if (!/^https?:\/\//i.test(direct) || looksOnlineResolver(direct)) return finish(null);
+                finish({
+                    url: direct,
+                    data: selected,
+                    selection: catalog.selection || {},
+                    resolver_origin: 'catalog',
+                    catalog_items: items,
+                    catalog_url: catalog.url
+                });
+                }, function () { finish(null); }, false, {
+                    dataType: 'text',
+                    headers: onlineHeaders(catalog.headers)
+                });
+            } catch (requestError) { finish(null); }
+        }
+        requestCatalog();
+    }
     function resolveOnlineCandidate(resolver, callback, launchDeadline) {
         if (!resolver || !resolver.url || !Lampa.Reguest) return callback(null);
         var deadline = Math.min(num(launchDeadline) || now() + ONLINE_CANDIDATE_TIMEOUT, now() + ONLINE_CANDIDATE_TIMEOUT);
@@ -2280,14 +2598,27 @@
     }
     function resolveOnline(record, movie, callback, launchDeadline) {
         var resolver = onlineResolverForRecord(record, movie);
-        if (!resolver) {
-            diagnosticMarkerAttr('data-cw-launch-stage', 'resolver-none');
-            return callback(null);
+        function tryCatalog() {
+            var catalog = onlineCatalogForRecord(record, movie);
+            if (!catalog) {
+                diagnosticMarkerAttr('data-cw-launch-stage', 'resolver-none');
+                return callback(null);
+            }
+            diagnosticMarkerAttr('data-cw-launch-stage', 'catalog-request');
+            return resolveOnlineCatalogCandidate(catalog, record, function (catalogResolved) {
+                diagnosticMarkerAttr('data-cw-launch-stage', catalogResolved ? 'catalog-ok' : 'catalog-fail');
+                callback(catalogResolved);
+            }, launchDeadline);
         }
+        if (!resolver) return tryCatalog();
         diagnosticMarkerAttr('data-cw-launch-stage', 'resolver-request');
         onlineNoty('RESOLVE ' + shortUrl(resolver.url));
         resolveOnlineCandidate(resolver, function (resolved) {
-            diagnosticMarkerAttr('data-cw-launch-stage', resolved ? 'resolver-ok' : 'resolver-fail');
+            if (!resolved) {
+                diagnosticMarkerAttr('data-cw-launch-stage', 'resolver-fail-catalog');
+                return tryCatalog();
+            }
+            diagnosticMarkerAttr('data-cw-launch-stage', 'resolver-ok');
             onlineNoty(resolved ? 'RESOLVE OK ' + shortUrl(resolved.url) : 'RESOLVE FAIL');
             if (resolved) resolved.resolver_origin = resolver.origin || 'unknown';
             callback(resolved);
@@ -2319,6 +2650,23 @@
         if (resolved.data) applyMeta(item, playbackMeta(resolved.data));
         item.online_selection = clone(resolved.selection || {});
         return true;
+    }
+    function hydrateDefsFromCatalog(defs, items, catalogUrl) {
+        (defs || []).forEach(function (def) {
+            var target = explicitItemSE(def);
+            if (!target) return;
+            var match = catalogItemForRecord(items, def, def.selection || {});
+            if (!match) return;
+            def.catalog_url = safeCatalogUrl(catalogUrl || def.catalog_url, false);
+            def.meta = mergeMeta(def.meta || {}, playbackMeta(match));
+            if (str(match.method).toLowerCase() === 'call') {
+                if (resolverMatchesItem(match.url, def)) def.resolver_url = portableResolver(match.url);
+                return;
+            }
+            var direct = chooseOnlineUrl(match);
+            if (/^https?:\/\//i.test(direct) && !looksOnlineResolver(direct)) def.direct_url = direct;
+        });
+        return defs;
     }
     function prepareOnlineWindow(defs, list, idx, fallbackSelection, launchDeadline, callback) {
         var last = Math.min(defs.length - 1, idx + 2);
@@ -2517,10 +2865,14 @@
         resolveOnline(record, movie, function (resolved) {
             if (!launchContextCurrent(movie)) return;
             var online = record.online || {};
-            var defs = Array.isArray(online.items) && online.items.length ? online.items : [{
+            var storedDefs = Array.isArray(online.items) && online.items.length ? online.items : [{
                 title: record.episode_title || record.title, season: record.season, episode: record.episode,
                 hash: record.timeline_hash, direct_url: online.direct_url || '', meta: {}
             }];
+            var defs = storedDefs.map(function (item) { return deepCopy(item) || clone(item || {}); });
+            if (resolved && Array.isArray(resolved.catalog_items)) {
+                hydrateDefsFromCatalog(defs, resolved.catalog_items, resolved.catalog_url || '');
+            }
             var idx = onlineRecordIndex(record);
             if (idx < 0) {
                 diagnosticMarkerAttr('data-cw-launch-stage', 'index-fail');
@@ -2719,6 +3071,7 @@
                 diagnosticMarkerAttr('data-cw-capture-session-se', 'S' + num(session.season) + 'E' + num(session.episode));
                 diagnosticMarkerAttr('data-cw-capture-index', num(session.index));
                 diagnosticMarkerAttr('data-cw-capture-timeline-rebound', session.timeline_rebound ? 'yes' : 'no');
+                diagnosticMarkerAttr('data-cw-capture-catalog', session.catalog ? 'yes' : 'no');
                 if (session.source === 'torrent' && session.external) writePending(session);
             }
             return session;
@@ -3117,6 +3470,9 @@
                 resolverSelection: resolverSelection,
                 selectionMatches: selectionMatches,
                 onlineResolverForRecord: onlineResolverForRecord,
+                onlineCatalogForRecord: onlineCatalogForRecord,
+                catalogResponseItems: catalogResponseItems,
+                safeCatalogUrl: safeCatalogUrl,
                 localizeResolver: localizeResolver,
                 ensureTorrent: ensureTorrent,
                 buttonStateKey: buttonStateKey,
