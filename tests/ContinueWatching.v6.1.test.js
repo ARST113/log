@@ -319,7 +319,29 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.19-online-active-identity-20260905');
+assert.equal(h.api.version, 'v6.2.20-online-catalog-resolver-20260905');
+
+{
+    const encoded = JSON.stringify({
+        method: 'play', url: 'https://lampac.fun/proxy/encoded-e3.m3u8', season: 1, episode: 3
+    }).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const parsed = t.catalogResponseItems('<div e="3" class="selector videos__item" data-json="' + encoded + '" s="1"></div>');
+    assert.equal(parsed.length, 1, 'catalog parser must accept the HTML-encoded data-json form emitted by providers');
+    assert.equal(parsed[0].episode, 3);
+    const safe = new URL(t.safeCatalogUrl(
+        'https://lampac.fun/lite/aniliberty?id=31724&token=secret&account_email=a%40b.test&uid=device&cub_id=hash&rchtype=old&api_key=private&access_token=private&session=private#token=fragment', false
+    ));
+    assert.equal(safe.pathname, '/lite/aniliberty');
+    ['token', 'account_email', 'uid', 'cub_id', 'rchtype', 'api_key', 'access_token', 'session'].forEach((key) => assert.equal(safe.searchParams.has(key), false));
+    assert.equal(safe.hash, '');
+    assert.equal(t.safeCatalogUrl('https://untrusted.example/lite/aniliberty?id=31724', false), '',
+        'catalog replay must reject non-Lampac origins');
+    const untrusted = harness();
+    untrusted.storage.account_email = 'private@example.test';
+    untrusted.storage.lampac_unic_id = 'private-device';
+    const untrustedLocalized = new URL(untrusted.api.testing.localizeResolver('https://untrusted.example/lite/provider/video?id=7&s=1&e=1'));
+    ['account_email', 'uid', 'nws_id', 'cub_id'].forEach((key) => assert.equal(untrustedLocalized.searchParams.has(key), false));
+}
 
 assert.deepEqual(
     t.normalizeSegments('{"duration_ms":2696000,"skip":[{"start":62,"end":152}],"ad":[{"start":0,"end":12}]}', 3697),
@@ -4145,4 +4167,196 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.19 regression fixtures: PASS');
+{
+    const rows = (suffix) => [1, 2, 3, 4, 5].map((episode) => {
+        const payload = JSON.stringify({
+            method: 'play',
+            url: suffix === 'old' && episode === 3
+                ? 'https://cdn.example/aniliberty-e3-old.m3u8'
+                : 'https://lampac.fun/proxy/aniliberty-e' + episode + '-' + suffix + '.m3u8',
+            title: 'Episode ' + episode,
+            season: 1,
+            episode,
+            segments: { skip: [[60, 90]] }
+        });
+        return '<div class="videos__item selector" s="1" e="' + episode + '" data-json=\'' + payload + '\'>Episode ' + episode + '</div>';
+    }).join('');
+    const movie = { id: 31724, media_type: 'tv', title: 'Code Geass', original_name: 'Code Geass' };
+    const source = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    const catalogUrl = 'https://lampac.fun/lite/aniliberty?id=31724&serial=1&account_email=source%40example.test&uid=source-device&nws_id=source-rch&cub_id=source-cub&rchtype=source-rch-type&token=source-token';
+    const sourcePlaylist = [1, 2, 3, 4, 5].map((episode) => ({
+        title: 'Episode ' + episode,
+        season: 1,
+        episode,
+        voice_name: 'AniLiberty',
+        url: episode === 3
+            ? 'https://cdn.example/aniliberty-e3-old.m3u8'
+            : 'https://lampac.fun/proxy/aniliberty-e' + episode + '-old.m3u8',
+        timeline: { hash: 'aniliberty-31724-' + episode }
+    }));
+    source.setActive(movie);
+    source.setClock(4_500_000);
+    source.listeners.request_secuses[0]({
+        params: { url: catalogUrl, headers: { 'X-Kit-AesGcm': 'source-aes' } },
+        data: rows('old')
+    });
+    source.Lampa.Player.play(Object.assign({}, sourcePlaylist[2], {
+        card: movie, movie, isonline: true, playlist: sourcePlaylist, playlist_index: 2
+    }));
+    source.timelineListeners.forEach((listener) => listener({
+        hash: 'aniliberty-31724-3', road: { time: 451, duration: 1450, percent: 31, updated: 4_500_100 }
+    }));
+
+    const sourceRecordKey = 'c_' + source.Lampa.Utils.hash(source.api.testing.cardKey(movie));
+    assert.equal(JSON.stringify(source.storage.continue_watch_v6_7[sourceRecordKey]).includes('/proxy/'), false,
+        'transient catalog media URLs must remain runtime-only even on the source device');
+    assert.equal(JSON.stringify(source.storage.continue_watch_v6_7[sourceRecordKey]).includes('cdn.example'), false,
+        'catalog-backed CDN URLs must also remain runtime-only');
+    assert.equal(JSON.stringify(source.storage.continue_watch_v6_7[sourceRecordKey]).includes('source-aes'), false,
+        'catalog request headers must never be persisted locally');
+    const remote = source.api.record();
+    assert.equal(remote.episode, 3);
+    assert.equal(remote.time, 451);
+    assert.equal(remote.online.items[2].selection.translation, 'aniliberty',
+        'the selected runtime voice must enrich a catalog response that omitted voice_name');
+    assert.equal(new URL(remote.online.items[2].catalog_url).pathname, '/lite/aniliberty',
+        'method=play must retain a portable catalog recipe for the selected episode');
+    assert.equal(new URL(remote.online.items[2].catalog_url).searchParams.has('account_email'), false);
+    assert.equal(new URL(remote.online.items[2].catalog_url).searchParams.has('uid'), false);
+    assert.equal(new URL(remote.online.items[2].catalog_url).searchParams.has('nws_id'), false);
+    assert.equal(new URL(remote.online.items[2].catalog_url).searchParams.has('cub_id'), false);
+    assert.equal(new URL(remote.online.items[2].catalog_url).searchParams.has('rchtype'), false);
+    assert.equal(new URL(remote.online.items[2].catalog_url).searchParams.has('token'), false);
+    assert.equal(JSON.stringify(remote).includes('/proxy/'), false,
+        'remote projection must not contain transient media URLs');
+    assert.equal(JSON.stringify(remote).includes('source-aes'), false,
+        'remote projection must not contain source-device request headers');
+    const staleResolver = 'https://lampac.fun/lite/aniliberty/video?id=31724&s=1&e=3&t=AniLiberty';
+    remote.online.resolver_url = staleResolver;
+    remote.online.items[2].resolver_url = staleResolver;
+
+    const destination = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    const destinationStorageKey = 'continue_watch_v6_7';
+    const destinationRecordKey = 'c_' + destination.Lampa.Utils.hash(destination.api.testing.cardKey(movie));
+    destination.storage[destinationStorageKey] = { [destinationRecordKey]: remote };
+    destination.storage.account_email = 'destination@example.test';
+    destination.storage.lampac_unic_id = 'destination-device';
+    destination.rch_nws['lampac.fun'].type = 'destination-rch-type';
+    const requests = [];
+    destination.setRequestHandler(({ url, ok, fail }) => {
+        requests.push(url);
+        if (new URL(url).pathname === '/lite/aniliberty/video') return fail();
+        ok(rows('fresh'));
+    });
+    destination.setActive(movie);
+    destination.api.launch();
+
+    assert.deepEqual(requests.map((url) => new URL(url).pathname), ['/lite/aniliberty/video', '/lite/aniliberty'],
+        'a stale regular resolver must fall back to one fresh catalog request');
+    assert.equal(new URL(requests[1]).searchParams.get('account_email'), 'destination@example.test');
+    assert.equal(new URL(requests[1]).searchParams.get('uid'), 'destination-device');
+    assert.equal(new URL(requests[1]).searchParams.get('nws_id'), 'live-rch-session');
+    assert.equal(new URL(requests[1]).searchParams.get('cub_id'), destination.Lampa.Utils.hash('destination@example.test'));
+    assert.equal(new URL(requests[1]).searchParams.get('rchtype'), 'destination-rch-type');
+    assert.equal(destination.androidLaunches.length, 1);
+    const launched = destination.androidLaunches[0].parsed;
+    assert.equal(launched.episode, 3);
+    assert.equal(launched.url, 'https://lampac.fun/proxy/aniliberty-e3-fresh.m3u8');
+    assert.equal(launched.time, 451);
+    const launchedE4 = launched.playlist.find((item) => item.episode === 4);
+    assert.ok(launchedE4, 'fresh catalog must restore the next episode for in-player switching');
+    assert.equal(launchedE4.url, 'https://lampac.fun/proxy/aniliberty-e4-fresh.m3u8');
+    assert.deepEqual(launchedE4.segments, {
+        skip: [{ start: 60, end: 90 }],
+        ad: []
+    });
+    assert.deepEqual(launched.segments, {
+        duration_ms: 1_450_000,
+        skip: [{ start: 60, end: 90 }],
+        ad: []
+    });
+    const launchedE4Index = launched.playlist.indexOf(launchedE4);
+    destination.Lampa.Player.play(Object.assign({}, launchedE4, {
+        card: movie, movie, isonline: true, playlist: launched.playlist, playlist_index: launchedE4Index
+    }));
+    destination.timelineListeners.forEach((listener) => listener({
+        hash: 'aniliberty-31724-4', road: { time: 88, duration: 1450, percent: 6, updated: 4_500_200 }
+    }));
+    const switched = destination.storage.continue_watch_v6_7[destinationRecordKey];
+    assert.equal(switched.episode, 4);
+    assert.equal(switched.time, 88);
+    assert.equal(JSON.stringify(switched).includes('/proxy/'), false,
+        'saving progress after in-player E4 switch must still keep fresh media runtime-only');
+
+    const rchDestination = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    const rchRecord = JSON.parse(JSON.stringify(remote));
+    rchRecord.online.resolver_url = '';
+    rchRecord.online.items[2].resolver_url = '';
+    const rchKey = 'c_' + rchDestination.Lampa.Utils.hash(rchDestination.api.testing.cardKey(movie));
+    rchDestination.storage.continue_watch_v6_7 = { [rchKey]: rchRecord };
+    let catalogRequests = 0;
+    let handshakes = 0;
+    rchDestination.setRchHook((_response, ready) => {
+        handshakes += 1;
+        ready();
+        return true;
+    });
+    rchDestination.setRequestHandler(({ ok }) => {
+        catalogRequests += 1;
+        ok(catalogRequests === 1 ? { rch: true, request_id: 'catalog-rch' } : rows('rch-fresh'));
+    });
+    rchDestination.setActive(movie);
+    rchDestination.api.launch();
+    assert.equal(handshakes, 1, 'catalog replay must use the guarded Online2 RCH handshake once');
+    assert.equal(catalogRequests, 2, 'catalog replay must retry once after RCH becomes ready');
+    assert.equal(rchDestination.androidLaunches[0].parsed.url,
+        'https://lampac.fun/proxy/aniliberty-e3-rch-fresh.m3u8');
+
+    const ambiguousDestination = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    const ambiguousRecord = JSON.parse(JSON.stringify(rchRecord));
+    const ambiguousKey = 'c_' + ambiguousDestination.Lampa.Utils.hash(ambiguousDestination.api.testing.cardKey(movie));
+    ambiguousDestination.storage.continue_watch_v6_7 = { [ambiguousKey]: ambiguousRecord };
+    const duplicateE3 = '<div class="videos__item selector" s="1" e="3" data-json=\'' + JSON.stringify({
+        method: 'play', url: 'https://lampac.fun/proxy/aniliberty-e3-duplicate.m3u8',
+        title: 'Episode 3', season: 1, episode: 3, voice_name: 'AniLiberty'
+    }) + '\'>Episode 3</div>';
+    ambiguousDestination.setRequestHandler(({ ok }) => ok(rows('ambiguous') + duplicateE3));
+    ambiguousDestination.setActive(movie);
+    ambiguousDestination.api.launch();
+    assert.equal(ambiguousDestination.androidLaunches.length, 0,
+        'ambiguous same-voice S/E catalog matches must fail closed instead of launching the first item');
+
+    const untrustedCallDestination = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    const untrustedCallKey = 'c_' + untrustedCallDestination.Lampa.Utils.hash(untrustedCallDestination.api.testing.cardKey(movie));
+    untrustedCallDestination.storage.continue_watch_v6_7 = { [untrustedCallKey]: JSON.parse(JSON.stringify(rchRecord)) };
+    const untrustedCallRow = '<div class="videos__item selector" s="1" e="3" data-json=\'' + JSON.stringify({
+        method: 'call', url: 'https://untrusted.example/lite/steal/video?id=31724&s=1&e=3',
+        title: 'Episode 3', season: 1, episode: 3
+    }) + '\'>Episode 3</div>';
+    const untrustedCallRequests = [];
+    untrustedCallDestination.setRequestHandler(({ url, ok }) => {
+        untrustedCallRequests.push(url);
+        ok(untrustedCallRow);
+    });
+    untrustedCallDestination.setActive(movie);
+    untrustedCallDestination.api.launch();
+    assert.deepEqual(untrustedCallRequests.map((url) => new URL(url).host), ['lampac.fun'],
+        'catalog method=call must never request an untrusted origin');
+    assert.equal(untrustedCallDestination.androidLaunches.length, 0);
+
+    const late = harness({ scripts: ['https://lampac.fun/sync/js/arx.lamp'] });
+    late.setActive({ id: 999999, media_type: 'tv', title: 'Another show', original_name: 'Another show' });
+    late.listeners.request_secuses[0]({ params: { url: catalogUrl, headers: {} }, data: rows('late') });
+    late.setActive(movie);
+    late.Lampa.Player.play(Object.assign({}, sourcePlaylist[2], {
+        card: movie, movie, isonline: true, playlist: sourcePlaylist, playlist_index: 2
+    }));
+    late.timelineListeners.forEach((listener) => listener({
+        hash: 'aniliberty-31724-3', road: { time: 33, duration: 1450, percent: 2, updated: 4_500_300 }
+    }));
+    const lateKey = 'c_' + late.Lampa.Utils.hash(late.api.testing.cardKey(movie));
+    assert.equal(late.storage.continue_watch_v6_7[lateKey].online.catalog_url, '',
+        'a late catalog response must not be attached to a different active card');
+}
+
+console.log('ContinueWatching v6.2.20 regression fixtures: PASS');
