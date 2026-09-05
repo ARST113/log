@@ -319,7 +319,7 @@ function harness(options = {}) {
 const h = harness();
 const t = h.api.testing;
 
-assert.equal(h.api.version, 'v6.2.18-online-episode-order-20260905');
+assert.equal(h.api.version, 'v6.2.19-online-active-identity-20260905');
 
 assert.deepEqual(
     t.normalizeSegments('{"duration_ms":2696000,"skip":[{"start":62,"end":152}],"ad":[{"start":0,"end":12}]}', 3697),
@@ -4091,6 +4091,45 @@ function syncRecord(env, id, activityAt, itemCount) {
 
 {
     const env = harness();
+    const movie = { id: 31724, media_type: 'tv', title: 'Code Geass', original_name: 'Code Geass: Lelouch of the Rebellion' };
+    const episodes = [1, 2, 3].map((episode) => ({
+        title: 'Episode ' + episode,
+        season: 1,
+        episode,
+        url: 'https://media.example/code-geass-conflict-e' + episode + '.m3u8',
+        timeline: { hash: 'code-geass-conflict-e' + episode }
+    }));
+    const selected = Object.assign({}, episodes[2], {
+        card: movie,
+        movie,
+        isonline: true,
+        playlist: episodes,
+        playlist_index: 1,
+        timeline: episodes[1].timeline
+    });
+
+    env.setActive(movie);
+    env.Lampa.Player.play(selected);
+
+    assert.equal(env.api.session().episode, 3,
+        'explicit S/E from the selected player item must beat a stale sibling timeline hash and playlist index');
+    assert.equal(env.api.session().index, 2);
+    assert.equal(env.api.session().hash, 'code-geass-conflict-e3');
+    assert.equal(env.api.session().timeline_rebound, true);
+    assert.equal(selected.timeline.hash, 'code-geass-conflict-e3',
+        'the player timeline must be rebound to the selected E3 road before playback records progress');
+
+    env.timelineListeners.forEach((listener) => listener({
+        hash: 'code-geass-conflict-e3', road: { time: 980, duration: 1450, percent: 68, updated: 4_400_100 }
+    }));
+    const saved = env.api.sync().store['c_' + env.Lampa.Utils.hash(env.api.testing.cardKey(movie))];
+    assert.equal(saved.episode, 3);
+    assert.equal(saved.timeline_hash, 'code-geass-conflict-e3');
+    assert.equal(saved.time, 980);
+}
+
+{
+    const env = harness();
     const reacher = { id: 108978, media_type: 'tv', title: 'Reacher', original_name: 'Reacher' };
     const other = { id: 999999, media_type: 'tv', title: 'Other', original_name: 'Other' };
     const e1 = { title: 'E1', season: 1, episode: 1, url: 'https://media.example/e1.m3u8', timeline: { hash: 'safe-e1' } };
@@ -4106,4 +4145,4 @@ function syncRecord(env, id, activityAt, itemCount) {
     assert.equal(saved.time, 143);
 }
 
-console.log('ContinueWatching v6.2.18 regression fixtures: PASS');
+console.log('ContinueWatching v6.2.19 regression fixtures: PASS');

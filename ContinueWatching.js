@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = 'v6.2.18-online-episode-order-20260905';
+    var VERSION = 'v6.2.19-online-active-identity-20260905';
     var STORAGE_BASE = 'continue_watch_v6';
     var PENDING_BASE = 'continue_watch_v6_pending';
     var OUTBOX_BASE = 'continue_watch_v6_outbox';
@@ -1276,17 +1276,17 @@
     function identifiedPlaylistIndex(data, playlist, currentUrl) {
         data = data || {}; playlist = playlist || [];
         var current = data.currentItem || {};
-        var dh = data.timeline && data.timeline.hash ? str(data.timeline.hash) :
-            (current.timeline && current.timeline.hash ? str(current.timeline.hash) : '');
-        for (var i = 0; i < playlist.length; i++) {
-            if (dh && playlist[i].timeline && str(playlist[i].timeline.hash) === dh) return i;
-        }
         var target = explicitItemSE(current) || explicitItemSE(data);
         if (target) {
-            for (var j = 0; j < playlist.length; j++) {
-                var candidate = explicitItemSE(playlist[j]);
-                if (candidate && candidate.season === target.season && candidate.episode === target.episode) return j;
+            for (var i = 0; i < playlist.length; i++) {
+                var candidate = explicitItemSE(playlist[i]);
+                if (candidate && candidate.season === target.season && candidate.episode === target.episode) return i;
             }
+        }
+        var dh = data.timeline && data.timeline.hash ? str(data.timeline.hash) :
+            (current.timeline && current.timeline.hash ? str(current.timeline.hash) : '');
+        for (var j = 0; j < playlist.length; j++) {
+            if (dh && playlist[j].timeline && str(playlist[j].timeline.hash) === dh) return j;
         }
         for (var k = 0; k < playlist.length; k++) {
             var u = cleanUrl(playlist[k].url || playlist[k].uri || playlist[k].src || '');
@@ -1353,7 +1353,20 @@
         if ((!se.season || !se.episode) && data.season && data.episode) {
             se.season = num(data.season); se.episode = num(data.episode);
         }
-        var h = data.timeline && data.timeline.hash ? str(data.timeline.hash) : exactHash(item, movie, se.season, se.episode);
+        var dataHash = data.timeline && data.timeline.hash ? str(data.timeline.hash) : '';
+        var itemHash = exactHash(item, movie, se.season, se.episode);
+        var h = dataHash || itemHash;
+        var timelineRebound = false;
+        if (source === 'online' && dataHash && itemHash && dataHash !== itemHash) {
+            var selectedSE = explicitItemSE(data.currentItem || data);
+            var itemExplicitSE = explicitItemSE(item);
+            if (selectedSE && itemExplicitSE && selectedSE.season === itemExplicitSE.season && selectedSE.episode === itemExplicitSE.episode &&
+                item.timeline && item.timeline.hash) {
+                data.timeline = item.timeline;
+                h = itemHash;
+                timelineRebound = true;
+            }
+        }
 
         if (list.length) {
             for (var i = 0; i < list.length; i++) {
@@ -1379,6 +1392,7 @@
             season: num(se.season),
             episode: num(se.episode),
             hash: h,
+            timeline_rebound: timelineRebound,
             torrent_hash: str(data.torrent_hash || (item && item.torrent_hash) || ''),
             resolver: null,
             active_meta: playbackMeta(data),
@@ -2700,6 +2714,11 @@
             var session = buildSession(data);
             if (session) {
                 state.session = session;
+                var inputSE = explicitItemSE(data.currentItem || data) || {};
+                diagnosticMarkerAttr('data-cw-capture-input-se', 'S' + num(inputSE.season) + 'E' + num(inputSE.episode));
+                diagnosticMarkerAttr('data-cw-capture-session-se', 'S' + num(session.season) + 'E' + num(session.episode));
+                diagnosticMarkerAttr('data-cw-capture-index', num(session.index));
+                diagnosticMarkerAttr('data-cw-capture-timeline-rebound', session.timeline_rebound ? 'yes' : 'no');
                 if (session.source === 'torrent' && session.external) writePending(session);
             }
             return session;
