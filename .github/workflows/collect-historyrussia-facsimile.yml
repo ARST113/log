@@ -1,0 +1,158 @@
+name: Collect HistoryRussia 1948 facsimile
+
+on:
+  push:
+    branches: [research/kazan-books-1940s]
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      OMP_THREAD_LIMIT: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-rus
+          python -m pip install --quiet requests Pillow img2pdf rapidfuzz
+      - name: Download all public viewer pages at maximum configured zoom
+        run: |
+          set -euo pipefail
+          mkdir -p hr1948/pages hr1948/ocr
+          python - <<'PY'
+          import json,re,time,hashlib
+          from pathlib import Path
+          import requests
+          from PIL import Image
+          from io import BytesIO
+
+          NODE='https://docs.historyrussia.org/ru/nodes/250598'
+          s=requests.Session(); s.headers.update({'User-Agent':'Mozilla/5.0 Chrome/150 Safari/537.36','Referer':NODE})
+          r=s.get(NODE,timeout=60); r.raise_for_status()
+          html=r.text; Path('hr1948/source_page.html').write_text(html,encoding='utf-8')
+          payload=re.search(r'initDocview\((.*?)\);',html,re.S).group(1)
+          obj,_=json.JSONDecoder().raw_decode(payload)
+          pages=obj['pages']; zoom=max(obj.get('project_zoom_nums') or range(len(obj['zooms'])))
+          print('PAGES',len(pages),'MAX_ZOOM',zoom,'ZOOM_WIDTH',obj['zooms'][zoom])
+          manifest=[]
+          for seq,p in enumerate(pages,1):
+              pid=p['id']; url=f'https://docs.historyrussia.org/pages/{pid}/zooms/{zoom}'
+              last=None
+              for attempt in range(6):
+                  try:
+                      q=s.get(url,timeout=90)
+                      if q.ok and (q.headers.get('content-type','').startswith('image/')):
+                          last=q; break
+                      print('RETRY',seq,pid,attempt,q.status_code,q.headers.get('content-type'),len(q.content))
+                  except Exception as e: print('RETRY_ERR',seq,pid,attempt,repr(e))
+                  time.sleep(1.5*(attempt+1))
+              if last is None: raise RuntimeError(f'Failed page {seq} id {pid}')
+              data=last.content
+              im=Image.open(BytesIO(data)); im.verify()
+              fn=Path(f'hr1948/pages/{seq:03d}_{pid}.jpg'); fn.write_bytes(data)
+              manifest.append({'seq':seq,'page_id':pid,'source_w':p['w'],'source_h':p['h'],'zoom':zoom,'url':url,'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()})
+              if seq%20==0: print('DOWNLOADED',seq)
+              time.sleep(.05)
+          if len(manifest)!=len(pages): raise RuntimeError('coverage mismatch')
+          Path('hr1948/manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
+          print('COMPLETE',len(manifest),'images',sum(x['bytes'] for x in manifest),'bytes')
+          PY
+      - name: Build facsimile PDF
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import img2pdf
+          imgs=sorted(Path('hr1948/pages').glob('*.jpg'))
+          assert len(imgs)==176, len(imgs)
+          out=Path('hr1948/Tatarskaya_ASSR_1948_HistoryRussia_facsimile.pdf')
+          out.write_bytes(img2pdf.convert([str(x) for x in imgs]))
+          print('PDF',out.stat().st_size,'bytes',len(imgs),'pages')
+          PY
+      - name: OCR all pages
+        run: |
+          set -euo pipefail
+          find hr1948/pages -name '*.jpg' -print0 | sort -z | xargs -0 -n1 -P4 bash -c '
+            f="$0"; b=$(basename "$f" .jpg); tesseract "$f" "hr1948/ocr/$b" -l rus --oem 1 --psm 3 2>/dev/null
+          '
+          test "$(find hr1948/ocr -name '*.txt' | wc -l)" -eq 176
+      - name: Search target vocabulary and create audit report
+        run: |
+          python - <<'PY'
+          import re,json
+          from pathlib import Path
+          from rapidfuzz.distance import Levenshtein
+          files=sorted(Path('hr1948/ocr').glob('*.txt'))
+          texts=[p.read_text(errors='ignore') for p in files]
+          corpus='\n\n'.join(f'===== {p.stem} =====\n{t}' for p,t in zip(files,texts))
+          Path('hr1948/full_ocr.txt').write_text(corpus,encoding='utf-8')
+          def norm(s):
+              s=s.lower().replace('ё','е')
+              s=re.sub(r'(?<=\w)-\s*\n\s*(?=\w)','',s)
+              return s
+          direct=[]
+          patterns={
+            'поребр':r'поребр[а-я]*','бордюр':r'бордюр[а-я]*','бортовой_камень':r'бортов[а-я]*\s+кам[а-я]*',
+            'тротуарный_камень':r'тротуарн[а-я]*\s+кам[а-я]*','тротуар':r'тротуар[а-я]*','мостовая':r'мостов[а-я]*',
+            'асфальт':r'асфальт[а-я]*','благоустройство':r'благоустрой[а-я]*'
+          }
+          counts={k:0 for k in patterns}
+          for p,t in zip(files,texts):
+              n=norm(t)
+              for key,pat in patterns.items():
+                  ms=list(re.finditer(pat,n,re.I)); counts[key]+=len(ms)
+                  if key in ('поребр','бордюр','бортовой_камень','тротуарный_камень'):
+                      for m in ms:
+                          direct.append({'page':p.stem,'kind':key,'match':m.group(0),'context':n[max(0,m.start()-160):m.end()+160].replace('\n',' ')})
+          targets=['поребрик','поребрика','поребриком','поребрики','поребриков','бордюр','бордюра','бордюром','бордюры','бордюров']
+          fuzzy=[]
+          for p,t in zip(files,texts):
+              words=re.findall(r'[а-яё]{4,14}',norm(t))
+              for w in words:
+                  d=min(Levenshtein.distance(w,x) for x in targets)
+                  if d<=2:
+                      fuzzy.append({'page':p.stem,'word':w,'distance':d})
+          # de-dupe
+          seen=set(); f2=[]
+          for x in fuzzy:
+              k=(x['page'],x['word'],x['distance'])
+              if k not in seen: seen.add(k); f2.append(x)
+          report={
+            'source':'https://docs.historyrussia.org/ru/nodes/250598',
+            'facsimile_pages':176,'ocr_pages':len(files),'counts':counts,
+            'target_direct_matches':direct,'fuzzy_distance_le_2':f2
+          }
+          Path('hr1948/search_report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+          md=['# Полнотекстовая проверка сборника 1948 г.','',f'- Факсимильных страниц: **176**',f'- OCR-страниц: **{len(files)}**','', '## Частоты OCR']
+          for k,v in counts.items(): md.append(f'- {k}: **{v}**')
+          md += ['',f'Прямых целевых совпадений: **{len(direct)}**',f'Нечётких кандидатов (Levenshtein <=2): **{len(f2)}**','']
+          if direct:
+              md.append('## Прямые кандидаты')
+              for x in direct: md.append(f"- {x['page']} — `{x['match']}` — {x['context']}")
+          if f2:
+              md.append('## Нечёткие кандидаты')
+              for x in f2[:200]: md.append(f"- {x['page']} — `{x['word']}` — d={x['distance']}")
+          Path('hr1948/REPORT.md').write_text('\n'.join(md),encoding='utf-8')
+          print(json.dumps(report,ensure_ascii=False)[:12000])
+          PY
+      - name: Verify outputs
+        run: |
+          set -euo pipefail
+          test "$(find hr1948/pages -name '*.jpg' | wc -l)" -eq 176
+          test "$(find hr1948/ocr -name '*.txt' | wc -l)" -eq 176
+          test -s hr1948/Tatarskaya_ASSR_1948_HistoryRussia_facsimile.pdf
+          test -s hr1948/full_ocr.txt
+          test -s hr1948/search_report.json
+          sha256sum hr1948/Tatarskaya_ASSR_1948_HistoryRussia_facsimile.pdf > hr1948/SHA256SUMS.txt
+          echo VERIFIED
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tatar-assr-1948-facsimile-ocr
+          path: hr1948/
+          retention-days: 30
+          compression-level: 6
