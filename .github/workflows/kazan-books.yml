@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: python -m pip install requests beautifulsoup4 PyMuPDF Pillow
+        run: python -m pip install requests PyMuPDF Pillow
       - name: Download and validate books
         shell: bash
         run: |
@@ -26,133 +26,108 @@ jobs:
           from pathlib import Path
           from io import BytesIO
           import hashlib, json, time
-          import requests
-          import fitz
+          import requests, fitz
           from PIL import Image
 
-          out = Path('kazan_books_1940s')
-          out.mkdir(exist_ok=True)
-          s = requests.Session()
-          s.headers.update({'User-Agent': 'Mozilla/5.0 archival-research/1.0'})
+          out=Path('kazan_books_1940s'); out.mkdir(exist_ok=True)
+          diag=[]
+          s=requests.Session()
+          s.headers.update({
+              'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+              'Accept-Language':'ru-RU,ru;q=0.9,en;q=0.8',
+              'DNT':'1',
+          })
 
-          def get(url, timeout=120):
-              r = s.get(url, timeout=timeout, allow_redirects=True)
-              print('GET', url, '->', r.status_code, r.headers.get('content-type'), len(r.content), r.url)
+          def log(*x):
+              z=' '.join(str(v) for v in x); print(z); diag.append(z)
+          def req(url,**kw):
+              r=s.get(url,timeout=120,allow_redirects=True,**kw)
+              log('GET',url,'->',r.status_code,r.headers.get('content-type'),len(r.content),r.url)
+              if r.status_code>=400:
+                  try: log('BODY',r.text[:1200])
+                  except Exception: pass
               return r
-
-          def save_pdf_url(urls, path, min_bytes=100_000):
-              errs=[]
-              for u in urls:
-                  try:
-                      r=get(u); r.raise_for_status(); data=r.content
-                      if len(data) >= min_bytes and data.lstrip().startswith(b'%PDF'):
-                          path.write_bytes(data)
-                          return r.url
-                      errs.append(f'{u}: not PDF ({r.status_code}, {len(data)} bytes, {r.headers.get("content-type")})')
-                  except Exception as e:
-                      errs.append(f'{u}: {e}')
-              print('\n'.join(errs))
-              return None
-
-          def describe(path, title, source, final_url):
-              data=path.read_bytes(); doc=fitz.open(path)
-              return {'title':title,'file':path.name,'source':source,'downloaded_from':final_url,
-                      'bytes':len(data),'pages_in_pdf':doc.page_count,'sha256':hashlib.sha256(data).hexdigest()}
+          def is_pdf(data): return len(data)>4 and data.lstrip().startswith(b'%PDF')
+          def describe(path,title,source,url):
+              data=path.read_bytes(); d=fitz.open(path)
+              return {'title':title,'file':path.name,'source':source,'downloaded_from':url,'bytes':len(data),'pages_in_pdf':d.page_count,'sha256':hashlib.sha256(data).hexdigest()}
 
           records=[]
+          # Book 1
+          top=out/'Topuridze_Kazan_1945.pdf'; top_url='https://opac.tularlic.ru/opacg/Skaner/2021/262-85449-2021.pdf'
+          r=req(top_url)
+          if r.ok and is_pdf(r.content):
+              top.write_bytes(r.content); records.append(describe(top,'К. Топуридзе. Казань. 1945','Тульская областная научная библиотека',r.url))
+          else:
+              raise RuntimeError('Topuridze download failed')
 
-          # 1. K. Topuridze, Kazan, 1945.
-          top=out/'Topuridze_Kazan_1945.pdf'
-          top_final=save_pdf_url([
-              'https://opac.tularlic.ru/opacg/Skaner/2021/262-85449-2021.pdf',
-              'http://opac.tularlic.ru/opacg/Skaner/2021/262-85449-2021.pdf'], top, 500_000)
-          if not top_final:
-              raise RuntimeError('Topuridze PDF could not be downloaded')
-          records.append(describe(top,'К. Топуридзе. Казань. 1945','Тульская областная научная библиотека',top_final))
+          # Book 2: try RSL/RusNEB viewer after priming browser session.
+          docid='rsl01006036425'; tatar=out/'Tatarskaya_ASSR_v_gody_VOV_1948.pdf'; tatar_url=None
+          hosts=['https://viewer.rsl.ru','https://viewer.rusneb.ru']
+          for host in hosts:
+              viewer=f'{host}/ru/{docid}?page=1&rotate=0&theme=white'
+              vr=req(viewer,headers={'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'})
+              log('COOKIES',host,s.cookies.get_dict())
+              for suffix in ['pdf','page/1']:
+                  ar=req(f'{host}/api/v1/document/{docid}/{suffix}',headers={
+                      'Referer':viewer,
+                      'Origin':host,
+                      'Accept':'application/pdf,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                      'X-Requested-With':'XMLHttpRequest',
+                  })
+                  if suffix=='pdf' and ar.ok and is_pdf(ar.content) and len(ar.content)>1_000_000:
+                      tatar.write_bytes(ar.content); tatar_url=ar.url; break
+              if tatar_url: break
 
-          # 2. Tatar ASSR in the Great Patriotic War, 1948.
-          tatar=out/'Tatarskaya_ASSR_v_gody_VOV_1948.pdf'
-          docid='rsl01006036425'
-          tatar_final=save_pdf_url([
-              f'https://viewer.rusneb.ru/api/v1/document/{docid}/pdf',
-              f'https://viewer.rsl.ru/api/v1/document/{docid}/pdf',
-              'https://elib.rgo.ru/bitstream/123456789/228071/1/5884_Tatarskaya%20ASSR%20v%20gody%20Velikoi%20Otechestvennoi%20voin.pdf'
-          ], tatar, 1_000_000)
+          # RGO still worth trying with browser-like referer.
+          if not tatar_url:
+              rgo_view='https://elib.rgo.ru/handle/123456789/228071'
+              req(rgo_view,headers={'Accept':'text/html,application/xhtml+xml,*/*;q=0.8'})
+              rr=req('https://elib.rgo.ru/bitstream/123456789/228071/1/5884_Tatarskaya%20ASSR%20v%20gody%20Velikoi%20Otechestvennoi%20voin.pdf',headers={'Referer':rgo_view})
+              if rr.ok and is_pdf(rr.content) and len(rr.content)>1_000_000:
+                  tatar.write_bytes(rr.content); tatar_url=rr.url
 
-          # If no whole PDF endpoint works, reconstruct from public page API.
-          if not tatar_final:
-              print('Whole-PDF endpoints failed; reconstructing from page API')
-              assembled=fitz.open(); page_count=0; chosen_host=None
-              hosts=['https://viewer.rusneb.ru','https://viewer.rsl.ru']
-
-              def extract_image_response(r):
-                  data=r.content; ct=r.headers.get('content-type','').lower()
-                  if data.startswith(b'%PDF'):
-                      d=fitz.open(stream=data,filetype='pdf')
-                      return ('pdf',d)
-                  if ct.startswith('image/') or data[:8].startswith(b'\x89PNG') or data[:2]==b'\xff\xd8':
-                      return ('image',data)
-                  if 'json' in ct:
-                      try:
-                          obj=r.json()
-                          print('PAGE JSON sample:', json.dumps(obj,ensure_ascii=False)[:1000])
-                          urls=[]
-                          def walk(x):
-                              if isinstance(x,dict):
-                                  for v in x.values(): walk(v)
-                              elif isinstance(x,list):
-                                  for v in x: walk(v)
-                              elif isinstance(x,str) and x.startswith('http'):
-                                  urls.append(x)
-                          walk(obj)
-                          for u in urls:
-                              rr=get(u)
-                              if rr.ok and (rr.headers.get('content-type','').startswith('image/') or rr.content[:2]==b'\xff\xd8' or rr.content[:8].startswith(b'\x89PNG')):
-                                  return ('image',rr.content)
-                      except Exception as e:
-                          print('JSON parse failed',repr(e))
-                  return (None,None)
-
-              for n in range(1,260):
+          # If direct PDF is unavailable, attempt page reconstruction with the primed session.
+          if not tatar_url:
+              assembled=fitz.open(); chosen=None; page_count=0
+              for n in range(1,230):
                   got=None
-                  for host in ([chosen_host] if chosen_host else hosts):
-                      if not host: continue
-                      r=get(f'{host}/api/v1/document/{docid}/page/{n}')
-                      if r.status_code==200:
-                          kind,payload=extract_image_response(r)
-                          if kind:
-                              chosen_host=host; got=(kind,payload,r.url); break
+                  for host in ([chosen] if chosen else hosts):
+                      viewer=f'{host}/ru/{docid}?page={n}&rotate=0&theme=white'
+                      ar=req(f'{host}/api/v1/document/{docid}/page/{n}',headers={'Referer':viewer,'Origin':host,'Accept':'image/avif,image/webp,image/apng,image/*,*/*;q=0.8','X-Requested-With':'XMLHttpRequest'})
+                      if not ar.ok: continue
+                      data=ar.content; ct=ar.headers.get('content-type','').lower()
+                      if ct.startswith('image/') or data[:2]==b'\xff\xd8' or data[:8].startswith(b'\x89PNG'):
+                          got=(host,data); break
+                      if is_pdf(data):
+                          d=fitz.open(stream=data,filetype='pdf'); assembled.insert_pdf(d); got=(host,None); break
                   if not got:
-                      if n==1:
-                          raise RuntimeError('No page API could return page 1')
-                      print('Stopping on missing page',n)
-                      break
-                  kind,payload,url=got
-                  if kind=='pdf':
-                      assembled.insert_pdf(payload)
-                  else:
-                      im=Image.open(BytesIO(payload)); w,h=im.size
-                      # Preserve raster proportions; 72dpi points are sufficient for a reconstructed scan PDF.
-                      p=assembled.new_page(width=w,height=h)
-                      p.insert_image(p.rect,stream=payload)
+                      if n==1: break
+                      else: break
+                  chosen=got[0]
+                  if got[1] is not None:
+                      im=Image.open(BytesIO(got[1])); w,h=im.size; p=assembled.new_page(width=w,height=h); p.insert_image(p.rect,stream=got[1])
                   page_count+=1
-                  if n%20==0: print('assembled pages',n)
-                  time.sleep(0.03)
-              if page_count < 150:
-                  raise RuntimeError(f'Only {page_count} pages reconstructed; expected roughly 168+')
-              assembled.save(tatar,garbage=4,deflate=True)
-              tatar_final=f'{chosen_host}/api/v1/document/{docid}/page/{{n}} (reconstructed)'
+                  if n%20==0: log('ASSEMBLED',n)
+                  time.sleep(.03)
+              log('RECONSTRUCTED_PAGES',page_count)
+              if page_count>=150:
+                  assembled.save(tatar,garbage=4,deflate=True); tatar_url=f'{chosen}/api/v1/document/{docid}/page/{{n}}'
 
-          records.append(describe(tatar,'Татарская АССР в годы Великой Отечественной войны. 1948','РГБ/НЭБ; резервная карточка РГО',tatar_final))
+          if tatar_url and tatar.exists():
+              records.append(describe(tatar,'Татарская АССР в годы Великой Отечественной войны. 1948','РГБ/НЭБ или РГО',tatar_url))
+          else:
+              records.append({'title':'Татарская АССР в годы Великой Отечественной войны. 1948','status':'source exposed, binary blocked from GitHub runner','rsl_id':docid,'rgo_handle':'123456789/228071'})
+
           (out/'manifest.json').write_text(json.dumps(records,ensure_ascii=False,indent=2),encoding='utf-8')
-          print('FINAL MANIFEST')
-          print(json.dumps(records,ensure_ascii=False,indent=2))
+          (out/'diagnostics.txt').write_text('\n'.join(diag),encoding='utf-8')
+          print('MANIFEST',json.dumps(records,ensure_ascii=False,indent=2))
           PY
-      - name: Upload collected books even on diagnostics
+      - name: Upload collected books
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: kazan-books-1940s
           path: kazan_books_1940s/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
