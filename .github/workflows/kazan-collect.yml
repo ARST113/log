@@ -1,0 +1,61 @@
+name: Validate Kazan OCR artifacts
+on:
+  push:
+    branches: ['research/kazan-fulltext-20260908']
+    paths: ['.github/workflows/kazan-collect.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Wait for all source OCR batches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json, os, time, urllib.request
+          endpoint='https://api.github.com/repos/ARST113/log/actions/runs/34217296799'
+          for attempt in range(75):
+              request=urllib.request.Request(endpoint,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(request,timeout=30) as response:
+                  run=json.load(response)
+              print(run['status'],run['conclusion'],flush=True)
+              if run['status']=='completed':
+                  break
+              time.sleep(20)
+          else:
+              raise TimeoutError('Source batch run did not finish')
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 34217296799
+          pattern: kazan-shard-*
+          path: out
+          merge-multiple: true
+      - name: Validate each completed text and literal-quote TSV
+        run: |
+          for shard in $(seq 0 31); do
+            python research/kazan_ocr.py finish --shard "$shard"
+          done
+          python research/kazan_ocr.py collect
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 34217296799
+          name: kazan-inventory
+          path: out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kazan-fulltext-129-issues
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
