@@ -91,8 +91,9 @@ def finish(index):
         name = f"{Path(meta['file']).stem}_p{meta['page']:02d}.txt"
         (dest/name).write_text(raw)
         output.append({**meta, 'text':name, 'chars':len(raw), 'nonempty':bool(raw.strip())})
+    # Tesseract TSV contains literal quotation marks, not CSV-quoted fields.
     with (dest/'batch.tsv').open() as f:
-        tsv_pages = {int(r['page_num']) for r in csv.DictReader(f,delimiter='\t') if r['level']=='1'}
+        tsv_pages = {int(r['page_num']) for r in csv.DictReader(f,delimiter='\t',quoting=csv.QUOTE_NONE) if r['level']=='1'}
     if tsv_pages != set(range(1,len(mapping)+1)):
         raise ValueError('TSV page coverage is incomplete')
     (dest/'coverage.json').write_text(json.dumps(output,ensure_ascii=False,indent=2))
