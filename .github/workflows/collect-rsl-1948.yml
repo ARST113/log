@@ -1,0 +1,105 @@
+name: Collect RSL 1948 book
+
+on:
+  push:
+    branches:
+      - research/kazan-books-1940s
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install helpers
+        run: python -m pip install --quiet requests Pillow img2pdf
+      - name: Download RSL viewer pages and build PDF
+        run: |
+          set -euo pipefail
+          mkdir -p rsl1948/pages
+          python - <<'PY'
+          import io, json, mimetypes, time
+          from pathlib import Path
+          import requests
+          from PIL import Image
+          import img2pdf
+
+          doc='rsl01006036425'
+          base=f'https://viewer.rsl.ru/api/v1/document/{doc}'
+          s=requests.Session()
+          s.headers.update({'User-Agent':'Mozilla/5.0','Referer':f'https://viewer.rsl.ru/ru/{doc}?page=1'})
+          info=s.get(base+'/info',timeout=60)
+          Path('rsl1948/info_response.bin').write_bytes(info.content)
+          print('INFO',info.status_code,info.headers.get('content-type'),len(info.content),info.text[:1000] if 'text' in (info.headers.get('content-type') or '') or 'json' in (info.headers.get('content-type') or '') else '')
+          info.raise_for_status()
+          try: data=info.json()
+          except Exception: data={}
+          Path('rsl1948/info.json').write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8')
+
+          def find_count(x):
+              if isinstance(x,dict):
+                  for k in ('pages','pageCount','pagesCount','page_count','count','totalPages','total_pages'):
+                      v=x.get(k)
+                      if isinstance(v,int) and 1 <= v <= 1000: return v
+                      if isinstance(v,list) and 1 <= len(v) <= 1000: return len(v)
+                  for v in x.values():
+                      r=find_count(v)
+                      if r: return r
+              if isinstance(x,list):
+                  for v in x:
+                      r=find_count(v)
+                      if r: return r
+              return None
+          n=find_count(data)
+          print('PAGE COUNT FROM INFO',n)
+
+          # If schema is unknown, probe sequentially until two consecutive 404/400 after first success.
+          max_pages=n or 250
+          files=[]; failures=[]; consecutive_missing=0
+          for p in range(1,max_pages+1):
+              r=s.get(f'{base}/page/{p}',timeout=90)
+              ctype=(r.headers.get('content-type') or '').lower()
+              print('PAGE',p,r.status_code,ctype,len(r.content))
+              if r.status_code in (400,404,416):
+                  failures.append([p,r.status_code,ctype,len(r.content)])
+                  consecutive_missing += 1
+                  if n is None and files and consecutive_missing >= 2: break
+                  continue
+              r.raise_for_status(); consecutive_missing=0
+              raw=r.content
+              try:
+                  im=Image.open(io.BytesIO(raw)); im.load()
+              except Exception as e:
+                  Path(f'rsl1948/page_{p:03d}_response.bin').write_bytes(raw)
+                  raise RuntimeError(f'Page {p} is not an image: {ctype} {raw[:200]!r}') from e
+              ext={'JPEG':'jpg','PNG':'png','TIFF':'tif','WEBP':'webp'}.get(im.format,'png')
+              fn=Path(f'rsl1948/pages/{p:03d}.{ext}')
+              fn.write_bytes(raw)
+              files.append(fn)
+              time.sleep(0.05)
+          if not files: raise SystemExit('No page images downloaded')
+          Path('rsl1948/failures.json').write_text(json.dumps(failures,indent=2),encoding='utf-8')
+          print('DOWNLOADED',len(files),'page images')
+          pdf=img2pdf.convert([str(x) for x in files])
+          out=Path('rsl1948/Tatarskaya_ASSR_v_gody_VOV_1948_RSL_scan.pdf')
+          out.write_bytes(pdf)
+          print('BUILT',out,len(pdf))
+          PY
+          sha256sum rsl1948/Tatarskaya_ASSR_v_gody_VOV_1948_RSL_scan.pdf > rsl1948/SHA256SUMS.txt
+          cat > rsl1948/MANIFEST.txt <<'EOF'
+          Татарская АССР в годы Великой Отечественной войны: сборник документов и материалов.
+          Казань: Татгосиздат, 1948.
+          RSL catalogue: https://search.rsl.ru/ru/record/01006036425
+          Scan assembled from public RSL viewer page API for rsl01006036425.
+          EOF
+      - name: Upload collected scan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tatar-assr-1948-rsl-scan
+          path: rsl1948/
+          retention-days: 30
