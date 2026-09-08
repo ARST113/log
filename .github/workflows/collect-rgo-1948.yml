@@ -1,0 +1,93 @@
+name: Collect RGO 1948 book
+
+on:
+  push:
+    branches:
+      - research/kazan-books-1940s
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install helpers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y poppler-utils
+          python -m pip install --quiet requests beautifulsoup4
+      - name: Resolve RGO PDF
+        run: |
+          set -euo pipefail
+          mkdir -p rgo
+          python - <<'PY'
+          import json, re, requests
+          from bs4 import BeautifulSoup
+          from pathlib import Path
+          from urllib.parse import urljoin, quote
+
+          s=requests.Session(); s.headers['User-Agent']='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/150 Safari/537.36'
+          bases=[
+            'https://elib.rgo.ru/handle/123456789/228071',
+            'https://elib.rgo.ru/xmlui/handle/123456789/228071',
+            'https://elib.rgo.ru/jspui/handle/123456789/228071',
+          ]
+          candidates=[]; log=[]
+          for page in bases:
+            try:
+              r=s.get(page,timeout=30,allow_redirects=True)
+              log.append({'page':page,'status':r.status_code,'url':r.url,'ctype':r.headers.get('content-type'),'len':len(r.content)})
+              if not r.ok: continue
+              Path('rgo/page.html').write_bytes(r.content)
+              soup=BeautifulSoup(r.text,'html.parser')
+              for a in soup.find_all('a',href=True):
+                href=a['href']; text=a.get_text(' ',strip=True)
+                if '.pdf' in href.lower() or '.pdf' in text.lower() or '5884_' in href or '5884_' in text or 'bitstream' in href.lower():
+                  candidates.append(urljoin(r.url,href))
+              # raw regex, including JS/JSON-encoded links
+              for m in re.findall(r'''(?:href|url)["'=: ]+([^"' <>]+)''',r.text,re.I):
+                if 'pdf' in m.lower() or 'bitstream' in m.lower() or '5884_' in m:
+                  candidates.append(urljoin(r.url,m.replace('\\/','/')))
+            except Exception as e:
+              log.append({'page':page,'error':repr(e)})
+
+          name='5884_Tatarskaya ASSR v gody Velikoi Otechestvennoi voin.pdf'
+          q=quote(name)
+          candidates += [
+            f'https://elib.rgo.ru/bitstream/123456789/228071/1/{q}',
+            f'https://elib.rgo.ru/bitstream/123456789/228071/2/{q}',
+            f'https://elib.rgo.ru/xmlui/bitstream/handle/123456789/228071/{q}?sequence=1&isAllowed=y',
+            f'https://elib.rgo.ru/jspui/bitstream/123456789/228071/1/{q}',
+            f'https://elib.rgo.ru/bitstreams/123456789/228071/1/{q}',
+          ]
+          # dedup
+          seen=[]
+          for u in candidates:
+            if u not in seen: seen.append(u)
+          Path('rgo/candidates.txt').write_text('\n'.join(seen),encoding='utf-8')
+          Path('rgo/page_log.json').write_text(json.dumps(log,ensure_ascii=False,indent=2),encoding='utf-8')
+          out=Path('rgo/Tatarskaya_ASSR_v_gody_VOV_1948.pdf')
+          attempts=[]
+          for u in seen:
+            try:
+              rr=s.get(u,timeout=90,allow_redirects=True)
+              info={'url':u,'final':rr.url,'status':rr.status_code,'ctype':rr.headers.get('content-type'),'len':len(rr.content),'prefix':rr.content[:8].hex()}
+              attempts.append(info)
+              if rr.ok and rr.content.startswith(b'%PDF-') and len(rr.content)>1_000_000:
+                out.write_bytes(rr.content); print('FOUND',rr.url,len(rr.content)); break
+            except Exception as e:
+              attempts.append({'url':u,'error':repr(e)})
+          Path('rgo/attempts.json').write_text(json.dumps(attempts,ensure_ascii=False,indent=2),encoding='utf-8')
+          if not out.exists():
+            raise SystemExit('RGO PDF unresolved')
+          PY
+          pdfinfo rgo/Tatarskaya_ASSR_v_gody_VOV_1948.pdf | tee rgo/pdfinfo.txt
+          sha256sum rgo/Tatarskaya_ASSR_v_gody_VOV_1948.pdf > rgo/SHA256SUMS.txt
+      - name: Upload RGO results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rgo-1948-resolution
+          path: rgo/
+          retention-days: 30
