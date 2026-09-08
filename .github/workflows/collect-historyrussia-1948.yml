@@ -1,0 +1,84 @@
+name: Collect HistoryRussia 1948 source
+
+on:
+  push:
+    branches:
+      - research/kazan-books-1940s
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install parser
+        run: python -m pip install --quiet requests beautifulsoup4
+      - name: Collect all source documents
+        run: |
+          set -euo pipefail
+          mkdir -p historyrussia1948/nodes
+          python - <<'PY'
+          import json,re,time
+          from pathlib import Path
+          from urllib.parse import urljoin
+          import requests
+          from bs4 import BeautifulSoup
+
+          root='https://docs.historyrussia.org'
+          index='https://docs.historyrussia.org/ru/indexes/values/1088554'
+          s=requests.Session(); s.headers['User-Agent']='Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/150 Safari/537.36'
+          links=[]
+          for p in (1,2):
+              u=f'{index}?page={p}&view=list'
+              r=s.get(u,timeout=60); r.raise_for_status()
+              Path(f'historyrussia1948/index_{p}.html').write_bytes(r.content)
+              soup=BeautifulSoup(r.text,'html.parser')
+              for a in soup.find_all('a',href=True):
+                  href=a['href'].split('?')[0]
+                  if re.fullmatch(r'/ru/nodes/\d+(?:-[^/#?]+)?',href):
+                      full=urljoin(root,href)
+                      if full not in links: links.append(full)
+          print('NODE LINKS',len(links))
+          if len(links) < 130:
+              raise SystemExit(f'Expected about 134 nodes, got {len(links)}')
+
+          records=[]
+          for i,u in enumerate(links,1):
+              r=s.get(u,timeout=60); r.raise_for_status()
+              fn=Path(f'historyrussia1948/nodes/{i:03d}.html'); fn.write_bytes(r.content)
+              soup=BeautifulSoup(r.text,'html.parser')
+              title=(soup.find('h1').get_text(' ',strip=True) if soup.find('h1') else (soup.title.get_text(' ',strip=True) if soup.title else u))
+              # Remove navigation/script/style and keep visible text. Raw HTML is also preserved for audit.
+              for x in soup(['script','style','nav','header','footer']): x.decompose()
+              text='\n'.join(line.strip() for line in soup.get_text('\n').splitlines() if line.strip())
+              # trim generic site header where possible; retain all remaining text to avoid silently losing document content
+              records.append({'n':i,'url':u,'title':title,'text':text})
+              if i%20==0: print('FETCHED',i)
+              time.sleep(.08)
+          Path('historyrussia1948/documents.json').write_text(json.dumps(records,ensure_ascii=False,indent=2),encoding='utf-8')
+          with Path('historyrussia1948/Tatarskaya_ASSR_1948_HistoryRussia_fulltext.txt').open('w',encoding='utf-8') as f:
+              f.write('ТАТАРСКАЯ АССР В ГОДЫ ВЕЛИКОЙ ОТЕЧЕСТВЕННОЙ ВОЙНЫ\n')
+              f.write('Полнотекстовая веб-реконструкция документов из издания 1948 г.; НЕ факсимильный скан.\n')
+              f.write('Источник: https://docs.historyrussia.org/ru/indexes/values/1088554\n\n')
+              for rec in records:
+                  f.write('\n'+'='*100+'\n')
+                  f.write(f"[{rec['n']}] {rec['title']}\n{rec['url']}\n\n{rec['text']}\n")
+          Path('historyrussia1948/MANIFEST.txt').write_text(
+              f'Collected {len(records)} web records linked to the 1948 source.\n'
+              'This is a searchable reconstruction, not the original page scan.\n'
+              'Original edition: Татарская АССР в годы Великой Отечественной войны. Казань: Татгосиздат, 1948.\n'
+              'Source index: https://docs.historyrussia.org/ru/indexes/values/1088554\n',encoding='utf-8')
+          PY
+          cd historyrussia1948 && zip -qr ../Tatarskaya_ASSR_1948_HistoryRussia_fulltext.zip .
+      - name: Upload reconstruction
+        uses: actions/upload-artifact@v4
+        with:
+          name: tatar-assr-1948-historyrussia-fulltext
+          path: |
+            historyrussia1948/
+            Tatarskaya_ASSR_1948_HistoryRussia_fulltext.zip
+          retention-days: 30
