@@ -1,0 +1,115 @@
+name: Collect Kazan books 1940s
+
+on:
+  push:
+    branches:
+      - research/kazan-books-1940s
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install helpers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y poppler-utils zip
+          python -m pip install --quiet requests beautifulsoup4
+
+      - name: Download and verify books
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p books
+
+          # 1) K. Topuridze, Kazan, 1945 — National Library of the Republic of Tatarstan.
+          curl -fL --retry 5 --retry-delay 2 --connect-timeout 30 \
+            'https://kitaphane.tatarstan.ru/file/kitaphane/File/%D1%81%D0%BE%D0%BA%D1%80%D0%BE%D0%B2%D0%B8%D1%89%D0%B0.pdf' \
+            -o 'books/Topuridze_Kazan_1945.pdf'
+
+          # 2) Tatar ASSR during the Great Patriotic War, Kazan, 1948 — RGO library.
+          python - <<'PY'
+          from pathlib import Path
+          from urllib.parse import urljoin
+          import requests
+          from bs4 import BeautifulSoup
+
+          page='https://elib.rgo.ru/handle/123456789/228071'
+          out=Path('books/Tatarskaya_ASSR_v_gody_VOV_1948.pdf')
+          s=requests.Session()
+          s.headers['User-Agent']='Mozilla/5.0'
+          r=s.get(page, timeout=60)
+          r.raise_for_status()
+          soup=BeautifulSoup(r.text,'html.parser')
+          candidates=[]
+          for a in soup.find_all('a', href=True):
+              href=a['href']
+              text=a.get_text(' ', strip=True)
+              if '.pdf' in href.lower() or '.pdf' in text.lower() or '5884_' in href or '5884_' in text:
+                  candidates.append(urljoin(page, href))
+          # Common DSpace bitstream patterns as fallbacks.
+          name='5884_Tatarskaya ASSR v gody Velikoi Otechestvennoi voin.pdf'
+          from urllib.parse import quote
+          q=quote(name)
+          candidates += [
+              f'https://elib.rgo.ru/bitstream/123456789/228071/1/{q}',
+              f'https://elib.rgo.ru/bitstreams/123456789/228071/1/{q}',
+              f'https://elib.rgo.ru/server/api/core/items/228071/content',
+          ]
+          seen=set()
+          errors=[]
+          for u in candidates:
+              if u in seen: continue
+              seen.add(u)
+              try:
+                  rr=s.get(u, timeout=120, allow_redirects=True)
+                  ctype=(rr.headers.get('content-type') or '').lower()
+                  if rr.ok and (rr.content.startswith(b'%PDF-') or 'application/pdf' in ctype):
+                      out.write_bytes(rr.content)
+                      print('RGO PDF:', rr.url, len(rr.content))
+                      break
+                  errors.append((u, rr.status_code, ctype, len(rr.content)))
+              except Exception as e:
+                  errors.append((u, type(e).__name__, str(e)))
+          else:
+              print('RGO candidates failed:')
+              for x in errors: print(x)
+              raise SystemExit('Could not resolve RGO PDF')
+          PY
+
+          for f in books/*.pdf; do
+            echo "=== $f ==="
+            head -c 5 "$f"
+            echo
+            test "$(head -c 5 "$f")" = '%PDF-'
+            pdfinfo "$f" | grep -E '^(Pages|File size|PDF version):'
+          done
+
+          sha256sum books/*.pdf > books/SHA256SUMS.txt
+          {
+            echo 'Collected primary/near-primary Kazan-related books from the 1940s'
+            echo
+            echo 'Topuridze_Kazan_1945.pdf'
+            echo '  K. Topuridze. Kazan. Moscow: Academy of Architecture of the USSR, 1945.'
+            echo '  Source: National Library of the Republic of Tatarstan.'
+            echo '  https://kitaphane.tatarstan.ru/file/kitaphane/File/%D1%81%D0%BE%D0%BA%D1%80%D0%BE%D0%B2%D0%B8%D1%89%D0%B0.pdf'
+            echo
+            echo 'Tatarskaya_ASSR_v_gody_VOV_1948.pdf'
+            echo '  Tatar ASSR during the Great Patriotic War: collection of documents and materials. Kazan: Tatgosizdat, 1948.'
+            echo '  Source: Library of the Russian Geographical Society.'
+            echo '  https://elib.rgo.ru/handle/123456789/228071'
+          } > books/MANIFEST.txt
+
+          zip -j -9 kazan_books_1940s.zip books/*
+
+      - name: Upload collection
+        uses: actions/upload-artifact@v4
+        with:
+          name: kazan-books-1940s
+          path: |
+            books/
+            kazan_books_1940s.zip
+          retention-days: 30
