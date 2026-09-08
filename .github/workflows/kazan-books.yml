@@ -11,146 +11,148 @@ on:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: python -m pip install requests beautifulsoup4 PyMuPDF
+        run: python -m pip install requests beautifulsoup4 PyMuPDF Pillow
       - name: Download and validate books
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
-          from urllib.parse import urljoin, quote
-          import hashlib, json, re
+          from io import BytesIO
+          import hashlib, json, time
           import requests
-          from bs4 import BeautifulSoup
           import fitz
+          from PIL import Image
 
           out = Path('kazan_books_1940s')
           out.mkdir(exist_ok=True)
           s = requests.Session()
           s.headers.update({'User-Agent': 'Mozilla/5.0 archival-research/1.0'})
 
-          def save_pdf(url, path, *, min_bytes=100_000):
-              print('GET', url)
-              r = s.get(url, timeout=120, allow_redirects=True)
-              print(' ->', r.status_code, r.headers.get('content-type'), len(r.content), r.url)
-              r.raise_for_status()
-              data = r.content
-              if len(data) < min_bytes or not data.lstrip().startswith(b'%PDF'):
-                  raise RuntimeError(f'Not a PDF: {url} ({len(data)} bytes, {data[:30]!r})')
-              path.write_bytes(data)
-              return r.url
+          def get(url, timeout=120):
+              r = s.get(url, timeout=timeout, allow_redirects=True)
+              print('GET', url, '->', r.status_code, r.headers.get('content-type'), len(r.content), r.url)
+              return r
 
-          records = []
-
-          # 1) K. Topuridze, Kazan, 1945 — Tula Regional Scientific Library.
-          top_path = out / 'Topuridze_Kazan_1945.pdf'
-          top_urls = [
-              'https://opac.tularlic.ru/opacg/Skaner/2021/262-85449-2021.pdf',
-              'http://opac.tularlic.ru/opacg/Skaner/2021/262-85449-2021.pdf',
-          ]
-          top_final = None
-          top_errors = []
-          for u in top_urls:
-              try:
-                  top_final = save_pdf(u, top_path, min_bytes=500_000)
-                  break
-              except Exception as e:
-                  top_errors.append(f'{u}: {e}')
-          if top_final is None:
-              raise RuntimeError('Topuridze download failed:\n' + '\n'.join(top_errors))
-
-          # 2) Tatar ASSR during the Great Patriotic War, Kazan, 1948 — RGO library.
-          rgo_path = out / 'Tatarskaya_ASSR_v_gody_VOV_1948.pdf'
-          handle = 'https://elib.rgo.ru/handle/123456789/228071'
-          rgo_candidates = []
-
-          # HTML discovery (works with older DSpace front-ends).
-          try:
-              hr = s.get(handle, timeout=60)
-              print('HANDLE', hr.status_code, hr.url, len(hr.content))
-              if hr.ok:
-                  soup = BeautifulSoup(hr.text, 'html.parser')
-                  for a in soup.find_all('a', href=True):
-                      href = urljoin(hr.url, a['href'])
-                      txt = (a.get_text(' ', strip=True) or '').lower()
-                      if '.pdf' in href.lower() or '/bitstream/' in href.lower() or '5884_' in href or '.pdf' in txt:
-                          rgo_candidates.append(href)
-                  # raw regex fallback
-                  for m in re.findall(r'''(?:href|src)=["']([^"']+(?:\.pdf|bitstream)[^"']*)["']''', hr.text, flags=re.I):
-                      rgo_candidates.append(urljoin(hr.url, m))
-          except Exception as e:
-              print('HTML discovery failed:', repr(e))
-
-          # DSpace 7 REST discovery via persistent identifier.
-          try:
-              pid = s.get('https://elib.rgo.ru/server/api/pid/find', params={'id':'123456789/228071'}, timeout=60, headers={'Accept':'application/json'})
-              print('PID API', pid.status_code, pid.url, pid.text[:200])
-              if pid.ok and 'json' in pid.headers.get('content-type','').lower():
-                  item = pid.json()
-                  bundles_url = item.get('_links',{}).get('bundles',{}).get('href')
-                  if bundles_url:
-                      br = s.get(bundles_url, timeout=60, headers={'Accept':'application/json'}); br.raise_for_status()
-                      bundles = br.json().get('_embedded',{}).get('bundles',[])
-                      for bundle in bundles:
-                          bit_url = bundle.get('_links',{}).get('bitstreams',{}).get('href')
-                          if not bit_url: continue
-                          rr = s.get(bit_url, timeout=60, headers={'Accept':'application/json'}); rr.raise_for_status()
-                          for bit in rr.json().get('_embedded',{}).get('bitstreams',[]):
-                              name = bit.get('name','')
-                              if name.lower().endswith('.pdf') or '5884_' in name:
-                                  content = bit.get('_links',{}).get('content',{}).get('href')
-                                  if content: rgo_candidates.insert(0, content)
-          except Exception as e:
-              print('REST discovery failed:', repr(e))
-
-          # Known DSpace 6-style fallback URL derived from the public handle and filename.
-          fname = '5884_Tatarskaya ASSR v gody Velikoi Otechestvennoi voin.pdf'
-          rgo_candidates += [
-              'https://elib.rgo.ru/bitstream/123456789/228071/1/' + quote(fname),
-              'https://elib.rgo.ru/bitstream/123456789/228071/1/' + quote(fname) + '?sequence=1&isAllowed=y',
-          ]
-
-          # De-duplicate while preserving order.
-          seen = set(); rgo_candidates = [u for u in rgo_candidates if not (u in seen or seen.add(u))]
-          print('RGO candidates:', json.dumps(rgo_candidates, ensure_ascii=False, indent=2))
-          rgo_final = None
-          rgo_errors = []
-          for u in rgo_candidates:
-              try:
-                  rgo_final = save_pdf(u, rgo_path, min_bytes=1_000_000)
-                  break
-              except Exception as e:
-                  rgo_errors.append(f'{u}: {e}')
-          if rgo_final is None:
-              raise RuntimeError('RGO download failed:\n' + '\n'.join(rgo_errors))
+          def save_pdf_url(urls, path, min_bytes=100_000):
+              errs=[]
+              for u in urls:
+                  try:
+                      r=get(u); r.raise_for_status(); data=r.content
+                      if len(data) >= min_bytes and data.lstrip().startswith(b'%PDF'):
+                          path.write_bytes(data)
+                          return r.url
+                      errs.append(f'{u}: not PDF ({r.status_code}, {len(data)} bytes, {r.headers.get("content-type")})')
+                  except Exception as e:
+                      errs.append(f'{u}: {e}')
+              print('\n'.join(errs))
+              return None
 
           def describe(path, title, source, final_url):
-              data = path.read_bytes()
-              doc = fitz.open(path)
-              return {
-                  'title': title,
-                  'file': path.name,
-                  'source': source,
-                  'downloaded_from': final_url,
-                  'bytes': len(data),
-                  'pages_in_pdf': doc.page_count,
-                  'sha256': hashlib.sha256(data).hexdigest(),
-              }
+              data=path.read_bytes(); doc=fitz.open(path)
+              return {'title':title,'file':path.name,'source':source,'downloaded_from':final_url,
+                      'bytes':len(data),'pages_in_pdf':doc.page_count,'sha256':hashlib.sha256(data).hexdigest()}
 
-          records.append(describe(top_path, 'К. Топуридзе. Казань. 1945', 'Тульская областная научная библиотека', top_final))
-          records.append(describe(rgo_path, 'Татарская АССР в годы Великой Отечественной войны. 1948', 'Библиотека Русского географического общества', rgo_final))
-          (out/'manifest.json').write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding='utf-8')
-          print(json.dumps(records, ensure_ascii=False, indent=2))
+          records=[]
+
+          # 1. K. Topuridze, Kazan, 1945.
+          top=out/'Topuridze_Kazan_1945.pdf'
+          top_final=save_pdf_url([
+              'https://opac.tularlic.ru/opacg/Skaner/2021/262-85449-2021.pdf',
+              'http://opac.tularlic.ru/opacg/Skaner/2021/262-85449-2021.pdf'], top, 500_000)
+          if not top_final:
+              raise RuntimeError('Topuridze PDF could not be downloaded')
+          records.append(describe(top,'К. Топуридзе. Казань. 1945','Тульская областная научная библиотека',top_final))
+
+          # 2. Tatar ASSR in the Great Patriotic War, 1948.
+          tatar=out/'Tatarskaya_ASSR_v_gody_VOV_1948.pdf'
+          docid='rsl01006036425'
+          tatar_final=save_pdf_url([
+              f'https://viewer.rusneb.ru/api/v1/document/{docid}/pdf',
+              f'https://viewer.rsl.ru/api/v1/document/{docid}/pdf',
+              'https://elib.rgo.ru/bitstream/123456789/228071/1/5884_Tatarskaya%20ASSR%20v%20gody%20Velikoi%20Otechestvennoi%20voin.pdf'
+          ], tatar, 1_000_000)
+
+          # If no whole PDF endpoint works, reconstruct from public page API.
+          if not tatar_final:
+              print('Whole-PDF endpoints failed; reconstructing from page API')
+              assembled=fitz.open(); page_count=0; chosen_host=None
+              hosts=['https://viewer.rusneb.ru','https://viewer.rsl.ru']
+
+              def extract_image_response(r):
+                  data=r.content; ct=r.headers.get('content-type','').lower()
+                  if data.startswith(b'%PDF'):
+                      d=fitz.open(stream=data,filetype='pdf')
+                      return ('pdf',d)
+                  if ct.startswith('image/') or data[:8].startswith(b'\x89PNG') or data[:2]==b'\xff\xd8':
+                      return ('image',data)
+                  if 'json' in ct:
+                      try:
+                          obj=r.json()
+                          print('PAGE JSON sample:', json.dumps(obj,ensure_ascii=False)[:1000])
+                          urls=[]
+                          def walk(x):
+                              if isinstance(x,dict):
+                                  for v in x.values(): walk(v)
+                              elif isinstance(x,list):
+                                  for v in x: walk(v)
+                              elif isinstance(x,str) and x.startswith('http'):
+                                  urls.append(x)
+                          walk(obj)
+                          for u in urls:
+                              rr=get(u)
+                              if rr.ok and (rr.headers.get('content-type','').startswith('image/') or rr.content[:2]==b'\xff\xd8' or rr.content[:8].startswith(b'\x89PNG')):
+                                  return ('image',rr.content)
+                      except Exception as e:
+                          print('JSON parse failed',repr(e))
+                  return (None,None)
+
+              for n in range(1,260):
+                  got=None
+                  for host in ([chosen_host] if chosen_host else hosts):
+                      if not host: continue
+                      r=get(f'{host}/api/v1/document/{docid}/page/{n}')
+                      if r.status_code==200:
+                          kind,payload=extract_image_response(r)
+                          if kind:
+                              chosen_host=host; got=(kind,payload,r.url); break
+                  if not got:
+                      if n==1:
+                          raise RuntimeError('No page API could return page 1')
+                      print('Stopping on missing page',n)
+                      break
+                  kind,payload,url=got
+                  if kind=='pdf':
+                      assembled.insert_pdf(payload)
+                  else:
+                      im=Image.open(BytesIO(payload)); w,h=im.size
+                      # Preserve raster proportions; 72dpi points are sufficient for a reconstructed scan PDF.
+                      p=assembled.new_page(width=w,height=h)
+                      p.insert_image(p.rect,stream=payload)
+                  page_count+=1
+                  if n%20==0: print('assembled pages',n)
+                  time.sleep(0.03)
+              if page_count < 150:
+                  raise RuntimeError(f'Only {page_count} pages reconstructed; expected roughly 168+')
+              assembled.save(tatar,garbage=4,deflate=True)
+              tatar_final=f'{chosen_host}/api/v1/document/{docid}/page/{{n}} (reconstructed)'
+
+          records.append(describe(tatar,'Татарская АССР в годы Великой Отечественной войны. 1948','РГБ/НЭБ; резервная карточка РГО',tatar_final))
+          (out/'manifest.json').write_text(json.dumps(records,ensure_ascii=False,indent=2),encoding='utf-8')
+          print('FINAL MANIFEST')
+          print(json.dumps(records,ensure_ascii=False,indent=2))
           PY
-      - name: Upload collected books
+      - name: Upload collected books even on diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: kazan-books-1940s
           path: kazan_books_1940s/
+          if-no-files-found: warn
           retention-days: 30
