@@ -1,0 +1,38 @@
+name: Test HistoryRussia zoom routes
+
+on:
+  push:
+    branches: [research/kazan-books-1940s]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe public page image routes
+        run: |
+          set -euo pipefail
+          mkdir -p hr_zoom
+          python - <<'PY'
+          import requests, pathlib, json
+          s=requests.Session(); s.headers.update({'User-Agent':'Mozilla/5.0 Chrome/150 Safari/537.36','Referer':'https://docs.historyrussia.org/ru/nodes/250598'})
+          page_id='898380'
+          out=[]
+          for z in [2,3,4,5,6,7,8]:
+              u=f'https://docs.historyrussia.org/pages/{page_id}/zooms/{z}'
+              r=s.get(u,timeout=60,allow_redirects=True)
+              ct=r.headers.get('content-type','')
+              print(z,r.status_code,ct,len(r.content),r.url)
+              rec={'zoom':z,'status':r.status_code,'content_type':ct,'bytes':len(r.content),'url':r.url}
+              out.append(rec)
+              if r.ok and ct.startswith('image/'):
+                  ext='jpg' if 'jpeg' in ct else 'png'
+                  pathlib.Path(f'hr_zoom/page_{page_id}_z{z}.{ext}').write_bytes(r.content)
+          pathlib.Path('hr_zoom/results.json').write_text(json.dumps(out,indent=2),encoding='utf-8')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: historyrussia-zoom-test
+          path: hr_zoom/
+          retention-days: 30
