@@ -1,0 +1,93 @@
+name: Kazan full-text corpus
+on:
+  push:
+    branches: ['research/kazan-fulltext-20260908']
+    paths: ['research/**', '.github/workflows/kazan-fulltext.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: kazan-fulltext-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install git+https://github.com/wkentaro/gdown.git
+      - run: python research/kazan_ocr.py inventory
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kazan-inventory
+          path: inventory.json
+          if-no-files-found: error
+          retention-days: 30
+  ocr:
+    needs: inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+    env:
+      OMP_THREAD_LIMIT: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: kazan-inventory
+      - name: Install OCR dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-rus
+          python -m pip install PyMuPDF Pillow git+https://github.com/wkentaro/gdown.git
+          tesseract --version
+      - name: Download and prepare assigned pages
+        run: python research/kazan_ocr.py prepare --shard ${{ matrix.shard }}
+      - name: Recognize the complete batch
+        shell: bash
+        run: |
+          dest=$(printf 'out/shard_%02d' '${{ matrix.shard }}')
+          tesseract batch.list "$dest/batch" -l rus --oem 1 --psm 3 --dpi 300 txt tsv 2> "$dest/batch.log"
+          python research/kazan_ocr.py finish --shard ${{ matrix.shard }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kazan-shard-${{ matrix.shard }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
+  validate:
+    needs: ocr
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kazan-shard-*
+          path: out
+          merge-multiple: true
+      - run: python research/kazan_ocr.py collect
+      - uses: actions/download-artifact@v4
+        with:
+          name: kazan-inventory
+          path: out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kazan-fulltext-129-issues
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
