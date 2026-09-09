@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const pluginFile = path.join(__dirname, '..', 'ContinueWatching.js');
+const pluginFile = path.join(__dirname, '..', 'ContinueWatching-v6.2.21.js');
 const source = fs.readFileSync(pluginFile, 'utf8');
 
 function jqueryStub() {
