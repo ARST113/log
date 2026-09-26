@@ -8,7 +8,8 @@ const vm = require('vm');
 const pluginFile = path.join(__dirname, '..', 'NewTorrents.js');
 const source = fs.readFileSync(pluginFile, 'utf8');
 
-function harness(seed) {
+function harness(seed, userAgent) {
+    userAgent = userAgent || 'Mozilla/5.0 (Linux; Android 13) Chrome/150.0';
     const storage = Object.assign({}, seed || {});
     const runs = [];
     const plays = [];
@@ -59,8 +60,11 @@ function harness(seed) {
         }
     };
 
+    const navigator = { userAgent: userAgent };
+
     const sandbox = {
         window: { Lampa: Lampa, appready: true, console: console },
+        navigator: navigator,
         Lampa: Lampa,
         console: console,
         setInterval(fn) {
@@ -79,6 +83,8 @@ function harness(seed) {
         runs: runs,
         plays: plays,
         get setting() { return setting; },
+        get userAgent() { return sandbox.navigator.userAgent; },
+        get uaPatchFlag() { return sandbox.window.__lampa_torrent_ua_patch__; },
         setActive(value) { active = value; }
     };
 }
@@ -147,6 +153,27 @@ function harness(seed) {
     });
 
     assert.deepEqual(h.runs, []);
+}
+
+
+{
+    const h = harness({});
+    assert.equal(h.uaPatchFlag, true);
+    assert.equal(/android/i.test(h.userAgent), false);
+    assert.equal(/aosp/i.test(h.userAgent), true);
+}
+
+{
+    const nativeUa = 'Mozilla/5.0 (Linux; Android 13) lampa_client';
+    const h = harness({}, nativeUa);
+    assert.equal(h.userAgent, nativeUa);
+    assert.equal(h.uaPatchFlag, true);
+}
+
+{
+    const desktopUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)';
+    const h = harness({}, desktopUa);
+    assert.equal(h.userAgent, desktopUa);
 }
 
 console.log('NewTorrents tests: OK');
