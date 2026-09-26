@@ -1,7 +1,46 @@
 (function () {
     'use strict';
 
-    var PLUGIN_VERSION = '2.0.0';
+    // Android UA patch: убирает ложное распознавание браузерной Lampa как Android-клиента.
+    // Нативный APK Lampa (lampa_client) не затрагивается.
+    (function () {
+        'use strict';
+
+        var FLAG = '__lampa_torrent_ua_patch__';
+
+        if (window[FLAG]) return;
+        window[FLAG] = true;
+
+        var originalUA = navigator.userAgent;
+
+        // Настоящий Android APK Lampa не трогаем
+        if (/lampa_client/i.test(originalUA)) {
+            console.log('[Lampa torrent patch] native Lampa Android - skip');
+            return;
+        }
+
+        // На других платформах патч не нужен
+        if (!/android/i.test(originalUA)) return;
+
+        var patchedUA = originalUA.replace(/Android/gi, 'AOSP');
+
+        Object.defineProperty(navigator, 'userAgent', {
+            configurable: true,
+            get: function () {
+                return patchedUA;
+            }
+        });
+
+        console.log('[Lampa torrent patch] enabled');
+        console.log('Original:', originalUA);
+        console.log('Patched :', navigator.userAgent);
+        console.log(
+            'android index:',
+            navigator.userAgent.toLowerCase().indexOf('android')
+        );
+    })();
+
+    var PLUGIN_VERSION = '2.1.0';
     var PLAYER_KEY = 'player_torrent';
     var INTERNAL_KEY = 'internal_torrclient';
     var MIGRATION_KEY = 'new_torrents_v2_migrated';
