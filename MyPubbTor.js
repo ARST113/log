@@ -45,11 +45,67 @@
       parser_torrent_type: 'jackett'
     }
   }, {
-    base: 'jacred_xyz',
-    name: 'Jacred XYZ',
+    base: 'ru.jac.black',
+    name: 'Jac Black RU',
     settings: {
-      url: 'jacred.xyz',
+      url: 'ru.jac.black',
       key: '',
+      parser_torrent_type: 'jackett'
+    }
+  }, {
+    base: 'jac.black',
+    name: 'Jac Black World',
+    settings: {
+      url: 'jac.black',
+      key: '',
+      parser_torrent_type: 'jackett'
+    }
+  }, {
+    base: 'jac.red',
+    name: 'Jac.red',
+    settings: {
+      url: 'jac.red',
+      key: '',
+      parser_torrent_type: 'jackett'
+    }
+  }, {
+    base: 'https://jr.maxvol.pro',
+    name: 'JR MaxVol HTTPS',
+    settings: {
+      url: 'https://jr.maxvol.pro',
+      key: '',
+      parser_torrent_type: 'jackett'
+    }
+  }, {
+    base: 'jac-red.ru',
+    name: 'Jac-red.ru',
+    settings: {
+      url: 'jac-red.ru',
+      key: '',
+      parser_torrent_type: 'jackett'
+    }
+  }, {
+    base: 'https://jacred.stream',
+    name: 'JacRed Stream HTTPS',
+    settings: {
+      url: 'https://jacred.stream',
+      key: 'pp',
+      parser_torrent_type: 'jackett'
+    }
+  }, {
+    base: 'https://ru.jacred.stream',
+    name: 'JacRed Stream RU HTTPS',
+    settings: {
+      url: 'https://ru.jacred.stream',
+      key: 'pp',
+      parser_torrent_type: 'jackett'
+    }
+  }, {
+    base: 'http://ru.jacred.stream',
+    name: 'JacRed Stream RU HTTP',
+    settings: {
+      url: 'http://ru.jacred.stream',
+      key: 'pp',
       parser_torrent_type: 'jackett'
     }
   }];
