@@ -29,14 +29,6 @@
       parser_torrent_type: 'jackett'
     }
   }, {
-    base: 'lampac.fun:8117',
-    name: 'Jacket',
-    settings: {
-      url: 'lampac.fun:8117',
-      key: 'cvy139co64s9pu791s2ao7egzzgogocw',
-      parser_torrent_type: 'jackett'
-    }
-  }, {
     base: 'Lampac.fun:9117',
     name: 'Lampac',
     settings: {
