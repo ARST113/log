@@ -298,17 +298,17 @@
       return Number.isFinite(Number(value)) ? Number(value) : 0;
     };
     var validAlias = function validAlias(value) {
-      return /^(?:source:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+|tmdb:\d+|imdb:tt\d+|kinopoisk:\d+)$/.test(value);
+      return /^(?:movie:)?(?:source:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+|tmdb:\d+|imdb:tt\d+|kinopoisk:\d+)$/.test(value);
     };
     var canonicalAlias = function canonicalAlias(aliases) {
       return aliases.find(function (value) {
-        return value.indexOf('tmdb:') === 0;
+        return /^(?:movie:)?tmdb:/.test(value);
       }) || aliases.find(function (value) {
-        return value.indexOf('source:') === 0;
+        return /^(?:movie:)?source:/.test(value);
       }) || aliases.find(function (value) {
-        return value.indexOf('imdb:') === 0;
+        return /^(?:movie:)?imdb:/.test(value);
       }) || aliases.find(function (value) {
-        return value.indexOf('kinopoisk:') === 0;
+        return /^(?:movie:)?kinopoisk:/.test(value);
       });
     };
     function cardIdentity() {
@@ -318,14 +318,18 @@
       var tmdb = card.tmdb_id || (source === 'tmdb' ? id : 0);
       var imdb = text$4(card.imdb_id);
       var kinopoisk = card.kinopoisk_id || 0;
+      // Series keep their existing keys; movies use a separate catalog namespace.
+      var media = text$4(card.media_type) || text$4(card.type);
+      var movie = media === 'movie' || media !== 'tv' && !card.name && !card.first_air_date && number$3(card.number_of_seasons) <= 0 && Boolean(text$4(card.release_date));
+      var prefix = movie ? 'movie:' : '';
       var aliases = [];
-      if (id !== undefined && id !== null) aliases.push('source:' + source + ':' + id);
-      if (tmdb) aliases.push('tmdb:' + tmdb);
-      if (imdb) aliases.push('imdb:' + imdb);
-      if (kinopoisk) aliases.push('kinopoisk:' + kinopoisk);
+      if (id !== undefined && id !== null) aliases.push(prefix + 'source:' + source + ':' + id);
+      if (tmdb) aliases.push(prefix + 'tmdb:' + tmdb);
+      if (imdb) aliases.push(prefix + 'imdb:' + imdb);
+      if (kinopoisk) aliases.push(prefix + 'kinopoisk:' + kinopoisk);
       return {
         key: aliases.find(function (value) {
-          return value.indexOf('tmdb:') === 0;
+          return /^(?:movie:)?tmdb:/.test(value);
         }) || aliases[0] || '',
         aliases: Array.from(new Set(aliases)),
         card: {
@@ -818,7 +822,7 @@
         });
         var allAliases = Array.from(new Set([].concat(_toConsumableArray(knownAliases), aliases)));
         var preferredKey = allAliases.find(function (alias) {
-          return alias.indexOf('tmdb:') === 0;
+          return /^(?:movie:)?tmdb:/.test(alias);
         }) || existingKey || sourceKey;
         var modes = {};
         matches.forEach(function (_ref7) {
