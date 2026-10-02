@@ -586,6 +586,21 @@
       var options = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : {};
       var session = null;
       var lastWrite = 0;
+      // Lampa destroys the previous player before launching the selected playlist item.
+      function rememberOnlineItems(current, items) {
+        if (current.mode !== 'online') return;
+        items.forEach(function (item) {
+          if (!item) return;
+          if (item.card && !sameCard(current.card, item.card)) return;
+          if (!item.card) item.card = current.card;
+          if (!resumeMetadata$1(item).mode) {
+            item.lampac_resume = _objectSpread2(_objectSpread2({}, item.lampac_resume || {}), {}, {
+              mode: 'online',
+              online: onlineRecipe(current.online)
+            });
+          }
+        });
+      }
       function stagePlayback(data) {
         if (!data) return null;
         var metadata = resumeMetadata$1(data);
@@ -599,25 +614,18 @@
           var hash = timelineHash$1(item);
           if (hash) byHash[hash] = item;
         });
-        if (metadata.mode === 'online' && metadata.online && card) {
-          return {
+        var recipe = metadata.mode === 'online' && metadata.online ? onlineRecipe(metadata.online) : nativeOnline && nativeOnline.recipe;
+        if (recipe && card) {
+          var staged = {
             card: card,
             mode: 'online',
-            online: onlineRecipe(metadata.online),
+            online: recipe,
             item: selected,
             byHash: byHash,
             progress: sanitizeProgress(selected.timeline || {})
           };
-        }
-        if (nativeOnline && card) {
-          return {
-            card: card,
-            mode: 'online',
-            online: nativeOnline.recipe,
-            item: selected,
-            byHash: byHash,
-            progress: sanitizeProgress(selected.timeline || {})
-          };
+          rememberOnlineItems(staged, items.concat([data]));
+          return staged;
         }
         var source = metadata.mode === 'torrent' && metadata.torrent ? _objectSpread2(_objectSpread2({}, data), metadata.torrent) : data;
         var torrent = usableTorrent(source);
@@ -703,6 +711,7 @@
         var hash = text$3(event.data.hash);
         var item = session.byHash[hash];
         if (!item) return;
+        if (session.mode === 'online' && !session.external && hash !== timelineHash$1(session.item)) return;
         var progress = sanitizeProgress(event.data.road);
         if (session.external && session.externalProgressSeen && hash === session.launchedHash && sameProgress(progress, session.launchedProgress)) return;
         if (session.external) session.externalProgressSeen = true;
@@ -714,6 +723,7 @@
       }
       function setPlaylist(playlist, position) {
         if (!session || !Array.isArray(playlist)) return;
+        rememberOnlineItems(session, playlist);
         session.byHash = {};
         playlist.forEach(function (item) {
           var hash = timelineHash$1(item);
@@ -1002,9 +1012,9 @@
                   };
                   _context.n = 2;
                   return adapter.resolve(card, record, {
-                    openMode: function openMode(mode) {
+                    openMode: function openMode(mode, activity) {
                       prepare();
-                      return typeof _openMode === 'function' ? _openMode(mode) : false;
+                      return typeof _openMode === 'function' ? _openMode(mode, activity) : false;
                     }
                   });
                 case 2:
@@ -1140,15 +1150,21 @@
     };
     var modeAction = function modeAction(root, mode) {
       var container = actionContainer(root);
-      var visible = container.length ? container.find('.view--' + mode).last() : null;
-      return visible && visible.length ? visible : root.find('.view--' + mode).last();
+      var actions = container.length ? container.find('.view--' + mode) : root.find('.view--' + mode);
+      if (!actions.length) actions = root.find('.view--' + mode);
+      var lampac = mode === 'online' ? actions.filter('.lampac--button') : null;
+      return lampac && lampac.length ? lampac.last() : actions.last();
     };
     var renderButton = function renderButton(Lampa, label) {
       return "<div class=\"full-start__button selector view--watch-resume\">\n    <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 5v14l11-7z\"/><path fill=\"currentColor\" d=\"M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-8-8z\"/></svg>\n    <span>".concat(translation(Lampa, 'watch_resume_continue', 'Continue'), " \xB7 ").concat(label, "</span>\n</div>");
     };
-    function openSameMode(event, mode) {
+    function openSameMode(event, mode, activity, Lampa) {
       if (mode !== 'online' && mode !== 'torrent') return false;
       try {
+        if (mode === 'online' && activity && activity.component && Lampa && Lampa.Activity && typeof Lampa.Activity.push === 'function') {
+          Lampa.Activity.push(activity);
+          return true;
+        }
         var root = rootFor(event);
         var action = root && modeAction(root, mode);
         if (!action || !action.length) return false;
@@ -1200,9 +1216,9 @@
                 if (Lampa.Loading && typeof Lampa.Loading.start === 'function') Lampa.Loading.start();
                 _context.p = 2;
                 _context.n = 3;
-                return orchestrator.resume(card, function (mode) {
+                return orchestrator.resume(card, function (mode, activity) {
                   stopLoading();
-                  return openSameMode(event, mode);
+                  return openSameMode(event, mode, activity, Lampa);
                 }, stopLoading);
               case 3:
                 _context.n = 5;
@@ -1384,6 +1400,20 @@
             var savedEpisode = record.episode || {};
             var savedHash = expectedTimelineHash(Lampa, card, savedEpisode);
             var replayComponent = text$2(record.online && record.online.component) || 'lampac';
+            var recipe = record.online || {};
+            var search = recipe.search || {};
+            var replayContext = {
+              url: '',
+              title: translation(Lampa, 'title_online', 'Online'),
+              component: replayComponent,
+              movie: card,
+              page: 1,
+              search: text$2(recipe.clarification) || text$2(search.title) || card.title || card.name,
+              search_one: text$2(search.title) || card.title || card.name,
+              search_two: text$2(search.original_title) || card.original_title || card.original_name,
+              clarification: Boolean(text$2(recipe.clarification)),
+              lampac_custom_select: text$2(recipe.balanser)
+            };
             var completed = number$1(record.progress && record.progress.percent) >= SEEN_PERCENT;
             var originActivity = Lampa.Activity && typeof Lampa.Activity.active === 'function' ? Lampa.Activity.active() : null;
             var candidates = restored.hasSeasonIndex ? [restored.seasonIndex] : seasonCandidates(card, record, restored.seasonIndex);
@@ -1408,6 +1438,7 @@
               if (!Lampa.Activity || typeof Lampa.Activity.active !== 'function') return;
               var active = Lampa.Activity.active();
               if (!active || active === originActivity || text$2(active.component) !== replayComponent) return;
+              if (active.movie && !sameCard(card, active.movie)) return;
               if (!replayActivity || awaitingReplacement && active !== replayActivity) {
                 replayActivity = active;
                 awaitingReplacement = false;
@@ -1439,13 +1470,13 @@
               if (settled) return;
               settled = true;
               cleanup();
-              closeReplayActivity();
+              // Later playlist items can still resolve their URLs through this activity.
               resolve({
                 launched: true
               });
             };
             var applyProgress = function applyProgress(data) {
-              if (!data || !samePlayback(data, selectedHash, savedEpisode.season, selectedEpisode)) return;
+              if (!triggered || !data || !samePlayback(data, selectedHash, savedEpisode.season, selectedEpisode)) return;
               var timeline = data.timeline || {
                 hash: selectedHash
               };
@@ -1476,8 +1507,14 @@
               var root = activityRoot(Lampa);
               if (!root) return;
               rememberReplayActivity();
+              if (!replayActivity || Lampa.Activity.active() !== replayActivity) return;
               var items = root.find('.online-prestige--full');
               if (!items || !items.length || typeof items.each !== 'function') return;
+              var activeBalanser = Lampa.Storage && typeof Lampa.Storage.field === 'function' ? text$2(Lampa.Storage.field('active_balanser')) : '';
+              if (activeBalanser && activeBalanser !== text$2(recipe.balanser)) {
+                fail('resume-online-source');
+                return;
+              }
               var currentIndex = -1;
               items.each(function (index, node) {
                 if (currentIndex >= 0) return;
@@ -1530,7 +1567,7 @@
             }, timeoutMs);
             Promise.resolve().then(function () {
               if (typeof openMode !== 'function') return false;
-              return openMode('online');
+              return openMode('online', replayContext);
             }).then(function (opened) {
               if (opened === false) {
                 fail('resume-online-action');

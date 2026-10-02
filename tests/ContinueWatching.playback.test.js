@@ -1,0 +1,319 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const {test} = require('node:test');
+
+const source = fs.readFileSync(path.join(__dirname, '..', 'ContinueWatching.js'), 'utf8');
+const marker = '    return exports;';
+const series = {source: 'tmdb', id: 4242, name: 'Resume fixture', original_name: 'Resume fixture', media_type: 'tv', number_of_seasons: 1};
+
+function loadApi($) {
+    return vm.runInNewContext(source.replace(marker,
+        '    exports.createCapture = createCapture; exports.createRecipeStore = createRecipeStore;\n' + marker),
+    {$, setTimeout, clearTimeout, setInterval, clearInterval, console});
+}
+
+function emitter() {
+    const listeners = [];
+    return {
+        follow(name, fn) {listeners.push({name, fn});},
+        remove(name, fn) {const i = listeners.findIndex(item => item.name === name && item.fn === fn); if (i >= 0) listeners.splice(i, 1);},
+        send(name, data) {listeners.filter(item => item.name === name).forEach(item => item.fn(data));},
+        count() {return listeners.length;}
+    };
+}
+
+function onlineRecord(episode = 1) {
+    return {mode: 'online', updated_at: 1000, episode: {season: 1, episode, timeline_hash: 'h' + episode},
+        progress: {time: 321, duration: 1800}, online: {component: 'lampac', balanser: 'phantom', season_index: 0, voice_index: 0, search: {title: series.name}}};
+}
+
+function fixture($) {
+    const values = {active_balanser: 'phantom', online_balanser: 'pidtor', online_last_balanser: {[series.id]: 'pidtor'}};
+    const roads = {};
+    let active = {component: 'lampac', movie: series};
+    let playlist = [];
+    let current = null;
+    let opened = false;
+    const played = [];
+    const Lampa = {
+        Storage: {get(key, fallback) {return key in values ? values[key] : fallback;}, set(key, value) {values[key] = value;}, field(key) {return values[key];}},
+        Activity: {active: () => active},
+        Platform: {is: () => false},
+        Player: {listener: emitter(), opened: () => opened,
+            play(data) {
+                let run = true;
+                this.listener.send('create', {data, abort() {run = false;}});
+                if (!run) return;
+                current = data;
+                opened = true;
+                played.push(data);
+                this.listener.send('start', data);
+            },
+            playlist(items) {Lampa.PlayerPlaylist.set(items);},
+            destroy() {
+                opened = false;
+                current = null;
+                this.listener.send('destroy', {});
+            }
+        },
+        PlayerPlaylist: {listener: emitter(),
+            get: () => playlist,
+            set(items) {
+                playlist = items;
+                const position = Math.max(0, playlist.findIndex(item => item.timeline.hash === (current && current.timeline.hash)));
+                this.listener.send('set', {playlist, position});
+            }
+        },
+        Timeline: {listener: emitter(),
+            view(hash) {return {...(roads[hash] || {}), hash, handler(percent, time, duration) {Lampa.Timeline.update({hash, percent, time, duration});}};},
+            update(data) {
+                const road = {time: data.time || 0, duration: data.duration || 0, percent: data.percent || 0};
+                roads[data.hash] = road;
+                this.listener.send('update', {data: {hash: data.hash, road}});
+            }
+        },
+        Listener: emitter()
+    };
+    // Lampa installs these core listeners before third-party plugins. In particular,
+    // select destroys playback before the plugin's select callback receives the event.
+    Lampa.Player.listener.follow('start', data => Lampa.PlayerPlaylist.set(data.playlist || playlist));
+    Lampa.Player.listener.follow('destroy', () => {playlist = [];});
+    Lampa.PlayerPlaylist.listener.follow('select', event => {
+        const retained = playlist;
+        Lampa.Player.destroy();
+        event.item.continue_play = true;
+        Lampa.Player.play(event.item);
+        Lampa.PlayerPlaylist.set(retained);
+    });
+    const api = loadApi($);
+    return {api, Lampa, values, roads, played, store: api.createRecipeStore(Lampa),
+        activate(value) {active = value;},
+        item(episode, time = 0) {return {url: 'https://media.invalid/' + episode + '.mp4', season: 1, episode, timeline: {...Lampa.Timeline.view('h' + episode), time, duration: 1800}};}
+    };
+}
+
+test('the core next-episode lifecycle updates the saved online episode', () => {
+    const f = fixture();
+    const capture = f.api.createCapture(f.Lampa, f.store);
+    capture.start();
+    try {
+        const playlist = [f.item(1, 321), f.item(2, 7), f.item(3)];
+        f.Lampa.Player.play({...playlist[0], isonline: true, playlist});
+        assert.equal(f.store.find(series).modes.online.episode.episode, 1);
+        f.Lampa.PlayerPlaylist.listener.send('select', {playlist, position: 1, item: playlist[1]});
+        const saved = f.store.find(series).modes.online;
+        assert.equal(saved.episode.episode, 2);
+        assert.equal(saved.episode.timeline_hash, 'h2');
+        assert.equal(saved.progress.time, 7);
+        assert.equal(saved.online.balanser, 'phantom');
+        assert.equal(f.api.createRecipeStore(f.Lampa).find(series).modes.online.episode.episode, 2);
+    } finally {capture.stop();}
+});
+
+test('late internal progress for the previous episode cannot undo playlist selection', () => {
+    const f = fixture();
+    const capture = f.api.createCapture(f.Lampa, f.store);
+    capture.start();
+    try {
+        const playlist = [f.item(1, 321), f.item(2, 7)];
+        f.Lampa.Player.play({...playlist[0], isonline: true, playlist});
+        f.Lampa.PlayerPlaylist.listener.send('select', {playlist, position: 1, item: playlist[1]});
+        f.Lampa.Timeline.update({hash: 'h1', time: 1790, duration: 1800, percent: 99});
+        f.Lampa.Player.destroy();
+        assert.equal(f.store.find(series).modes.online.episode.episode, 2);
+        assert.equal(f.store.find(series).modes.online.progress.time, 7);
+    } finally {capture.stop();}
+});
+
+function collection(nodes = []) {
+    return {
+        length: nodes.length,
+        find(selector) {return collection(nodes.flatMap(node => node.find ? node.find(selector) : []));},
+        last() {return collection(nodes.slice(-1));},
+        filter(selector) {return collection(nodes.filter(node => node.lampac && selector === '.lampac--button'));},
+        each(fn) {nodes.forEach((node, index) => fn(index, node)); return this;},
+        eq(index) {return collection(nodes.slice(index, index + 1));},
+        attr(name) {return nodes[0] && nodes[0][name];},
+        text() {return nodes[0] && nodes[0].text || '';},
+        trigger(name) {nodes.forEach(node => node.trigger && node.trigger(name)); return this;}
+    };
+}
+
+function nativeFixture({hiddenPhantom = false, duplicateButtons = false, destroyOnBack = false, missingPhantom = false, noEpisodes = false} = {}) {
+    const $ = node => collection([node]);
+    const f = fixture($);
+    let genericLaunches = 0;
+    let backCalls = 0;
+    let selectedSource = '';
+    const nodes = (noEpisodes ? [] : [1, 2]).map(episode => ({
+        find(selector) {
+            if (selector === '.time-line') return [{'data-hash': 'h' + episode}];
+            if (selector === '.online-prestige__episode-number') return [{text: String(episode).padStart(2, '0')}];
+            return [];
+        },
+        trigger() {f.Lampa.Player.play({...f.item(episode), isonline: true});}
+    }));
+    const replayRoot = collection([{find(selector) {return selector === '.online-prestige--full' ? nodes : [];}}]);
+    const origin = {component: 'full', movie: series};
+    f.activate(origin);
+    f.Lampa.Activity.push = context => {
+        const wanted = f.values.online_last_balanser[series.id];
+        selectedSource = !missingPhantom && wanted === 'phantom' && (!hiddenPhantom || context.lampac_custom_select === wanted) ? wanted : 'pidtor';
+        f.values.active_balanser = selectedSource;
+        f.activate({...context, activity: {render: () => replayRoot}});
+    };
+    f.Lampa.Activity.backward = () => {
+        backCalls++;
+        f.activate(origin);
+        if (destroyOnBack) f.Lampa.Player.destroy();
+    };
+    const lampac = {lampac: true, trigger() {f.Lampa.Activity.push({component: 'lampac', movie: series});}};
+    const generic = {trigger() {genericLaunches++; f.values.online_last_balanser[series.id] = 'pidtor'; f.Lampa.Activity.push({component: 'lampac', movie: series});}};
+    const actions = duplicateButtons ? [lampac, generic] : [lampac];
+    const container = {find: selector => selector === '.view--online' ? actions : []};
+    const root = collection([{find(selector) {
+        if (selector === '.full-start-new__buttons, .full-start__buttons') return [container];
+        if (selector === '.view--online') return actions;
+        return [];
+    }}]);
+    return {...f, event: {body: root}, genericLaunches: () => genericLaunches, backCalls: () => backCalls, selectedSource: () => selectedSource};
+}
+
+async function resumeNative(f, record = onlineRecord()) {
+    return f.api.createNativeOnline(f.Lampa, {timeoutMs: 100, pollMs: 1}).launch(series, record,
+        (mode, context) => f.api.openSameMode(f.event, mode, context, f.Lampa));
+}
+
+test('the legacy online action prefers the Lampac button when another plugin adds one', () => {
+    const f = nativeFixture({duplicateButtons: true});
+    assert.equal(f.api.openSameMode(f.event, 'online'), true);
+    assert.equal(f.genericLaunches(), 0);
+});
+
+test('Continue restores Phantom explicitly even when default source selection would choose PidTor', async () => {
+    const f = nativeFixture({hiddenPhantom: true, duplicateButtons: true});
+    await resumeNative(f);
+    assert.equal(f.selectedSource(), 'phantom');
+    assert.equal(f.genericLaunches(), 0);
+    assert.equal(f.played[0].timeline.time, 321);
+});
+
+test('successful native resume keeps its playback activity alive', async () => {
+    const f = nativeFixture({destroyOnBack: true});
+    await resumeNative(f);
+    assert.equal(f.Lampa.Player.opened(), true);
+    assert.equal(f.Lampa.Activity.active().component, 'lampac');
+    assert.equal(f.backCalls(), 0);
+});
+
+test('an unavailable saved provider fails before starting playback or changing history', async () => {
+    const f = nativeFixture({missingPhantom: true});
+    f.store.upsert(series, onlineRecord());
+    const before = JSON.stringify(f.store.read());
+    const listenersBefore = f.Lampa.Player.listener.count();
+    await assert.rejects(resumeNative(f), /resume-online-source/);
+    assert.equal(f.played.length, 0);
+    assert.equal(Object.keys(f.roads).length, 0);
+    assert.equal(JSON.stringify(f.store.read()), before);
+    assert.equal(f.Lampa.Player.listener.count(), listenersBefore);
+});
+
+test('a resume timeout cannot navigate away from another title opened while waiting', async () => {
+    const f = nativeFixture({noEpisodes: true});
+    const listenersBefore = f.Lampa.Player.listener.count();
+    const pending = resumeNative(f);
+    const checked = assert.rejects(pending, /resume-online-timeout/);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const other = {component: 'full', movie: {...series, id: 9999}};
+    f.activate(other);
+    await checked;
+    assert.equal(f.Lampa.Activity.active(), other);
+    assert.equal(f.backCalls(), 0);
+    assert.equal(f.played.length, 0);
+    assert.equal(f.Lampa.Player.listener.count(), listenersBefore);
+});
+
+test('the orchestrator forwards saved activity context to the online opener', async () => {
+    const f = nativeFixture({hiddenPhantom: true, duplicateButtons: true});
+    f.store.upsert(series, onlineRecord());
+    const orchestrator = f.api.createResumeOrchestrator({store: f.store,
+        online: f.api.createOnlineAdapter(f.Lampa, {}, f.api.createNativeOnline(f.Lampa, {timeoutMs: 100, pollMs: 1})),
+        torrent: {resolve() {throw new Error('unexpected torrent');}}, launcher: {launch() {throw new Error('unexpected launcher');}}});
+    await orchestrator.resume(series, (mode, context) => f.api.openSameMode(f.event, mode, context, f.Lampa));
+    assert.equal(f.selectedSource(), 'phantom');
+});
+
+test('saving the next episode retains unrelated titles and the torrent mode of this title', () => {
+    const f = fixture();
+    const unrelated = {...series, id: 9999, name: 'Unrelated'};
+    f.store.upsert(unrelated, onlineRecord(3));
+    const torrent = {mode: 'torrent', updated_at: 1000, episode: {season: 1, episode: 1}, progress: {time: 56},
+        torrent: {infohash: 'A'.repeat(40), magnet: 'magnet:?xt=urn:btih:' + 'A'.repeat(40), file_path: 'Episode 1.mkv', file_index: 1}};
+    f.store.upsert(series, torrent);
+    const beforeOther = JSON.stringify(f.store.find(unrelated));
+    const beforeTorrent = JSON.stringify(f.store.find(series).modes.torrent);
+    const capture = f.api.createCapture(f.Lampa, f.store);
+    capture.start();
+    try {
+        const playlist = [f.item(1, 321), f.item(2, 7)];
+        f.Lampa.Player.play({...playlist[0], isonline: true, playlist});
+        f.Lampa.PlayerPlaylist.listener.send('select', {playlist, position: 1, item: playlist[1]});
+        assert.equal(f.store.find(series).modes.online.episode.episode, 2);
+        assert.equal(JSON.stringify(f.store.find(unrelated)), beforeOther);
+        assert.equal(JSON.stringify(f.store.find(series).modes.torrent), beforeTorrent);
+    } finally {capture.stop();}
+});
+
+test('external online progress advances the episode and ignores the stale launch position', () => {
+    const f = fixture();
+    const capture = f.api.createCapture(f.Lampa, f.store);
+    capture.start();
+    try {
+        const playlist = [f.item(1, 321), f.item(2)];
+        const data = {...playlist[0], isonline: true, playlist};
+        f.Lampa.Player.play(data);
+        f.Lampa.Player.listener.send('external', data);
+        f.Lampa.Timeline.update({hash: 'h2', time: 45, duration: 1800, percent: 2.5});
+        assert.equal(f.store.find(series).modes.online.episode.episode, 2);
+        assert.equal(f.store.find(series).modes.online.progress.time, 45);
+        f.Lampa.Timeline.update({hash: 'h1', time: 321, duration: 1800, percent: 321 / 1800 * 100});
+        assert.equal(f.store.find(series).modes.online.episode.episode, 2);
+    } finally {capture.stop();}
+});
+
+test('playlist context is retained when the native plugin supplies its playlist after start', () => {
+    const f = fixture();
+    const capture = f.api.createCapture(f.Lampa, f.store);
+    capture.start();
+    try {
+        const playlist = [f.item(1, 321), f.item(2, 7)];
+        f.Lampa.Player.play({...playlist[0], isonline: true});
+        f.Lampa.Player.playlist(playlist);
+        f.Lampa.PlayerPlaylist.listener.send('select', {playlist, position: 1, item: playlist[1]});
+        assert.equal(f.store.find(series).modes.online.episode.episode, 2);
+        assert.equal(f.store.find(series).modes.online.online.balanser, 'phantom');
+    } finally {capture.stop();}
+});
+
+test('the next episode imports into another client through the existing synchronization schema', () => {
+    const sender = fixture();
+    const receiver = fixture();
+    receiver.store.upsert(series, onlineRecord());
+    const capture = sender.api.createCapture(sender.Lampa, sender.store);
+    capture.start();
+    try {
+        const playlist = [sender.item(1, 321), sender.item(2, 7)];
+        sender.Lampa.Player.play({...playlist[0], isonline: true, playlist});
+        sender.Lampa.PlayerPlaylist.listener.send('select', {playlist, position: 1, item: playlist[1]});
+        receiver.values.lampac_resume_history_v1 = JSON.parse(JSON.stringify(sender.values.lampac_resume_history_v1));
+        receiver.store.mergeSynced();
+        const saved = receiver.api.createRecipeStore(receiver.Lampa).find(series).modes.online;
+        assert.equal(saved.episode.episode, 2);
+        assert.equal(saved.progress.time, 7);
+        assert.equal(saved.online.balanser, 'phantom');
+    } finally {capture.stop();}
+});
