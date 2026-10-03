@@ -19,6 +19,7 @@ assert.notEqual(source, raw, 'closure instrumentation must match the plugin');
 
 function fixture(values = {}, route = () => ({data: []})) {
     const storage = {...values}, requests = [], notices = [], settings = [], lists = [], flows = [], launches = [];
+    const playerListeners = {}; let currentPlayData = {}, currentPlaylist = [];
     function Request() {
         this.timeout = () => {};
         this.silent = (url, ok, fail, data, options) => {
@@ -54,8 +55,18 @@ function fixture(values = {}, route = () => ({data: []})) {
             Timeline: {view: hash => ({hash})},
             Noty: {show: message => notices.push(message)},
             Controller: {enabled: () => ({name: 'content'}), toggle: () => {}},
-            Player: {listener: {follow: () => {}}, playdata: () => ({}),
-                runas: () => {}, playlist: () => {}, play: data => launches.push(data),
+            Player: {listener: {
+                follow: (event,handler) => (playerListeners[event] ||= []).push(handler),
+                remove: (event,handler) => {playerListeners[event] = (playerListeners[event] || []).filter(item=>item!==handler);}
+                ,send: (event,data) => (playerListeners[event] || []).slice().forEach(handler => handler(data))
+                }, playdata: () => currentPlayData,
+                runas: () => {}, playlist: items => {currentPlaylist = items;}, play: data => {
+                    // Actual Lampa core hides the quality selector by mutating a one-quality payload.
+                    if (data.quality && Object.keys(data.quality).length === 1) delete data.quality;
+                    currentPlayData = data;
+                    launches.push(data);
+                    (playerListeners.start || []).slice().forEach(handler => handler(data));
+                },
                 loading: () => {}, opened: () => false,
                 getUrlQuality: quality => quality[Object.keys(quality)[0]].url},
             PlayerPanel: {setFlows: items => flows.push(items)},
@@ -326,4 +337,41 @@ test('manual flow selection applies new metadata before sending the player event
     if (target.onSelect) target.onSelect(target);
     else f.context.Lampa.PlayerPanel.listener.send('flow',target);
     assert.deepEqual(observed, {event:'flow',url:'https://cdn.example/b',headers:{Referer:'B'}});
+});
+
+test('one-quality movie retains reserve flow menu and failover after Lampa deletes quality', async () => {
+    const f = fixture({player:'inner'});
+    f.playback.movie({translates:[
+        {method:'play',translate:'LostFilm',quality:{'1080p':'https://cdn.example/a'},headers:{Referer:'A'}},
+        {method:'play',translate:'LostFilm',quality:{'1080p':'https://cdn.example/b'},headers:{Referer:'B'}}]});
+    await new Promise(setImmediate);
+    assert(f.flows.some(items=>Array.isArray(items) && items.length===2), 'merged reserves remain selectable after core launch');
+    const data = f.launches[0];
+    f.playback.getNextVoice(data,[{name:'LostFilm',selected:true}],()=>{});
+    assert.equal(data.url,'https://cdn.example/b');
+    assert.deepEqual(plain(data.headers),{Referer:'B'});
+});
+
+test('one-quality TV episode retains reserve flows after the core launch', async () => {
+    const f = fixture({player:'inner'});
+    const episode = {number:2,title:'Episode 2',timeline:{hash:'episode2'},mark:()=>{}};
+    f.playback.tv({translates:[{name:'LostFilm'}],sources:[],plays:[
+        {e:2,method:'play',translate:'LostFilm',quality:{'720p':'https://cdn.example/e2a'}},
+        {e:2,method:'play',translate:'LostFilm',quality:{'720p':'https://cdn.example/e2b'}}]},[episode],episode);
+    await new Promise(setImmediate);
+    assert(f.flows.some(items=>Array.isArray(items) && items.length===2), 'episode reserves remain selectable after core launch');
+});
+
+test('TV reserve menu survives the core destroy/start cycle when advancing episodes', async () => {
+    const f = fixture({player:'inner'}); let playlist;
+    f.context.Lampa.Player.playlist = items => {playlist=items;};
+    const episodes = [2,3].map(number=>({number,title:'Episode '+number,timeline:{hash:'e'+number},mark:()=>{}}));
+    f.playback.tv({translates:[{name:'LostFilm'}],sources:[],plays:[
+        {e:2,method:'play',translate:'LostFilm',quality:{'720p':'https://cdn.example/e2a or https://cdn.example/e2b'}},
+        {e:3,method:'play',translate:'LostFilm',quality:{'720p':'https://cdn.example/e3a or https://cdn.example/e3b'}}]},episodes,episodes[0]);
+    await new Promise(setImmediate);
+    await new Promise(resolve=>playlist[1].url(resolve));
+    f.context.Lampa.Player.listener.send('destroy');
+    f.context.Lampa.Player.play(playlist[1]);
+    assert.deepEqual(plain(f.flows.at(-1)).map(flow=>flow.url),['https://cdn.example/e3a','https://cdn.example/e3b']);
 });
