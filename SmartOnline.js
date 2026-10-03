@@ -156,7 +156,7 @@ function _typeof(e) {
     s.sort((function(e, t) {
         return t.length - e.length
     }));
-    // SmartOnline 1.2.1: one Lampac server, merged online streams.
+    // SmartOnline 1.2.2: one Lampac server, merged online streams.
     var d = "fastonline_lampac_sources",
         lampacBase = "https://lampac.fun",
         g = '<svg viewBox="3 6 42 36" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="8" width="38" height="32" rx="2" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M13 8v32M5 16h8m-8 8h8m-8 8h8" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="24" r="9" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="24" r="3" fill="currentColor"/></svg>',
@@ -1548,7 +1548,7 @@ function _typeof(e) {
                     this.getNextVoice(data,data.voiceovers || [],function(url) {
                         Lampa.PlayerPanel.listener.send('flow',{url:url})
                     });
-                    if(data.url===rejected) Lampa.PlayerPanel.setQualitys(false,'');
+                    if(data.url===rejected) Lampa.PlayerPanel.quality(false,'');
                     return
                 }
                 var groups=data.quality || data.lampac_merged_quality, oldKey=Object.keys(groups).find(function(key) { return groups[key]===quality });
@@ -1570,7 +1570,7 @@ function _typeof(e) {
                 var sorted={}; Object.keys(groups).sort(function(a,b) { return qualityNumber(b)-qualityNumber(a) }).forEach(function(key) { sorted[key]=groups[key] });
                 data.quality=sorted; data.quality_switched=actualKey;
                 player.applyStreamData(data);
-                Lampa.PlayerPanel.setQualitys(sorted,data.url);
+                Lampa.PlayerPanel.quality(sorted,data.url);
                 player.setFlowsForQuality(data)
             }
         }, {
@@ -1598,7 +1598,7 @@ function _typeof(e) {
                     player.applyStreamData(data);
                     Lampa.PlayerVideo.destroy(true);
                     Lampa.PlayerVideo.setParams({});
-                    Lampa.PlayerPanel.setQualitys(quality,url);
+                    Lampa.PlayerPanel.quality(quality,url);
                     Lampa.PlayerPanel.setTracks(voices);
                     var restored=function() {
                         Lampa.PlayerVideo.listener.remove('loadeddata',restored);
@@ -2186,7 +2186,7 @@ function _typeof(e) {
             }});
     }! function() {
         if (!window.lampac_fastonline_plugin) {
-            window.lampac_fastonline_plugin = {version: "1.2.1", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
+            window.lampac_fastonline_plugin = {version: "1.2.2", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
                 if ("complite" == e.type) {
                     var root = e.object.activity.render();
                     if (root.find(".view--lampac-merged").length) return;
