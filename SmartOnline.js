@@ -156,7 +156,7 @@ function _typeof(e) {
     s.sort((function(e, t) {
         return t.length - e.length
     }));
-    // SmartOnline 1.2.0: one Lampac server, merged online streams.
+    // SmartOnline 1.2.1: one Lampac server, merged online streams.
     var d = "fastonline_lampac_sources",
         lampacBase = "https://lampac.fun",
         g = '<svg viewBox="3 6 42 36" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="8" width="38" height="32" rx="2" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M13 8v32M5 16h8m-8 8h8m-8 8h8" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="24" r="9" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="24" r="3" fill="currentColor"/></svg>',
@@ -1727,7 +1727,7 @@ function _typeof(e) {
                 var i = this,
                     a = [],
                     o = [],
-                    r = this.voice.get(), seriesPlaylist = a;
+                    r = (e.plays[0] && e.plays[0].translate_name) || this.voice.get(), seriesPlaylist = a;
                 Lampa.Controller.toggle("content"), M.sortDUBTranstale(e.translates);
                 var l = {};
                 for (var s in e.translates.forEach((function(e) {
@@ -2186,7 +2186,7 @@ function _typeof(e) {
             }});
     }! function() {
         if (!window.lampac_fastonline_plugin) {
-            window.lampac_fastonline_plugin = {version: "1.2.0", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
+            window.lampac_fastonline_plugin = {version: "1.2.1", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
                 if ("complite" == e.type) {
                     var root = e.object.activity.render();
                     if (root.find(".view--lampac-merged").length) return;
