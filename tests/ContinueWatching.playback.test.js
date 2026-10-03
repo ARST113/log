@@ -12,7 +12,7 @@ const series = {source: 'tmdb', id: 4242, name: 'Resume fixture', original_name:
 
 function loadApi($) {
     return vm.runInNewContext(source.replace(marker,
-        '    exports.createCapture = createCapture; exports.createRecipeStore = createRecipeStore;\n' + marker),
+        '    exports.createCapture = createCapture; exports.createRecipeStore = createRecipeStore; exports.renderButton = renderButton;\n' + marker),
     {$, setTimeout, clearTimeout, setInterval, clearInterval, console});
 }
 
@@ -208,6 +208,97 @@ test('successful native resume keeps its playback activity alive', async () => {
     assert.equal(f.Lampa.Player.opened(), true);
     assert.equal(f.Lampa.Activity.active().component, 'lampac');
     assert.equal(f.backCalls(), 0);
+});
+
+function directFixture({noEpisodes = false} = {}) {
+    const f = nativeFixture({hiddenPhantom: true});
+    const origin = f.Lampa.Activity.active();
+    let destroyed = 0;
+    const nodes = (noEpisodes ? [] : [1, 2]).map(episode => ({
+        find(selector) {
+            if (selector === '.time-line') return [{'data-hash': 'h' + episode}];
+            if (selector === '.online-prestige__episode-number') return [{text: String(episode).padStart(2, '0')}];
+            return [];
+        },
+        trigger() {f.Lampa.Player.play({...f.item(episode), isonline: true});}
+    }));
+    const root = collection([{find: selector => selector === '.online-prestige--full' ? nodes : []}]);
+    f.Lampa.Component = {get(name) {
+        if (name !== 'lampac') return null;
+        return function (context) {
+            this.create = () => root;
+            this.render = () => root;
+            this.initialize = () => {f.values.active_balanser = context.lampac_custom_select;};
+            this.destroy = () => {destroyed++;};
+        };
+    }};
+    return {...f, origin, destroyed: () => destroyed};
+}
+
+test('supported online components resume directly without opening the online screen', async () => {
+    const f = directFixture();
+    await resumeNative(f);
+    assert.equal(f.Lampa.Activity.active(), f.origin, 'the series card must stay active behind playback');
+    assert.equal(f.values.active_balanser, 'phantom');
+    assert.equal(f.played[0].timeline.time, 321);
+    assert.equal(f.destroyed(), 0, 'lazy playlist resolvers must remain available');
+    f.Lampa.Player.destroy();
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(f.destroyed(), 1, 'the detached resolver must be released on player close');
+});
+
+test('direct resume retains its resolver during the core next-episode transition', async () => {
+    const f = directFixture();
+    await resumeNative(f);
+    const playlist = [f.played[0], {...f.item(2), isonline: true}];
+    f.Lampa.PlayerPlaylist.set(playlist);
+    f.Lampa.PlayerPlaylist.listener.send('select', {playlist, position: 1, item: playlist[1]});
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(f.destroyed(), 0);
+    assert.equal(f.Lampa.Activity.active(), f.origin);
+    f.Lampa.Player.destroy();
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(f.destroyed(), 1);
+});
+
+test('direct resume dismisses the loading controller before the player starts', async () => {
+    const f = directFixture();
+    f.store.upsert(series, onlineRecord());
+    let prepared = false;
+    let preparedAtStart = false;
+    f.Lampa.Player.listener.follow('start', () => {preparedAtStart = prepared;});
+    const orchestrator = f.api.createResumeOrchestrator({store: f.store,
+        online: f.api.createOnlineAdapter(f.Lampa, {}, f.api.createNativeOnline(f.Lampa, {timeoutMs: 100, pollMs: 1})),
+        torrent: {resolve() {throw new Error('unexpected torrent');}}, launcher: {launch() {throw new Error('unexpected launcher');}}});
+    await orchestrator.resume(series, () => {throw new Error('unexpected online screen');}, () => {prepared = true;});
+    assert.equal(preparedAtStart, true, 'closing the loader after start steals navigation from the player');
+    f.Lampa.Player.destroy();
+    await new Promise(resolve => setTimeout(resolve, 5));
+});
+
+test('a detached resume releases its resolver and listeners when the source times out', async () => {
+    const f = directFixture({noEpisodes: true});
+    const listenersBefore = f.Lampa.Player.listener.count();
+    await assert.rejects(resumeNative(f), /resume-online-timeout/);
+    assert.equal(f.Lampa.Activity.active(), f.origin);
+    assert.equal(f.destroyed(), 1);
+    assert.equal(f.Lampa.Player.listener.count(), listenersBefore);
+    assert.equal(f.played.length, 0);
+});
+
+test('the Continue icon reflects the saved percentage rather than a fixed arc', () => {
+    const f = fixture();
+    const arc = progress => {
+        const html = f.api.renderButton(f.Lampa, 'S01E01', progress);
+        const match = html.match(/stroke-dasharray="([\d.]+) 65\.97"/);
+        assert.ok(match, 'Continue must display a watched-progress circle');
+        return Number(match[1]);
+    };
+    assert.ok(Math.abs(arc({percent: 25}) - 16.49) < 0.02);
+    assert.ok(Math.abs(arc({percent: 75}) - 49.48) < 0.02);
+    assert.equal(arc({percent: 120}), 65.97);
+    assert.equal(arc({percent: -10}), 0);
+    assert.ok(Math.abs(arc({time: 900, duration: 1800}) - 32.98) < 0.02);
 });
 
 test('an unavailable saved provider fails before starting playback or changing history', async () => {

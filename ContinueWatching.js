@@ -1012,6 +1012,7 @@
                   };
                   _context.n = 2;
                   return adapter.resolve(card, record, {
+                    beforeLaunch: prepare,
                     openMode: function openMode(mode, activity) {
                       prepare();
                       return typeof _openMode === 'function' ? _openMode(mode, activity) : false;
@@ -1155,8 +1156,9 @@
       var lampac = mode === 'online' ? actions.filter('.lampac--button') : null;
       return lampac && lampac.length ? lampac.last() : actions.last();
     };
-    var renderButton = function renderButton(Lampa, label) {
-      return "<div class=\"full-start__button selector view--watch-resume\">\n    <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 5v14l11-7z\"/><path fill=\"currentColor\" d=\"M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-8-8z\"/></svg>\n    <span>".concat(translation(Lampa, 'watch_resume_continue', 'Continue'), " \xB7 ").concat(label, "</span>\n</div>");
+    var renderButton = function renderButton(Lampa, label, progress) {
+      var dash = (sanitizeProgress(progress).percent * 65.97 / 100).toFixed(2);
+      return "<div class=\"full-start__button selector view--watch-resume\">\n    <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\"><circle cx=\"12\" cy=\"12\" r=\"10.5\" stroke=\"currentColor\" stroke-width=\"1.7\" opacity=\"0.22\"/><circle class=\"watch-resume__progress\" cx=\"12\" cy=\"12\" r=\"10.5\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-dasharray=\"".concat(dash, " 65.97\" transform=\"rotate(-90 12 12)\"/><path fill=\"currentColor\" d=\"M9 7v10l8-5z\"/></svg>\n    <span>").concat(translation(Lampa, 'watch_resume_continue', 'Continue'), " \xB7 ").concat(label, "</span>\n</div>");
     };
     function openSameMode(event, mode, activity, Lampa) {
       if (mode !== 'online' && mode !== 'torrent') return false;
@@ -1190,11 +1192,22 @@
         var card = event.data && event.data.movie;
         var root = rootFor(event);
         if (!root) return;
-        root.find('.view--watch-resume').remove();
-        if (!isSeries(card)) return;
+        var existing = root.find('.view--watch-resume');
+        if (!isSeries(card)) {
+          existing.remove();
+          return;
+        }
         var record = latestRecord(store.find(card));
-        if (!record) return;
-        var button = $(renderButton(Lampa, labelFor(record)));
+        if (!record) {
+          existing.remove();
+          return;
+        }
+        if (existing.length) {
+          existing.find('.watch-resume__progress').attr('stroke-dasharray', (sanitizeProgress(record.progress).percent * 65.97 / 100).toFixed(2) + ' 65.97');
+          existing.find('span').text(translation(Lampa, 'watch_resume_continue', 'Continue') + ' · ' + labelFor(record));
+          return;
+        }
+        var button = $(renderButton(Lampa, labelFor(record), record.progress));
         button.on('hover:enter', /*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee() {
           var loading, stopLoading;
           return _regenerator().w(function (_context) {
@@ -1390,7 +1403,7 @@
       var timeoutMs = Math.max(1, number$1(options.timeoutMs) || DEFAULT_TIMEOUT_MS);
       var pollMs = Math.max(1, number$1(options.pollMs) || DEFAULT_POLL_MS);
       return {
-        launch: function launch(card, record, openMode) {
+        launch: function launch(card, record, openMode, beforeLaunch) {
           var restored = restoreChoices(Lampa, card, record);
           if (!Lampa.Player || !Lampa.Player.listener) {
             return Promise.reject(new Error('resume-online-player'));
@@ -1419,6 +1432,8 @@
             var candidates = restored.hasSeasonIndex ? [restored.seasonIndex] : seasonCandidates(card, record, restored.seasonIndex);
             var candidateIndex = 0;
             var replayActivity = null;
+            var detached = null;
+            var releaseTimer;
             var awaitingReplacement = false;
             var selectedHash = '';
             var selectedEpisode = number$1(savedEpisode.episode);
@@ -1434,6 +1449,46 @@
             var timeout;
             var settled = false;
             var triggered = false;
+            var destroyDetached = function destroyDetached() {
+              clearTimeout(releaseTimer);
+              player.remove('destroy', releaseAfterClose);
+              if (!detached) return;
+              var instance = detached;
+              detached = null;
+              if (typeof instance.destroy === 'function') instance.destroy();
+              // Match activity teardown: late provider callbacks cannot redraw it.
+              Object.keys(instance).forEach(function (key) {
+                if (typeof instance[key] === 'function') instance[key] = function () {};
+              });
+              instance.destroyed = true;
+            };
+            function releaseAfterClose() {
+              clearTimeout(releaseTimer);
+              // Core playlist selection destroys and recreates playback in one turn.
+              releaseTimer = setTimeout(function () {
+                if (!Lampa.Player.opened || !Lampa.Player.opened()) destroyDetached();
+              }, 0);
+            }
+            var openDetached = function openDetached() {
+              var Constructor = Lampa.Component && typeof Lampa.Component.get === 'function' && Lampa.Component.get(replayComponent);
+              if (typeof Constructor !== 'function') return false;
+              var instance = new Constructor(replayContext);
+              if (typeof instance.initialize !== 'function' || typeof instance.render !== 'function') {
+                if (typeof instance.destroy === 'function') instance.destroy();
+                return false;
+              }
+              detached = instance;
+              instance.activity = {
+                component: instance,
+                object: replayContext,
+                loader: function loader() {},
+                toggle: function toggle() {},
+                render: function render() { return instance.render(); }
+              };
+              if (typeof instance.create === 'function') instance.create();
+              instance.initialize();
+              return true;
+            };
             var rememberReplayActivity = function rememberReplayActivity() {
               if (!Lampa.Activity || typeof Lampa.Activity.active !== 'function') return;
               var active = Lampa.Activity.active();
@@ -1463,6 +1518,7 @@
               if (settled) return;
               settled = true;
               cleanup();
+              destroyDetached();
               closeReplayActivity();
               reject(code instanceof Error ? code : new Error(code));
             };
@@ -1470,7 +1526,8 @@
               if (settled) return;
               settled = true;
               cleanup();
-              // Later playlist items can still resolve their URLs through this activity.
+              // Later playlist items retain closures over the provider's resolver.
+              if (detached) player.follow('destroy', releaseAfterClose);
               resolve({
                 launched: true
               });
@@ -1494,9 +1551,15 @@
               if (triggered) fail('resume-online-destroyed');
             }
             var tryNextSeason = function tryNextSeason() {
-              if (restored.hasSeasonIndex || !savedHash || candidateIndex + 1 >= candidates.length || !Lampa.Activity || typeof Lampa.Activity.replace !== 'function') return false;
+              if (restored.hasSeasonIndex || !savedHash || candidateIndex + 1 >= candidates.length) return false;
+              if (!detached && (!Lampa.Activity || typeof Lampa.Activity.replace !== 'function')) return false;
               candidateIndex++;
               setSeasonIndex(Lampa, card, restored, candidates[candidateIndex]);
+              if (detached) {
+                destroyDetached();
+                openDetached();
+                return true;
+              }
               awaitingReplacement = true;
               Lampa.Activity.replace();
               rememberReplayActivity();
@@ -1504,10 +1567,16 @@
             };
             var inspect = function inspect() {
               if (settled || triggered || typeof $ !== 'function') return;
-              var root = activityRoot(Lampa);
+              if (detached && Lampa.Activity && typeof Lampa.Activity.active === 'function' && Lampa.Activity.active() !== originActivity) {
+                fail('resume-online-cancelled');
+                return;
+              }
+              var root = detached ? detached.render() : activityRoot(Lampa);
               if (!root) return;
-              rememberReplayActivity();
-              if (!replayActivity || Lampa.Activity.active() !== replayActivity) return;
+              if (!detached) {
+                rememberReplayActivity();
+                if (!replayActivity || Lampa.Activity.active() !== replayActivity) return;
+              }
               var items = root.find('.online-prestige--full');
               if (!items || !items.length || typeof items.each !== 'function') return;
               var activeBalanser = Lampa.Storage && typeof Lampa.Storage.field === 'function' ? text$2(Lampa.Storage.field('active_balanser')) : '';
@@ -1555,6 +1624,7 @@
                 }, selectedProgress));
               }
               triggered = true;
+              if (typeof beforeLaunch === 'function') beforeLaunch();
               target.trigger('hover:enter');
             };
             player.follow('create', onCreate);
@@ -1566,6 +1636,7 @@
               return fail('resume-online-timeout');
             }, timeoutMs);
             Promise.resolve().then(function () {
+              if (openDetached()) return true;
               if (typeof openMode !== 'function') return false;
               return openMode('online', replayContext);
             }).then(function (opened) {
@@ -1598,7 +1669,7 @@
                     _context.n = 1;
                     break;
                   }
-                  return _context.a(2, _native.launch(card, record, options.openMode));
+                  return _context.a(2, _native.launch(card, record, options.openMode, options.beforeLaunch));
                 case 1:
                   _context.n = 2;
                   return bridge.resolve({
