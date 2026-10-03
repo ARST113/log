@@ -1,7 +1,7 @@
 (function() {
   'use strict';
 
-  var VERSION = '2.0.13-own-server-settings';
+  var VERSION = '2.0.15-own-server-settings';
   var RUNTIME_KEY = '__lampacAudiobooks2Runtime';
   var previousRuntime = window[RUNTIME_KEY];
 
@@ -466,12 +466,19 @@
         field: { name: isKey ? 'Ключ доступа' : 'Свой сервер', description: isKey ? 'Ключ вашего бэкенда. Пустое значение удаляет сохранённый ключ.' : 'HTTP(S)-адрес вашего бэкенда.' },
         onChange: function(value) { return updateApiConfiguration(name, value); },
         onRender: function(row) {
+          var valueNode = row.find('.settings-param__value');
+          if (!valueNode.length) {
+            valueNode = $('<div class="settings-param__value"></div>');
+            var label = row.find('.settings-param__name');
+            if (label.length) valueNode.insertAfter(label);
+            else row.append(valueNode);
+          }
           function displayValue() {
-            row.find('.settings-param__value').text(isKey ? (API_KEY ? 'Сохранён' : 'Не указан') : (API_BASE.replace(/\/access\/[^\/?#]+/g, '/access/[redacted]') || 'Не указан'));
+            valueNode.text(isKey ? (API_KEY ? 'Сохранён' : 'Не указан') : (API_BASE.replace(/\/access\/[^\/?#]+/g, '/access/[redacted]') || 'Не указан'));
           }
           displayValue();
           row.on('hover:enter', function() {
-            Lampa.Input.edit({ title: spec.field.name, value: isKey ? '' : API_BASE, placeholder: isKey ? 'Введите ключ доступа' : 'Адрес своего сервера', nosave: true, free: true, nomic: true }, function(value) {
+            Lampa.Input.edit({ title: spec.field.name, value: isKey ? API_KEY : API_BASE, password: isKey, placeholder: isKey ? 'Введите ключ доступа' : 'Адрес своего сервера', nosave: true, free: true, nomic: true }, function(value) {
               if (value !== null && spec.onChange(value)) displayValue();
             });
           });

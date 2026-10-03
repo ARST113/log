@@ -90,12 +90,34 @@ assert.match(notices[0], /сервер/i);
 assert.equal(components.length, 1, 'server settings are available before configuration');
 assert.deepEqual(settings.map(spec => spec.param.name), ['audiobooks2_api_base', 'audiobooks2_api_key']);
 let editOptions;
+let editCallback;
 let displayedKey;
 let enter;
-fullContext.Lampa.Input = { edit: options => editOptions = options };
-settings[1].onRender({ find: () => ({ text: value => displayedKey = value }), on: (event, callback) => enter = callback });
+let valueCreated = false;
+fullContext.Lampa.Input = { edit: (options, callback) => { editOptions = options; editCallback = callback; } };
+const valueNode = { length: 1, text: value => displayedKey = value, insertAfter: () => valueCreated = true };
+fullContext.$ = html => {
+  assert.match(html, /settings-param__value/);
+  return valueNode;
+};
+const staticRow = {
+  find: selector => selector === '.settings-param__value'
+    ? (valueCreated ? valueNode : { length: 0, text() {} })
+    : { length: 1 },
+  append: () => valueCreated = true,
+  on: (event, callback) => enter = callback
+};
+settings[1].onRender(staticRow);
+assert.equal(valueCreated, true, 'static setting creates a visible value when Lampa omits the container');
 assert.equal(displayedKey, 'Не указан', 'key value is not displayed');
 enter();
 assert.equal(editOptions.nosave, true, 'key editor does not retain input history');
-assert.equal(editOptions.value, '', 'key editor never exposes an existing key');
+assert.equal(editOptions.password, true, 'key editor masks its input');
+settings[1].onChange('secret-demo');
+settings[1].onRender(staticRow);
+assert.equal(displayedKey, 'Сохранён', 'saved key displays only its status');
+enter();
+assert.equal(editOptions.value, 'secret-demo', 'existing key initializes the masked editor');
+editCallback(editOptions.value); // Lampa Back returns the initial value, rather than null.
+assert.equal(displayedKey, 'Сохранён', 'canceling the editor preserves the saved key');
 console.log('PASS: API configuration, authenticated URLs, blank startup, local settings');
