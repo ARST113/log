@@ -1,7 +1,7 @@
 (function() {
   'use strict';
 
-  var VERSION = '2.0.10-own-server';
+  var VERSION = '2.0.11-own-server-key';
   var RUNTIME_KEY = '__lampacAudiobooks2Runtime';
   var previousRuntime = window[RUNTIME_KEY];
 
@@ -134,6 +134,7 @@
   var DEFAULT_API_BASE = '';
   var PRESET_API_BASE = window.lampacAudiobooks2ApiBase || '';
   var API_BASE = '';
+  var API_KEY = '';
   var API_CONFIGURATION_ERROR = 'Укажите адрес своего сервера в window.lampacAudiobooks2ApiBase или загрузите audiobook2.js с собственного бэкенда.';
   var BOOK_CACHE = window.__lampacAudiobooks2BookCache || {};
   window.__lampacAudiobooks2BookCache = BOOK_CACHE;
@@ -346,10 +347,9 @@
     return /^https?:\/\/[^\/?#\s]+(?:\/[^?#\s]*)?$/i.test(value) ? value : '';
   }
 
-  function scriptApiBase() {
+  function pluginScriptSource() {
     var src = '';
     var scripts;
-    var match;
 
     if (document.currentScript && document.currentScript.src) {
       src = document.currentScript.src;
@@ -365,6 +365,13 @@
       }
     }
 
+    return src;
+  }
+
+  function scriptApiBase() {
+    var src = pluginScriptSource();
+    var match;
+
     match = src.match(/[?&](?:api|server)=([^&#]+)/i);
     if (match && match[1]) {
       try {
@@ -374,7 +381,7 @@
       }
     }
 
-    match = src.match(/^(https?:\/\/[^\/?#]+)/i);
+    match = src.match(/^(https?:\/\/[^?#]+)\/[^\/?#]+(?:[?#]|$)/i);
     return match && match[1] ? cleanApiBase(match[1]) : '';
   }
 
@@ -383,7 +390,21 @@
     return scriptApiBase();
   }
 
+  function detectApiKey() {
+    var match;
+    if (window.lampacAudiobooks2ApiKey) return window.lampacAudiobooks2ApiKey.toString();
+    match = pluginScriptSource().match(/[?&]api_key=([^&#]+)/i);
+    if (match && match[1]) {
+      try { return decodeURIComponent(match[1]); } catch (e) { return ''; }
+    }
+    try {
+      if (window.Lampa && Lampa.Storage && Lampa.Storage.get) return (Lampa.Storage.get('audiobooks2_api_key', '') || '').toString();
+    } catch (e) {}
+    return '';
+  }
+
   API_BASE = detectApiBase();
+  API_KEY = detectApiKey();
   window.lampacAudiobooks2ApiBase = API_BASE;
   window.lampacAudiobooks2Debug.apiBase = API_BASE;
   window.lampacAudiobooks2Debug.configurationError = API_BASE ? '' : API_CONFIGURATION_ERROR;
@@ -393,12 +414,18 @@
     return url + (url.indexOf('?') >= 0 ? '&' : '?') + encodeURIComponent(key) + '=' + encodeURIComponent(value);
   }
 
+  function withApiKey(url) {
+    if (!API_KEY || !API_BASE || /[?&]api_key=/i.test(url)) return url;
+    if (url !== API_BASE && url.indexOf(API_BASE + '/') !== 0 && url.indexOf(API_BASE + '?') !== 0) return url;
+    return addParam(url, 'api_key', API_KEY);
+  }
+
   function absoluteUrl(url) {
     if (!url) return '';
-    if (/^https?:\/\//i.test(url)) return url;
-    if (url.indexOf('//') === 0) return (location.protocol || 'https:') + url;
-    if (url.charAt(0) === '/') return API_BASE + url;
-    return API_BASE ? API_BASE + '/' + url.replace(/^\/+/, '') : url;
+    if (/^https?:\/\//i.test(url)) return withApiKey(url);
+    if (url.indexOf('//') === 0) return withApiKey((location.protocol || 'https:') + url);
+    if (url.charAt(0) === '/') return withApiKey(API_BASE + url);
+    return API_BASE ? withApiKey(API_BASE + '/' + url.replace(/^\/+/, '')) : url;
   }
 
   function normalizeAudiobookImageUrl(url) {
@@ -414,7 +441,7 @@
     var https = value.lastIndexOf('https://', index);
     var pos = Math.max(http, https);
 
-    if (pos >= 0) return value.slice(pos);
+    if (pos >= 0) return absoluteUrl(value.slice(pos));
     return absoluteUrl(value);
   }
 
@@ -436,7 +463,7 @@
 
   function audioUrl(url) {
     var full = absoluteUrl(url);
-    var origin = API_BASE || (window.location && window.location.origin) || '';
+    var origin = API_BASE;
 
     if (!full) return '';
 
@@ -468,7 +495,7 @@
       if (profile && url.indexOf('profile_id=') < 0) url = addParam(url, 'profile_id', profile);
     }
 
-    return url;
+    return withApiKey(url);
   }
 
   function escapeHtml(value) {
