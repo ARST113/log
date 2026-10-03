@@ -563,3 +563,12 @@ test('positive video dimensions below the smallest known tier are still rejected
     assert.equal(paused,1);
     assert.equal(switched,'https://cdn.example/good');
 });
+
+test('initial TV translation selection reflects the source actually chosen by the resolver', async () => {
+    const f=fixture({player:'inner'});
+    const episode={number:1,title:'Episode 1',timeline:{hash:'e1'},mark:()=>{}};
+    f.playback.tv({translates:[{name:'Дубляж'},{name:'Кубик в Кубе'}],sources:[],plays:[
+        {e:1,method:'play',translate_name:'Кубик в Кубе',quality:{'1080p':'https://cdn.example/cube'}}]},[episode],episode);
+    await new Promise(setImmediate);
+    assert.equal(f.launches[0].voiceovers.find(voice=>voice.selected).name,'Кубик в Кубе');
+});
