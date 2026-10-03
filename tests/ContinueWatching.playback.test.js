@@ -12,7 +12,7 @@ const series = {source: 'tmdb', id: 4242, name: 'Resume fixture', original_name:
 
 function loadApi($) {
     return vm.runInNewContext(source.replace(marker,
-        '    exports.createCapture = createCapture; exports.createRecipeStore = createRecipeStore; exports.renderButton = renderButton;\n' + marker),
+        '    exports.createCapture = createCapture; exports.createRecipeStore = createRecipeStore; exports.renderButton = renderButton; exports.chooseResumeTarget = chooseResumeTarget;\n' + marker),
     {$, setTimeout, clearTimeout, setInterval, clearInterval, console});
 }
 
@@ -183,8 +183,8 @@ function nativeFixture({hiddenPhantom = false, duplicateButtons = false, destroy
     return {...f, event: {body: root}, genericLaunches: () => genericLaunches, backCalls: () => backCalls, selectedSource: () => selectedSource};
 }
 
-async function resumeNative(f, record = onlineRecord()) {
-    return f.api.createNativeOnline(f.Lampa, {timeoutMs: 100, pollMs: 1}).launch(series, record,
+async function resumeNative(f, record = onlineRecord(), card = series) {
+    return f.api.createNativeOnline(f.Lampa, {timeoutMs: 100, pollMs: 1}).launch(card, record,
         (mode, context) => f.api.openSameMode(f.event, mode, context, f.Lampa));
 }
 
@@ -210,25 +210,33 @@ test('successful native resume keeps its playback activity alive', async () => {
     assert.equal(f.backCalls(), 0);
 });
 
-function directFixture({noEpisodes = false} = {}) {
+function directFixture({noEpisodes = false, seasonEpisodes = [[1, 2]]} = {}) {
     const f = nativeFixture({hiddenPhantom: true});
     const origin = f.Lampa.Activity.active();
     let destroyed = 0;
-    const nodes = (noEpisodes ? [] : [1, 2]).map(episode => ({
+    const nodesFor = seasonIndex => (noEpisodes ? [] : seasonEpisodes[seasonIndex] || []).map(episode => ({
         find(selector) {
-            if (selector === '.time-line') return [{'data-hash': 'h' + episode}];
+            if (selector === '.time-line') return [{'data-hash': seasonIndex ? String(seasonIndex + 1) + episode + series.original_name : 'h' + episode}];
             if (selector === '.online-prestige__episode-number') return [{text: String(episode).padStart(2, '0')}];
             return [];
         },
-        trigger() {f.Lampa.Player.play({...f.item(episode), isonline: true});}
+        trigger() {
+            const hash = seasonIndex ? String(seasonIndex + 1) + episode + series.original_name : 'h' + episode;
+            f.Lampa.Player.play({...f.item(episode), season:seasonIndex + 1, timeline:{...f.Lampa.Timeline.view(hash), duration:1800}, isonline:true});
+        }
     }));
-    const root = collection([{find: selector => selector === '.online-prestige--full' ? nodes : []}]);
+    f.Lampa.Utils = {hash: value => value};
     f.Lampa.Component = {get(name) {
         if (name !== 'lampac') return null;
         return function (context) {
+            let nodes = [];
+            const root = collection([{find: selector => selector === '.online-prestige--full' ? nodes : []}]);
             this.create = () => root;
             this.render = () => root;
-            this.initialize = () => {f.values.active_balanser = context.lampac_custom_select;};
+            this.initialize = () => {
+                f.values.active_balanser = context.lampac_custom_select;
+                nodes = nodesFor(f.values.online_choice_phantom[series.id].season);
+            };
             this.destroy = () => {destroyed++;};
         };
     }};
@@ -299,6 +307,85 @@ test('the Continue icon reflects the saved percentage rather than a fixed arc', 
     assert.equal(arc({percent: 120}), 65.97);
     assert.equal(arc({percent: -10}), 0);
     assert.ok(Math.abs(arc({time: 900, duration: 1800}) - 32.98) < 0.02);
+});
+
+test('resume keeps the current episode below 90 percent and advances at 90 percent', () => {
+    const f = fixture();
+    const playlist = [f.item(1), f.item(2)];
+    for (const percent of [85, 89.99]) {
+        const record = {...onlineRecord(), progress:{percent, time:percent * 18, duration:1800}};
+        const target = f.api.chooseResumeTarget(record, playlist);
+        assert.equal(target.index, 0);
+        assert.equal(target.time, record.progress.time);
+    }
+    for (const percent of [90, 99, 100]) {
+        const target = f.api.chooseResumeTarget({...onlineRecord(), progress:{percent, time:percent * 18, duration:1800}}, playlist);
+        assert.equal(target.index, 1);
+        assert.equal(target.progress.time, 0);
+        assert.equal(target.progress.percent, 0);
+    }
+});
+
+test('the completion rule also derives 90 percent from elapsed time and duration', () => {
+    const f = fixture();
+    const target = f.api.chooseResumeTarget({...onlineRecord(), progress:{time:1620, duration:1800}}, [f.item(1), f.item(2)]);
+    assert.equal(target.index, 1);
+    assert.equal(target.progress.time, 0);
+});
+
+test('a completed final playlist item cannot silently restart the same watched episode', () => {
+    const f = fixture();
+    const record = {...onlineRecord(2), progress:{time:1620, duration:1800, percent:90}};
+    assert.throws(() => f.api.chooseResumeTarget(record, [f.item(1), f.item(2)]), /resume-next-episode-missing/);
+    assert.equal(record.progress.time, 1620);
+});
+
+test('the button offers the next episode at 90 percent and Continue below the threshold', () => {
+    const f = fixture();
+    assert.match(f.api.renderButton(f.Lampa, 'S01E01', {percent:89.99}), /Continue.*S01E01/);
+    const next = f.api.renderButton(f.Lampa, 'S01E01', {percent:90});
+    assert.match(next, /Next episode/);
+    assert.doesNotMatch(next, /Continue.*S01E01/);
+});
+
+test('native direct resume starts the next episode from zero at the completion threshold', async () => {
+    const f = directFixture();
+    await resumeNative(f, {...onlineRecord(), progress:{time:1620, duration:1800, percent:90}});
+    assert.equal(f.played[0].episode, 2);
+    assert.equal(f.played[0].timeline.time, 0);
+    f.Lampa.Player.destroy();
+    await new Promise(resolve => setTimeout(resolve, 5));
+});
+
+test('native direct resume derives completion when only time and duration were saved', async () => {
+    const f = directFixture();
+    await resumeNative(f, {...onlineRecord(), progress:{time:1620, duration:1800}});
+    assert.equal(f.played[0].episode, 2);
+    assert.equal(f.played[0].timeline.time, 0);
+    f.Lampa.Player.destroy();
+    await new Promise(resolve => setTimeout(resolve, 5));
+});
+
+test('completion of the last episode resumes the first episode of the next season', async () => {
+    const f = directFixture({seasonEpisodes:[[1,2],[1,2]]});
+    const record = {...onlineRecord(2), progress:{time:1620, duration:1800, percent:90}};
+    await resumeNative(f, record, {...series, number_of_seasons:2});
+    assert.equal(f.played[0].season, 2);
+    assert.equal(f.played[0].episode, 1);
+    assert.equal(f.played[0].timeline.time, 0);
+    assert.equal(record.episode.season, 1);
+    assert.equal(record.episode.episode, 2);
+    f.Lampa.Player.destroy();
+    await new Promise(resolve => setTimeout(resolve, 5));
+});
+
+test('a completed final series episode keeps its progress when no next season exists', async () => {
+    const f = directFixture();
+    const record = {...onlineRecord(2), progress:{time:1620, duration:1800, percent:90}};
+    await assert.rejects(resumeNative(f, record), /resume-next-episode-missing/);
+    assert.equal(f.played.length, 0);
+    assert.equal(f.roads.h2, undefined);
+    assert.equal(record.progress.time, 1620);
 });
 
 test('loading the plugin after a full card restores its Continue button immediately', () => {

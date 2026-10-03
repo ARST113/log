@@ -18,6 +18,10 @@
         ru: 'Продолжить',
         en: 'Continue'
       },
+      watch_resume_next: {
+        ru: 'Следующая серия',
+        en: 'Next episode'
+      },
       watch_resume_loading: {
         ru: 'Восстанавливаем просмотр',
         en: 'Restoring playback'
@@ -937,6 +941,9 @@
     }
 
     var SEEN_PERCENT$1 = 90;
+    function episodeCompleted(progress) {
+      return sanitizeProgress(progress).percent >= SEEN_PERCENT$1;
+    }
     function selectLastMode(history) {
       if (!history || !history.modes) return null;
       return Object.values(history.modes).filter(function (record) {
@@ -957,8 +964,9 @@
       });
       if (index < 0) throw new Error('resume-episode-missing');
       var progress = record && record.progress ? record.progress : {};
-      if (Number(progress.percent) >= SEEN_PERCENT$1) {
-        var nextIndex = index + 1 < items.length ? index + 1 : index;
+      if (episodeCompleted(progress)) {
+        if (index + 1 >= items.length) throw new Error('resume-next-episode-missing');
+        var nextIndex = index + 1;
         var item = items[nextIndex];
         var duration = Number(item && item.timeline && item.timeline.duration);
         return {
@@ -1156,9 +1164,12 @@
       var lampac = mode === 'online' ? actions.filter('.lampac--button') : null;
       return lampac && lampac.length ? lampac.last() : actions.last();
     };
+    function resumeButtonText(Lampa, label, progress) {
+      return episodeCompleted(progress) ? translation(Lampa, 'watch_resume_next', 'Next episode') : translation(Lampa, 'watch_resume_continue', 'Continue') + ' · ' + label;
+    }
     var renderButton = function renderButton(Lampa, label, progress) {
       var dash = (sanitizeProgress(progress).percent * 65.97 / 100).toFixed(2);
-      return "<div class=\"full-start__button selector view--watch-resume\">\n    <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\"><circle cx=\"12\" cy=\"12\" r=\"10.5\" stroke=\"currentColor\" stroke-width=\"1.7\" opacity=\"0.22\"/><circle class=\"watch-resume__progress\" cx=\"12\" cy=\"12\" r=\"10.5\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-dasharray=\"".concat(dash, " 65.97\" transform=\"rotate(-90 12 12)\"/><path fill=\"currentColor\" d=\"M9 7v10l8-5z\"/></svg>\n    <span>").concat(translation(Lampa, 'watch_resume_continue', 'Continue'), " \xB7 ").concat(label, "</span>\n</div>");
+      return "<div class=\"full-start__button selector view--watch-resume\">\n    <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\"><circle cx=\"12\" cy=\"12\" r=\"10.5\" stroke=\"currentColor\" stroke-width=\"1.7\" opacity=\"0.22\"/><circle class=\"watch-resume__progress\" cx=\"12\" cy=\"12\" r=\"10.5\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-dasharray=\"".concat(dash, " 65.97\" transform=\"rotate(-90 12 12)\"/><path fill=\"currentColor\" d=\"M9 7v10l8-5z\"/></svg>\n    <span>").concat(resumeButtonText(Lampa, label, progress), "</span>\n</div>");
     };
     function openSameMode(event, mode, activity, Lampa) {
       if (mode !== 'online' && mode !== 'torrent') return false;
@@ -1204,7 +1215,7 @@
         }
         if (existing.length) {
           existing.find('.watch-resume__progress').attr('stroke-dasharray', (sanitizeProgress(record.progress).percent * 65.97 / 100).toFixed(2) + ' 65.97');
-          existing.find('span').text(translation(Lampa, 'watch_resume_continue', 'Continue') + ' · ' + labelFor(record));
+          existing.find('span').text(resumeButtonText(Lampa, labelFor(record), record.progress));
           return;
         }
         var button = $(renderButton(Lampa, labelFor(record), record.progress));
@@ -1287,7 +1298,6 @@
     var DEFAULT_POLL_MS = 100;
     var MIN_LEGACY_SEASON_CANDIDATES = 16;
     var LEGACY_SEASON_CANDIDATE_SLACK = 8;
-    var SEEN_PERCENT = 90;
     var text$2 = function text(value) {
       return value === undefined || value === null ? '' : String(value).trim();
     };
@@ -1382,6 +1392,15 @@
       }
       return result;
     }
+    function nextSeasonNumber(card, current) {
+      if (Array.isArray(card.seasons) && card.seasons.length) {
+        var seasons = card.seasons.filter(function(season) {
+          return number$1(season.season_number) > current && number$1(season.episode_count) > 0;
+        }).sort(function(left, right) { return number$1(left.season_number) - number$1(right.season_number); });
+        return seasons.length ? number$1(seasons[0].season_number) : 0;
+      }
+      return number$1(card.number_of_seasons) > current ? current + 1 : 0;
+    }
     function activityRoot(Lampa) {
       if (!Lampa.Activity || typeof Lampa.Activity.active !== 'function') return null;
       var active = Lampa.Activity.active() || {};
@@ -1431,7 +1450,8 @@
               clarification: Boolean(text$2(recipe.clarification)),
               lampac_custom_select: text$2(recipe.balanser)
             };
-            var completed = number$1(record.progress && record.progress.percent) >= SEEN_PERCENT;
+            var completed = episodeCompleted(record.progress);
+            var advancingSeason = false;
             var originActivity = Lampa.Activity && typeof Lampa.Activity.active === 'function' ? Lampa.Activity.active() : null;
             var candidates = restored.hasSeasonIndex ? [restored.seasonIndex] : seasonCandidates(card, record, restored.seasonIndex);
             var candidateIndex = 0;
@@ -1554,20 +1574,34 @@
             function onDestroyed() {
               if (triggered) fail('resume-online-destroyed');
             }
-            var tryNextSeason = function tryNextSeason() {
-              if (restored.hasSeasonIndex || !savedHash || candidateIndex + 1 >= candidates.length) return false;
+            function reopenSeason(index) {
               if (!detached && (!Lampa.Activity || typeof Lampa.Activity.replace !== 'function')) return false;
-              candidateIndex++;
-              setSeasonIndex(Lampa, card, restored, candidates[candidateIndex]);
+              setSeasonIndex(Lampa, card, restored, index);
               if (detached) {
                 destroyDetached();
-                openDetached();
-                return true;
+                return openDetached();
               }
               awaitingReplacement = true;
               Lampa.Activity.replace();
               rememberReplayActivity();
               return true;
+            }
+            var tryNextSeason = function tryNextSeason() {
+              if (restored.hasSeasonIndex || !savedHash || candidateIndex + 1 >= candidates.length) return false;
+              candidateIndex++;
+              return reopenSeason(candidates[candidateIndex]);
+            };
+            function advanceSeason() {
+              var next = nextSeasonNumber(card, number$1(savedEpisode.season));
+              if (!next) return false;
+              savedEpisode = {season: next, episode: 1};
+              savedHash = expectedTimelineHash(Lampa, card, savedEpisode);
+              selectedEpisode = 1;
+              advancingSeason = true;
+              candidates = seasonCandidates(card, {episode: savedEpisode}, candidates[candidateIndex] + 1);
+              candidateIndex = 0;
+              restored.hasSeasonIndex = false;
+              return reopenSeason(candidates[0]);
             };
             var inspect = function inspect() {
               if (settled || triggered || typeof $ !== 'function') return;
@@ -1595,7 +1629,7 @@
                 if (savedHash && nodeHash === savedHash) currentIndex = index;
               });
               if (currentIndex < 0 && !restored.hasSeasonIndex && savedHash) {
-                tryNextSeason();
+                if (!tryNextSeason() && advancingSeason) fail('resume-next-episode-missing');
                 return;
               }
               if (currentIndex < 0) {
@@ -1606,7 +1640,13 @@
               }
               if (currentIndex < 0) return;
               var targetIndex = currentIndex;
-              if (completed && currentIndex + 1 < items.length) targetIndex = currentIndex + 1;
+              if (completed && !advancingSeason) {
+                if (currentIndex + 1 >= items.length) {
+                  if (!advanceSeason()) fail('resume-next-episode-missing');
+                  return;
+                }
+                targetIndex = currentIndex + 1;
+              }
               var targetNode = null;
               items.each(function (index, node) {
                 if (index === targetIndex) targetNode = node;
