@@ -16,6 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/ARST113/log/main/audiobooks-backend
 
 ## Клиенты
 
+- [Скачать APK «СЛОво» 1.8.10](https://raw.githubusercontent.com/ARST113/log/main/audiobooks-backend/android/slovo-1.8.10.apk) — Android 6.0 и новее. [Установка и контрольная сумма](android/README.md).
 - В «СЛОво»: адрес API `https://knigaslovo.duckdns.org`.
 - В Lampa: плагин `https://knigaslovo.duckdns.org/audiobook2.js`.
 - Для другого домена можно задать `window.lampacAudiobooks2ApiBase` до загрузки плагина. При прямой загрузке с домена сервиса адрес берётся из URL скрипта.
