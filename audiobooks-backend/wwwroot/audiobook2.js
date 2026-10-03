@@ -1,7 +1,7 @@
 (function() {
   'use strict';
 
-  var VERSION = '2.0.15-own-server-settings';
+  var VERSION = '2.0.16-own-server-full';
   var RUNTIME_KEY = '__lampacAudiobooks2Runtime';
   var previousRuntime = window[RUNTIME_KEY];
 
@@ -29,6 +29,7 @@
     fullButtonMissingLogged: false,
     fullRestoreToken: 0,
     fullRestoreUntil: 0,
+    fullBinding: null,
     lastFullPlaybackBook: null,
     lastFullMovie: null,
     requestCache: {},
@@ -58,6 +59,8 @@
 
   runtime.stop = function() {
     runtime.active = false;
+    runtime.fullBinding = null;
+    runtime.fullRestoreToken++;
 
     runtime.timers.forEach(function(timer) {
       clearTimeout(timer);
@@ -432,6 +435,7 @@
     if (Lampa.Storage && Lampa.Storage.set) Lampa.Storage.set(name, value);
     runtime.requestCache = {};
     runtime.bookCacheOrder = [];
+    cancelFullBinding();
     for (var cacheKey in BOOK_CACHE) {
       if (BOOK_CACHE.hasOwnProperty(cacheKey)) delete BOOK_CACHE[cacheKey];
     }
@@ -2336,7 +2340,7 @@ function playVoice(voices, voice, options) {
         results: cards
       });
     }, function(error) {
-      if (window.console && console.error) console.error('[Audiobooks] catalog request failed:', catalogUrl, error);
+      if (window.console && console.error) console.error('[Audiobooks] catalog request failed');
       if (onError) onError(error);
     }, 45000);
   }
@@ -3360,31 +3364,59 @@ function playVoice(voices, voice, options) {
     return insertSeriesButton(container, seriesButton);
   }
 
-  function makeRestoreContext(context) {
-    var movie;
+  function fullCardId(card) {
+    return card && card.id !== undefined && card.id !== null ? String(card.id) : '';
+  }
 
-    context = context || {};
-    movie = runtime.lastFullMovie;
+  function cancelFullBinding() {
+    runtime.fullBinding = null;
+    runtime.fullRestoreUntil = 0;
+    runtime.fullRestoreToken++;
+    $('.view--audiobook-listen, .view--audiobook-author, .view--audiobook-series').remove();
+  }
 
-    if (!movie && runtime.lastFullPlaybackBook) {
-      movie = {
-        source: SOURCE,
-        audiobook_book: runtime.lastFullPlaybackBook,
-        audiobook2_url: runtime.lastFullPlaybackBook.url || '',
-        audiobook2_source: runtime.lastFullPlaybackBook.source || 'audio_fdb',
-        audiobook_fdb_work_id: runtime.lastFullPlaybackBook.fdb_work_id || runtime.lastFullPlaybackBook.url || ''
-      };
+  function currentFullScope(context, render) {
+    var active = context && context.active;
+    var card = active && (active.card || active.movie);
+    var ownRender = $();
+    if (!active || active.component != 'full' || !fullCardId(card) || !render || !render.length) return null;
+    if (context.activity && active.activity && context.activity !== active.activity) return null;
+    if (active.activity && active.activity.render) {
+      try { ownRender = active.activity.render(); } catch (e) {}
+      if (!ownRender.length || (ownRender[0] !== render[0] && !$.contains(ownRender[0], render[0]))) return null;
+    }
+    return { activity: active.activity || null, renderNode: render[0], cardId: fullCardId(card) };
+  }
+
+  function resolveFullBinding(context, render) {
+    var scope = currentFullScope(context, render);
+    var binding = runtime.fullBinding;
+    var sameScope = !!(scope && binding && scope.cardId === binding.cardId &&
+      (scope.activity && binding.activity ? scope.activity === binding.activity : scope.renderNode === binding.renderNode));
+    var book;
+
+    // A late frontend redraw can discard the custom fields. Restore only the
+    // book already proved for this exact card and ActivitySlide, never by ID
+    // alone or by whichever audiobook was most recently played.
+    if (sameScope) {
+      context.movie = binding.movie;
+      context.source = SOURCE;
+      context.isAudiobook = true;
+      return binding;
     }
 
-    if (!movie) return context;
-
-    return {
-      active: context.active || null,
-      activity: context.activity || null,
-      movie: movie,
-      source: SOURCE,
-      isAudiobook: true
+    if (!scope || !context.isAudiobook || fullCardId(context.movie) !== scope.cardId) return null;
+    book = bookFromCard(context.movie);
+    if (!book) return null;
+    binding = {
+      activity: scope.activity,
+      renderNode: scope.renderNode,
+      cardId: scope.cardId,
+      movie: context.movie,
+      book: book
     };
+    runtime.fullBinding = binding;
+    return binding;
   }
 
   function ensureFullListenButton(event, allowRestoreFallback) {
@@ -3395,34 +3427,18 @@ function playVoice(voices, voice, options) {
     var current;
     var all;
     var listenButton;
-    var fallbackAllowed;
+    var binding;
 
     if (!isCurrentRuntime()) return false;
 
-    repairExistingListenButtons(runtime.lastFullPlaybackBook, false);
-
     context = getActiveFullContext(event);
-    var visibleFull = firstVisible($('.full-start-new, .full-start'));
-
-    fallbackAllowed = !!allowRestoreFallback &&
-      Date.now() <= runtime.fullRestoreUntil &&
-      !!runtime.lastFullPlaybackBook &&
-      !!visibleFull.length &&
-      elementIsVisible(visibleFull[0]);
-
-    if ((!context.isAudiobook || !context.movie) && fallbackAllowed) {
-      context = makeRestoreContext(context);
-      audiobookFullButtonLog('restore:fallback-context', {
-        title: runtime.lastFullPlaybackBook && runtime.lastFullPlaybackBook.name || ''
-      });
-    }
-
-    if (!context.isAudiobook || !context.movie) {
-      return !!$('.view--audiobook-listen').length;
-    }
-
     render = getFullRender(context);
-    if (!render.length) return false;
+    binding = resolveFullBinding(context, render);
+    if (!binding) {
+      if (!event && context.active && context.active.component == 'full' && runtime.fullBinding) cancelFullBinding();
+      return false;
+    }
+    repairExistingListenButtons(binding.book, false);
     scheduleAudiobookFullTypeCleanup(render);
 
     container = expandDirectFullButtons(render);
@@ -3436,9 +3452,9 @@ function playVoice(voices, voice, options) {
 
     runtime.fullButtonMissingLogged = false;
     render.find('.view--audiobook-torrent').remove();
-    playbackBook = bookFromCard(context.movie) || runtime.lastFullPlaybackBook;
-    runtime.lastFullPlaybackBook = playbackBook || runtime.lastFullPlaybackBook;
-    runtime.lastFullMovie = context.movie || runtime.lastFullMovie;
+    playbackBook = binding.book;
+    runtime.lastFullPlaybackBook = playbackBook;
+    runtime.lastFullMovie = binding.movie;
 
     current = render.find('.view--audiobook-listen').first();
 
@@ -3452,6 +3468,7 @@ function playVoice(voices, voice, options) {
 
     all = $('.view--audiobook-listen');
     if (current.length) all.not(current).remove();
+    else all.remove();
 
     if (current.length) {
       if (!$.contains(container[0], current[0])) {
@@ -3487,7 +3504,6 @@ function playVoice(voices, voice, options) {
       later(function() {
         if (token != runtime.fullRestoreToken) return;
         audiobookFullButtonLog('restore:attempt', { reason: reason || 'unknown', delay: delay, token: token });
-        repairExistingListenButtons(runtime.lastFullPlaybackBook, true);
         ensureFullListenButton(null, true);
       }, delay);
     });
@@ -3512,26 +3528,31 @@ function playVoice(voices, voice, options) {
 
     Lampa.Listener.follow('full', function(event) {
       var context;
+      var render;
+      var token;
 
       if (!isCurrentRuntime() || !event || event.type != 'complite') return;
 
       context = getActiveFullContext(event);
+      render = getFullRender(context);
 
       /*
        * A newly opened non-audiobook Full card cancels the temporary restore
        * window so the previous audiobook action cannot leak into another card.
        */
-      if (!context.isAudiobook) {
-        runtime.fullRestoreUntil = 0;
-        $('.view--audiobook-listen').remove();
+      if (!resolveFullBinding(context, render)) {
+        cancelFullBinding();
         return;
       }
 
-      scheduleAudiobookFullTypeCleanup(getFullRender(context));
-      later(function() { ensureFullListenButton(event, false); }, 80);
-      later(function() { ensureFullListenButton(event, false); }, 450);
-      later(function() { ensureFullListenButton(event, false); }, 900);
-      later(function() { ensureFullListenButton(event, false); }, 1600);
+      token = ++runtime.fullRestoreToken;
+      scheduleAudiobookFullTypeCleanup(render);
+      [80, 450, 900, 1600].forEach(function(delay) {
+        later(function() {
+          if (token !== runtime.fullRestoreToken) return;
+          ensureFullListenButton(event, false);
+        }, delay);
+      });
     });
 
     watchFullButtons();

@@ -6,12 +6,15 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../wwwroot/audiobook2.js'), 'utf8');
 const boundary = source.indexOf('  function escapeHtml(value)');
 assert.ok(boundary > 0, 'API helpers must be present');
-const apiSource = source.slice(0, boundary) + '\nwindow.testApi = { detectApiBase, apiUrl, absoluteUrl, audioUrl, normalizeAudiobookImageUrl, updateApiConfiguration, safeDebugDetails };\n})();';
+const cancelSource = source.slice(source.indexOf('  function cancelFullBinding()'), source.indexOf('  function currentFullScope('));
+assert.ok(cancelSource.includes('runtime.fullBinding = null'), 'configuration includes the actual Full binding invalidation');
+const apiSource = source.slice(0, boundary) + cancelSource + '\nwindow.testApi = { detectApiBase, apiUrl, absoluteUrl, audioUrl, normalizeAudiobookImageUrl, updateApiConfiguration, safeDebugDetails };\n})();';
 
 function load({ preset, key, storedKey, storedBase, src = '', scripts = [] } = {}) {
   const context = {
     window: { location: { origin: 'https://unrelated.example' } },
-    document: { currentScript: { src }, getElementsByTagName: () => scripts.map(src => ({ src })) }
+    document: { currentScript: { src }, getElementsByTagName: () => scripts.map(src => ({ src })) },
+    $: () => ({ remove() {} })
   };
   if (preset !== undefined) context.window.lampacAudiobooks2ApiBase = preset;
   if (key !== undefined) context.window.lampacAudiobooks2ApiKey = key;
@@ -61,11 +64,15 @@ assert.equal(load({ preset: 'https://own.example', storedKey: 'storage-demo' }).
 const mutable = load({ storedBase: 'https://first.example', storedKey: 'first-demo' });
 mutable.__lampacAudiobooks2Runtime.requestCache.cached = { value: 'old' };
 mutable.__lampacAudiobooks2BookCache.cached = { name: 'old' };
+mutable.__lampacAudiobooks2Runtime.fullBinding = { book: 'old' };
+const previousFullToken = mutable.__lampacAudiobooks2Runtime.fullRestoreToken;
 mutable.testApi.updateApiConfiguration('audiobooks2_api_base', 'https://second.example');
 mutable.testApi.updateApiConfiguration('audiobooks2_api_key', 'second-demo');
 assert.equal(mutable.testApi.apiUrl('/healthz'), 'https://second.example/healthz?api_key=second-demo', 'local changes take effect in the live runtime');
 assert.equal(Object.keys(mutable.__lampacAudiobooks2Runtime.requestCache).length, 0, 'changing credentials clears request cache');
 assert.equal(Object.keys(mutable.__lampacAudiobooks2BookCache).length, 0, 'changing server clears book cache');
+assert.equal(mutable.__lampacAudiobooks2Runtime.fullBinding, null, 'changing configuration cancels the old Full book binding');
+assert.ok(mutable.__lampacAudiobooks2Runtime.fullRestoreToken > previousFullToken, 'changing credentials cancels old Full callbacks');
 mutable.testApi.updateApiConfiguration('audiobooks2_api_key', '');
 assert.equal(mutable.testApi.apiUrl('/healthz'), 'https://second.example/healthz', 'local key can be removed');
 const safe = mutable.testApi.safeDebugDetails({ url: 'https://own.example/access/private-demo/audio?api_key=secret-demo' });
@@ -97,6 +104,7 @@ let valueCreated = false;
 fullContext.Lampa.Input = { edit: (options, callback) => { editOptions = options; editCallback = callback; } };
 const valueNode = { length: 1, text: value => displayedKey = value, insertAfter: () => valueCreated = true };
 fullContext.$ = html => {
+  if (html.startsWith('.view--audiobook')) return { remove() {} };
   assert.match(html, /settings-param__value/);
   return valueNode;
 };
