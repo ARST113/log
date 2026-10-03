@@ -25,6 +25,7 @@ void Check(string name, Action test) {
     catch (Exception e) { failures++; Console.WriteLine("ОШИБКА: " + name + ": " + e.GetBaseException().Message); }
 }
 void Equal<T>(T expected, T actual) { if (!Equals(expected, actual)) throw new Exception($"Ожидалось {expected}, получено {actual}"); }
+AccessChecks.Run(Check);
 var titleMatch = typeof(AudioController).GetMethod("IsSameBookTitle", BindingFlags.Static | BindingFlags.NonPublic)!;
 Check("Поиск по неполному названию книги", () => Equal(true, (bool)titleMatch.Invoke(null, new object[]{"Трое в лодке, не считая собаки", "Трое в лодке"})!));
 Check("Поиск тома по названию цикла", () => Equal(true, (bool)titleMatch.Invoke(null, new object[]{"Реинкарнация безработного. Том 26", "Реинкарнация безработного"})!));

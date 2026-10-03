@@ -5168,7 +5168,7 @@ namespace KnigaSlovo.Controllers
                 if (isHls)
                 {
                     var playlist = await response.Content.ReadAsStringAsync(HttpContext.RequestAborted);
-                    var rewritten = RewriteHlsPlaylist(playlist, responseUrl);
+                    var rewritten = BackendAccess.ProtectPlaylist(HttpContext, RewriteHlsPlaylist(playlist, responseUrl));
                     Response.StatusCode = (int)response.StatusCode;
                     Response.ContentType = "application/vnd.apple.mpegurl";
                     Response.Headers["Access-Control-Allow-Origin"] = "*";

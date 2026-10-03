@@ -82,6 +82,13 @@ if [[ ! -f "$install_dir/.env" ]]; then
   printf 'AUDIOBOOK_CRAWLER_ENABLED=true\nAUDIOBOOK_CRAWLER_PARALLELISM=1\nAUDIOBOOK_CRAWLER_INTERVAL_MINUTES=30\n' > "$install_dir/.env"
   chmod 600 "$install_dir/.env"
 fi
+if ! grep -qE '^AUDIOBOOK_API_KEY=.{32,}$' "$install_dir/.env"; then
+  sed -i '/^AUDIOBOOK_API_KEY=/d' "$install_dir/.env"
+  api_key=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+  printf 'AUDIOBOOK_API_KEY=%s\n' "$api_key" >> "$install_dir/.env"
+  unset api_key
+fi
+chmod 600 "$install_dir/.env"
 sed -i '/^AUDIOBOOK_PORT=/d' "$install_dir/.env"
 printf 'AUDIOBOOK_PORT=%s\n' "$port" >> "$install_dir/.env"
 export AUDIOBOOK_PORT=$port AUDIOBOOK_DATA_DIR=$data_dir
@@ -119,4 +126,5 @@ else
   echo "Для HTTPS повторите установку с --domain ИМЯ_ДОМЕНА."
 fi
 echo "База: $data_dir/audiobooks-fdb.sqlite"
+echo "API закрыт ключом доступа. Ключ хранится в $install_dir/.env (AUDIOBOOK_API_KEY); повторная установка его сохраняет."
 echo "Логи: cd $install_dir && sudo docker compose -p audiobooks-backend logs --tail 100"

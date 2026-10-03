@@ -4,10 +4,12 @@ using Microsoft.Data.Sqlite;
 using KnigaSlovo.Audiobooks;
 
 var builder = WebApplication.CreateBuilder(args);
+// URL-параметр или префикс может содержать ключ: не записываем URL запросов в журнал.
+builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
 builder.Services.AddHttpClient(string.Empty).ConfigurePrimaryHttpMessageHandler(() =>
     new SocketsHttpHandler { UseProxy = false, ConnectCallback = PublicNetwork.ConnectAsync,
         AutomaticDecompression = System.Net.DecompressionMethods.All });
-builder.Services.AddControllers().AddJsonOptions(options =>
+builder.Services.AddControllers(options => options.Filters.Add<AuthenticatedMediaFilter>()).AddJsonOptions(options =>
     options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull);
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
     policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader().WithExposedHeaders("Content-Range", "Accept-Ranges", "Content-Length")));
@@ -22,6 +24,8 @@ var store = new AudioFdbStore();
 store.EnsureSchema();
 var app = builder.Build();
 app.UseForwardedHeaders();
+app.UseMiddleware<BackendAccess>();
+app.UseRouting();
 app.UseCors();
 app.UseStaticFiles();
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", service = "knigaslovo", version = "2.0.0" }));
