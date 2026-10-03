@@ -18,7 +18,7 @@ const source = raw.replace('    }! function() {', `    }
 assert.notEqual(source, raw, 'closure instrumentation must match the plugin');
 
 function fixture(values = {}, route = () => ({data: []})) {
-    const storage = {...values}, requests = [], notices = [], settings = [], lists = [], flows = [], launches = [];
+    const storage = {online_selected_voice:{}, ...values}, requests = [], notices = [], settings = [], lists = [], flows = [], launches = [];
     const playerListeners = {}; let currentPlayData = {}, currentPlaylist = [];
     function Request() {
         this.timeout = () => {};
@@ -34,7 +34,7 @@ function fixture(values = {}, route = () => ({data: []})) {
         this.native = this.silent;
     }
     const context = {
-        console, URL, URLSearchParams,
+        console, URL, URLSearchParams, Blob,
         window: {plugin_init: true, lampac_fastonline_plugin: true},
         location: {host: 'lampac.fun', protocol: 'https:'},
         document: {scripts: [{src: 'https://lampac.fun/sync/js/own-token'}]},
@@ -255,7 +255,7 @@ test('stale Lampac owner ID cannot bypass a disconnected socket reconnect', () =
 
 test('automatic quality exposes reserves with the playing reserve selected', () => {
     const f = fixture();
-    const quality = f.playback.getQuality([{url: 'https://cdn.example/a or https://cdn.example/b'}]);
+    const quality = f.playback.getQuality([{quality: {'720p': 'https://cdn.example/a or https://cdn.example/b'}}]);
     f.playback.setFlowsForQuality({quality, url: 'https://cdn.example/b'});
     assert.equal(f.flows[0].length, 2);
     assert.equal(f.flows[0].find(flow => flow.url === 'https://cdn.example/b').selected, true);
@@ -290,7 +290,7 @@ test('inner TV launch carries the selected episode headers, segments and subtitl
     const f = fixture({player:'inner'});
     const episode = {number:2,title:'Episode 2',timeline:{hash:'episode2'},mark:()=>{}};
     f.playback.tv({translates:[{name:'LostFilm'}], sources:[], plays:[{e:2,method:'play',translate:'LostFilm',
-        url:'https://cdn.example/e2',headers:{Referer:'https://video.example'},
+        url:'https://cdn.example/e2',quality:{'1080p':'https://cdn.example/e2'},headers:{Referer:'https://video.example'},
         segments:[{start:0,end:9}],subtitles:[{label:'EN',url:'https://cdn.example/sub.vtt'}]}]}, [episode], episode);
     await new Promise(setImmediate);
     assert.equal(f.launches.length, 1);
@@ -374,4 +374,192 @@ test('TV reserve menu survives the core destroy/start cycle when advancing episo
     f.context.Lampa.Player.listener.send('destroy');
     f.context.Lampa.Player.play(playlist[1]);
     assert.deepEqual(plain(f.flows.at(-1)).map(flow=>flow.url),['https://cdn.example/e3a','https://cdn.example/e3b']);
+});
+
+test('only confirmed 720p and higher qualities are playable, including 4K aliases', () => {
+    const f = fixture();
+    const quality = f.playback.getQuality([{quality:{
+        '240p':'https://cdn.example/240','480p':'https://cdn.example/480',
+        '720p':'https://cdn.example/720','1080p HDR10':'https://cdn.example/1080',
+        '4K':'https://cdn.example/2160',auto:'https://cdn.example/unknown'}}]);
+    assert.deepEqual(Object.keys(quality),['2160p','1080p','720p']);
+});
+
+test('automatic failover stops at 720p even when legacy lower qualities exist', () => {
+    const f=fixture();
+    const quality=f.playback.getQuality([{quality:{'720p':'https://cdn.example/720','480p':'https://cdn.example/480'}}]);
+    assert.equal(f.playback.getQualityLevelDown({quality,url:'https://cdn.example/720'}),undefined);
+});
+
+test('series resolver parses AUTO masters and exposes real 1080p and 4K variants', async () => {
+    const manifest='#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=300000,RESOLUTION=640x267\n360.m3u8\n'+
+        '#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x534\n720.m3u8\n'+
+        '#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1920x800\n1080.m3u8\n'+
+        '#EXT-X-STREAM-INF:BANDWIDTH=10000000,RESOLUTION=3840x1600\n2160.m3u8';
+    const f=fixture({player:'inner'},url=>url.pathname==='/resolve' ?
+        {url:'https://cdn.example/path/master.m3u8',quality:{auto:'https://cdn.example/path/master.m3u8'}} :manifest);
+    const result=await f.extract.links([[{method:'call',url:'https://lampac.fun/resolve',translate:'LostFilm'}]]);
+    const quality=f.playback.getQuality(result);
+    assert.deepEqual(Object.keys(quality),['2160p','1080p','720p']);
+    assert.equal(quality['1080p'].url,'https://cdn.example/path/1080.m3u8');
+});
+
+test('a master with alternate audio retains audio groups while excluding all lower video renditions', async () => {
+    const manifest='#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="ru",NAME="Русский",URI="audio/ru.m3u8"\n'+
+        '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="en",NAME="English",URI="//cdn.example/audio/en.m3u8"\n'+
+        '#EXT-X-STREAM-INF:BANDWIDTH=200000,RESOLUTION=640x360,AUDIO="ru"\n360.m3u8\n'+
+        '#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1920x1080,AUDIO="ru"\n1080.m3u8';
+    const f=fixture({player:'inner'},()=>manifest);
+    const result=await new Promise(resolve=>f.api.probe([{url:'https://cdn.example/master.m3u8'}],resolve));
+    const quality=f.playback.getQuality(result);
+    assert.deepEqual(Object.keys(quality),['1080p']);
+    const url=quality['1080p'].url;
+    assert.match(url,/^blob:.*#\.m3u8$/);
+    const text=await (await fetch(url)).text();
+    assert.match(text,/URI="https:\/\/cdn.example\/audio\/ru.m3u8"/);
+    assert.match(text,/NAME="English"/);
+    assert.doesNotMatch(text,/640x360|360.m3u8/);
+    URL.revokeObjectURL(url.split('#')[0]);
+});
+
+test('unlabelled or sub-720 streams do not get a fabricated FHD label', async () => {
+    const f=fixture({player:'inner'},()=> '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=854x480\n480.m3u8');
+    const result=await new Promise(resolve=>f.api.probe([{url:'https://cdn.example/master.m3u8'}],resolve));
+    assert.equal(Object.keys(f.playback.getQuality(result)).length,0);
+});
+
+test('server source discovery includes own 4K providers omitted from the old registry', async () => {
+    const f=fixture({},url=>url.pathname==='/lite/events' ? [
+        {balanser:'phantom',name:'Phantom',url:'https://lampac.fun/lite/phantom'},
+        {balanser:'remux',name:'Remux',url:'https://lampac.fun/lite/remux'},
+        {balanser:'pidtor',url:'https://lampac.fun/lite/pidtor'},
+        {balanser:'foreign',url:'https://foreign.example/lite/foreign'}
+    ] : {balanser:url.pathname.split('/').at(-1),data:[{method:'play',translate:'LostFilm',quality:{'2160p':'https://cdn.example/4k'}}]});
+    const result=await f.extract.query({});
+    assert.deepEqual(plain(result).map(items=>items[0].source_name).sort(),['phantom','remux']);
+    assert(f.requests.every(request=>new URL(request.url).origin==='https://lampac.fun'));
+});
+
+test('switching a translation updates the active player and preserves the current timestamp', async () => {
+    const f=fixture({player:'inner'}); let reload, seek, closed=0;
+    const data=f.playback.applyStreamData({quality:f.playback.getQuality([{quality:{'1080p':'https://cdn.example/a'}}]),url:'https://cdn.example/a'});
+    f.context.Lampa.Player.playdata=()=>data;
+    f.context.Lampa.Player.close=()=>{closed++;};
+    const listeners={};
+    f.context.Lampa.PlayerVideo={video:()=>({currentTime:321,paused:true}),destroy:()=>{},setParams:()=>{},
+        url:(url)=>{reload=url;},to:time=>{seek=time;},pause:()=>{},
+        listener:{follow:(event,fn)=>{listeners[event]=fn;},remove:()=>{}}};
+    f.context.Lampa.PlayerPanel.setQualitys=()=>{};
+    f.context.Lampa.PlayerPanel.setTracks=()=>{};
+    const voices=[{name:'LostFilm',selected:true},{name:'Дубляж',selected:false}];
+    await f.playback.switchTranslation(Promise.resolve([{translate:'Дубляж',quality:{'1080p':'https://cdn.example/b'}}]),'Дубляж',voices);
+    assert.deepEqual(f.notices,[]);
+    listeners.loadeddata();
+    assert.equal(closed,0);
+    assert.equal(reload,'https://cdn.example/b');
+    assert.equal(seek,321);
+    assert.equal(voices[1].selected,true);
+    assert.equal(voices[0].selected,false);
+});
+
+test('overlapping translation changes cannot let a late request replace the last chosen voice', async () => {
+    const f=fixture();let finish;
+    const data=f.playback.applyStreamData({quality:f.playback.getQuality([{quality:{'1080p':'https://cdn.example/a'}}]),url:'https://cdn.example/a'});
+    f.context.Lampa.Player.playdata=()=>data;
+    f.context.Lampa.PlayerVideo={video:()=>({currentTime:1}),destroy:()=>{},setParams:()=>{},url:()=>{},
+        listener:{follow:()=>{},remove:()=>{}}};
+    f.context.Lampa.PlayerPanel.setQualitys=()=>{};
+    f.context.Lampa.PlayerPanel.setTracks=()=>{};
+    const slow=f.playback.switchTranslation(new Promise(resolve=>{finish=resolve;}),'Slow',[]);
+    await f.playback.switchTranslation(Promise.resolve([{translate:'Fast',quality:{'1080p':'https://cdn.example/fast'}}]),'Fast',[]);
+    assert.deepEqual(f.notices,[]);
+    finish([{translate:'Slow',quality:{'1080p':'https://cdn.example/slow'}}]);
+    await slow;
+    assert.equal(data.url,'https://cdn.example/fast');
+});
+
+test('core loading pause does not pause a playing video after a translation switch', async () => {
+    const f=fixture(); let paused=false, loaded;
+    const data=f.playback.applyStreamData({quality:f.playback.getQuality([{quality:{'1080p':'https://cdn.example/a'}}]),url:'https://cdn.example/a'});
+    f.context.Lampa.Player.playdata=()=>data;
+    f.context.Lampa.Player.loading=value=>{paused=!!value;};
+    f.context.Lampa.PlayerVideo={video:()=>({currentTime:100,paused}),destroy:()=>{},setParams:()=>{},url:()=>{},to:()=>{},pause:()=>{paused=true;},
+        listener:{follow:(event,fn)=>{loaded=fn;},remove:()=>{}}};
+    f.context.Lampa.PlayerPanel.setQualitys=()=>{}; f.context.Lampa.PlayerPanel.setTracks=()=>{};
+    await f.playback.switchTranslation(Promise.resolve([{quality:{'1080p':'https://cdn.example/b'}}]),'Voice',[]);
+    loaded();
+    assert.equal(paused,false);
+});
+
+test('failed translation switch restores the initial paused state after core loading(false)', async () => {
+    const f=fixture(); let paused=true;
+    const data=f.playback.applyStreamData({quality:f.playback.getQuality([{quality:{'1080p':'https://cdn.example/a'}}]),url:'https://cdn.example/a'});
+    f.context.Lampa.Player.playdata=()=>data;
+    f.context.Lampa.Player.loading=value=>{paused=!!value;};
+    f.context.Lampa.PlayerVideo={video:()=>({currentTime:100,paused}),pause:()=>{paused=true;}};
+    await f.playback.switchTranslation(Promise.reject(new Error('offline')),'Voice',[]);
+    assert.equal(paused,true);
+    assert.equal(data.url,'https://cdn.example/a');
+});
+
+test('explicit series voice selection fails instead of falling back to a different translation', async () => {
+    const f=fixture({},url=>url.pathname==='/b' ? new Error('offline') : {data:[{e:1,method:'play',quality:{'1080p':'https://cdn.example/a'}}]});
+    const sources=[{voice:[{name:'Voice A',url:'https://lampac.fun/a'},{name:'Voice B',url:'https://lampac.fun/b'}]}];
+    await assert.rejects(f.extract.voice(sources,'Voice B'));
+});
+
+test('resolved previous TV episodes are invalidated when switching voices', async () => {
+    const f=fixture({player:'inner',online_selected_voice:{Film:'Voice A'}},url=>({data:[1,2].map(e=>({e,method:'play',quality:{'1080p':'https://cdn.example/'+url.pathname.slice(1)+e}}))}));
+    let playlist;
+    f.context.Lampa.Player.playlist=items=>{playlist=items;};
+    f.context.Lampa.PlayerVideo={video:()=>({currentTime:100,paused:false}),destroy:()=>{},setParams:()=>{},url:()=>{},
+        listener:{follow:()=>{},remove:()=>{}}};
+    f.context.Lampa.PlayerPanel.setQualitys=()=>{}; f.context.Lampa.PlayerPanel.setTracks=()=>{};
+    const sources=[{voice:[{name:'Voice A',url:'https://lampac.fun/a'},{name:'Voice B',url:'https://lampac.fun/b'}]}];
+    const initial=await f.extract.voice(sources);
+    initial.sources=sources;
+    const episodes=[1,2].map(number=>({number,title:'Episode '+number,timeline:{hash:'e'+number},mark:()=>{}}));
+    f.playback.tv(initial,episodes,episodes[0]);
+    await new Promise(setImmediate);
+    await new Promise(resolve=>playlist[1].url(resolve));
+    f.context.Lampa.Player.play(playlist[1]);
+    await playlist[1].voiceovers.find(voice=>voice.name==='Voice B').onSelect();
+    await new Promise(setImmediate);
+    assert.equal(f.context.Lampa.Player.playdata().url,'https://cdn.example/b2');
+    assert.equal(typeof playlist[0].url,'function');
+    await new Promise(resolve=>playlist[0].url(resolve));
+    assert.equal(playlist[0].url,'https://cdn.example/b1');
+});
+
+test('actual video below720 is rejected and moves to a confirmed reserve', () => {
+    const f=fixture(); let paused=0, switched;
+    const data=f.playback.applyStreamData({quality:f.playback.getQuality([{quality:{'1080p':'https://cdn.example/bad or https://cdn.example/good'}}]),url:'https://cdn.example/bad'});
+    f.context.Lampa.Player.playdata=()=>data;
+    f.context.Lampa.PlayerVideo={pause:()=>{paused++;}};
+    f.context.Lampa.PlayerPanel.listener={send:(event,value)=>{switched=value.url;}};
+    f.playback.checkVideoResolution({width:640,height:267});
+    assert.equal(paused,1);
+    assert.equal(switched,'https://cdn.example/good');
+    assert(data.quality['1080p'].error.includes('https://cdn.example/bad'));
+});
+
+test('a mislabeled FHD stream actually720 gets an HD quality label', () => {
+    const f=fixture(); let menu;
+    const data=f.playback.applyStreamData({quality:f.playback.getQuality([{quality:{'1080p':'https://cdn.example/mislabeled'}}]),url:'https://cdn.example/mislabeled'});
+    f.context.Lampa.Player.playdata=()=>data;
+    f.context.Lampa.PlayerPanel.setQualitys=quality=>{menu=quality;};
+    f.playback.checkVideoResolution({width:1280,height:534});
+    assert.equal(data.quality_switched,'720p');
+    assert.deepEqual(Object.keys(menu),['720p']);
+});
+
+test('positive video dimensions below the smallest known tier are still rejected', () => {
+    const f=fixture(); let paused=0, switched;
+    const data=f.playback.applyStreamData({quality:f.playback.getQuality([{quality:{'1080p':'https://cdn.example/180 or https://cdn.example/good'}}]),url:'https://cdn.example/180'});
+    f.context.Lampa.Player.playdata=()=>data;
+    f.context.Lampa.PlayerVideo={pause:()=>{paused++;}};
+    f.context.Lampa.PlayerPanel.listener={send:(event,value)=>{switched=value.url;}};
+    f.playback.checkVideoResolution({width:320,height:180});
+    assert.equal(paused,1);
+    assert.equal(switched,'https://cdn.example/good');
 });
