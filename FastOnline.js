@@ -156,14 +156,9 @@ function _typeof(e) {
     s.sort((function(e, t) {
         return t.length - e.length
     }));
-    var c = "online_servers",
-        u = "online_active_server",
-        d = "online_sources",
-        m = "online_public_servers_cache",
-        f = "online_bwa_code",
-        p = "online_use_bwa",
-        v = "online_server_tokens",
-        h = "rc.bwa.to",
+    // FastOnline 1.1.0: one Lampac server, merged online streams.
+    var d = "fastonline_lampac_sources",
+        lampacBase = "https://lampac.fun",
         g = '<svg viewBox="3 6 42 36" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="8" width="38" height="32" rx="2" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M13 8v32M5 16h8m-8 8h8m-8 8h8" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="24" r="9" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="24" r="3" fill="currentColor"/></svg>',
         y = [{
             id: "rezka",
@@ -370,10 +365,6 @@ function _typeof(e) {
             name: "rgshows",
             enabled: !1
         }, {
-            id: "pidtor",
-            name: "pidtor",
-            enabled: !1
-        }, {
             id: "videoseed",
             name: "videoseed",
             enabled: !1
@@ -399,98 +390,41 @@ function _typeof(e) {
         }))
     }
 
-    function L() {
-        var e = Lampa.Storage.get(c, []);
-        if ("string" == typeof e) try {
-            e = JSON.parse(e)
-        } catch (t) {
-            e = []
-        }
-        return Lampa.Arrays.isArray(e) || (e = []), e
-    }
-
-    function _() {
-        var e = L(),
-            t = parseInt(Lampa.Storage.get(u, 0)) || 0;
-        return t >= e.length && (t = 0), t
-    }
-
-    function w(e) {
-        Lampa.Storage.set(u, e)
-    }
-
-    function k(e) {
-        if (!e) return !1;
-        var t = L();
-        return -1 === t.indexOf(e) && (t.push(e), Lampa.Storage.set(c, t), !0)
-    }
-
-    function S(e) {
-        var t = L();
-        return e >= 0 && e < t.length && (t.splice(e, 1), Lampa.Storage.set(c, t), _() >= t.length && w(Math.max(0, t.length - 1)), !0)
-    }
-
     function x() {
-        var e = L();
-        if (0 === e.length) return "";
-        var t = e[_()] || "";
-        return t && 0 !== (t = t.replace(/\/+$/, "")).indexOf("http://") && 0 !== t.indexOf("https://") && (t = "http://" + t), t
+        return lampacBase
     }
 
     function C(e) {
         return e.replace(/^https?:\/\//, "")
     }
 
+    function cleanSources(items) {
+        var result = [];
+        if (!Lampa.Arrays.isArray(items)) return result;
+        items.forEach(function(item) {
+            var id = String(Lampa.Arrays.isArray(item) ? item[0] : item).toLowerCase();
+            y.forEach(function(source) {
+                var aliases = Lampa.Arrays.isArray(source.id) ? source.id : [source.id];
+                if (aliases.indexOf(id) >= 0 && result.indexOf(aliases[0]) < 0) result.push(aliases[0])
+            })
+        });
+        return result
+    }
+
     function A() {
-        var e = Lampa.Storage.get(d, []);
-        if ("string" == typeof e) try {
-            e = JSON.parse(e)
-        } catch (t) {
-            e = []
-        }
-        return Lampa.Arrays.isArray(e) && 0 !== e.length || (e = b()), e.map((function(e) {
-            return Lampa.Arrays.isArray(e) ? e[0] : e
-        }))
+        var items = Lampa.Storage.get(d, Lampa.Storage.get("online_sources", []));
+        if ("string" == typeof items) try { items = JSON.parse(items) } catch (e) { items = [] }
+        var result = cleanSources(items);
+        return result.length ? result : b()
     }
 
-    function T(e) {
-        Lampa.Storage.set(d, e)
+    function T(items) {
+        Lampa.Storage.set(d, cleanSources(items))
     }
 
-    function O() {
-        return Lampa.Storage.get(f, "")
-    }
-
-    function P() {
-        return Lampa.Storage.get(p, !1)
-    }
-
-    function F(e) {
-        Lampa.Storage.set(p, e)
-    }
-
-    function R() {
-        var e = Lampa.Storage.get(v, "{}");
-        if ("string" == typeof e) try {
-            e = JSON.parse(e)
-        } catch (t) {
-            e = {}
-        }
-        return e || {}
-    }
-
-    function j(e) {
-        return R()[e] || ""
-    }
-
-    function D(e, t) {
-        var n = R();
-        t ? n[e] = t : delete n[e], Lampa.Storage.set(v, n)
-    }
     var E = {
         lampa: "Lampa.",
         get stream() {
-            if (P()) return h;
             var e = x();
             return e ? e.replace(/^https?:\/\//, "") : ""
         },
@@ -515,9 +449,11 @@ function _typeof(e) {
     };
 
     function V(e, t) {
-        var n = e.toLowerCase().replace(/ /g, "").split(/\.|\[/)[0],
-            i = t.toLowerCase().replace(/ /g, "").split(/\.|\[/)[0];
-        return !(!n || !i) && (n.indexOf(i) > -1 || i.indexOf(n) > -1)
+        function normalize(value) {
+            return String(value || "").toLowerCase().replace(/\s+/g, "").replace(/\s*\[.*?\]\s*$/, "")
+        }
+        var left = normalize(e), right = normalize(t);
+        return !!left && left === right
     }
 
     function q() {
@@ -538,7 +474,7 @@ function _typeof(e) {
                     if (e[t] = (l = /\(([^()]+)\)$/, s = 1, c = e[t], (u = c.match(l)) && u[s] ? u[s] : c), /^\d{3,4}p$/i.test(e[t])) return void(e[t] = "По умолчанию");
                     var n = !1;
                     E.filter_translate.forEach((function(i) {
-                        e[t].toLowerCase().indexOf(i.toLowerCase()) >= 0 && (e[t] = i, n = !0)
+                        e[t].trim().toLowerCase() === i.toLowerCase() && (e[t] = i, n = !0)
                     }));
                     var i = function(i) {
                         E.rename_translate[i].forEach((function(a) {
@@ -546,16 +482,9 @@ function _typeof(e) {
                         }))
                     };
                     for (var a in E.rename_translate) i(a);
-                    if (E.filter_du.forEach((function(i) {
-                            e[t].toLowerCase().indexOf(i.toLowerCase()) >= 0 && (e[t] = i, n = !0)
-                        })), !n) {
-                        var o = e.maxquality || e.quality || "";
-                        if ("object" === _typeof(o)) {
-                            var r = Object.keys(o);
-                            o = r.length > 0 ? r[r.length - 1] : ""
-                        }
-                        e[t] = o ? "По умолчанию (" + o + ")" : "По умолчанию"
-                    }
+                    E.filter_du.forEach((function(i) {
+                        e[t].trim().toLowerCase() === i.toLowerCase() && (e[t] = i)
+                    }))
                 }
                 var l, s, c, u
             }))
@@ -682,112 +611,153 @@ function _typeof(e) {
         }
     };
 
-    function N(e) {
-        if (e += "", -1 == (e = Lampa.Utils.addUrlComponent(e, "rjson=true")).indexOf("uid=")) {
-            var t = Lampa.Storage.get("lampac_unic_id", "") || "guest";
-            e = Lampa.Utils.addUrlComponent(e, "uid=" + encodeURIComponent(t))
-        }
-        if (P()) {
-            if (-1 == e.indexOf("account_email=")) {
-                var n = Lampa.Storage.get("account_email", "");
-                n && (e = Lampa.Utils.addUrlComponent(e, "account_email=" + encodeURIComponent(n)))
-            }
-            if (-1 == e.indexOf("token=")) {
-                var i = O();
-                i && (e = Lampa.Utils.addUrlComponent(e, "token=" + encodeURIComponent(i)))
-            }
-            if (-1 == e.indexOf("nws_id=") && window.rch_nws && window.rch_nws[U]) {
-                var a = window.rch_nws[U].connectionId || "";
-                a && (e = Lampa.Utils.addUrlComponent(e, "nws_id=" + encodeURIComponent(a)))
-            }
-            if (-1 == e.indexOf("rchtype=")) {
-                var o = window.rch_nws && window.rch_nws[U] && window.rch_nws[U].type || "web";
-                e = Lampa.Utils.addUrlComponent(e, "rchtype=" + o)
-            }
-        } else {
-            var r = x() ? j(L()[_()] || "") : "";
-            if (r) {
-                var l = r.split("=")[0];
-                l && -1 == e.indexOf(l + "=") && (e = Lampa.Utils.addUrlComponent(e, r))
-            }
-        }
-        return e
+    function ownUrl(value) {
+        try {
+            var url = new URL(String(value || ""), lampacBase + "/");
+            if (!/^https?:$/.test(url.protocol) || url.hostname !== "lampac.fun" || url.port ||
+                url.username || url.password || /(?:^|\/)pidtor(?:\/|$)/i.test(url.pathname)) return "";
+            return lampacBase + url.pathname + url.search
+        } catch (error) { return "" }
     }
-    var U = h.replace("http://", "").replace("https://", ""),
-        z = !1;
 
-    function G(e, t) {
-        function n() {
-            window.nwsClient && window.nwsClient[U] && window.nwsClient[U]._shouldReconnect ? t && t() : (window.nwsClient || (window.nwsClient = {}), window.nwsClient[U] && window.nwsClient[U].socket && window.nwsClient[U].socket.close(), window.nwsClient[U] = new NativeWsClient(e.nws, {
-                autoReconnect: !0
-            }), window.nwsClient[U].on("Connected", (function() {
-                window.rch_nws[U].Registry(window.nwsClient[U], (function() {
-                    t && t()
-                }))
-            })), window.nwsClient[U].on("Error", (function(e) {
-                console.log("BWA NWS Error:", e)
-            })), window.nwsClient[U].connect())
+    function ownToken() {
+        var scripts = document.scripts || [];
+        for (var index = 0; index < scripts.length; index++) {
+            try {
+                var url = new URL(scripts[index].src, lampacBase);
+                if (url.hostname !== "lampac.fun") continue;
+                var match = url.pathname.match(/^\/(?:sync|online)\/js\/([^/]+)$/);
+                if (match) return decodeURIComponent(match[1]);
+                if (/^\/(?:sync|online)\.js$/.test(url.pathname) && url.searchParams.get("token"))
+                    return url.searchParams.get("token")
+            } catch (error) {}
         }
-        window.rch_nws || (window.rch_nws = {}), window.rch_nws[U] || (window.rch_nws[U] = {
-            type: Lampa.Platform.is("android") ? "apk" : Lampa.Platform.is("tizen") ? "cors" : "web",
-            startTypeInvoke: !1,
-            rchRegistry: !1,
-            apkVersion: 0
-        }), window.rch_nws[U].Registry = function(e, t) {
-            e.invoke("RchRegistry", JSON.stringify({
-                version: 151,
-                host: location.host,
-                rchtype: window.rch_nws[U].type || "web",
-                apkVersion: 0,
-                player: Lampa.Storage.field("player"),
-                account_email: Lampa.Storage.get("account_email", ""),
-                unic_id: Lampa.Storage.get("lampac_unic_id", ""),
-                profile_id: Lampa.Storage.get("lampac_profile_id", ""),
-                token: ""
-            })), e._shouldReconnect && window.rch_nws[U].rchRegistry ? t && t() : (window.rch_nws[U].rchRegistry = !0, e.on("RchRegistry", (function(e) {
-                !0, t && t()
-            })), e.on("RchClient", (function(t, n, i, a, o) {
-                var r = new Lampa.Reguest;
+        return ""
+    }
 
-                function l(n) {
-                    (Lampa.Arrays.isObject(n) || Lampa.Arrays.isArray(n)) && (n = JSON.stringify(n)), function(n, i) {
-                        $.ajax({
-                            url: "http://" + h + "/rch/" + n + "?id=" + t,
-                            type: "POST",
-                            data: i,
-                            async: !0,
-                            cache: !1,
-                            contentType: !1,
-                            processData: !1,
-                            success: function() {},
-                            error: function() {
-                                e.invoke("RchResult", t, "")
-                            }
-                        })
-                    }("result", n)
+    function copyStreamMetadata(target, stream) {
+        ["headers", "segments", "hls_manifest_timeout", "subtitles", "subtitles_call", "translate_name"].forEach(function(key) {
+            if (stream && stream[key] !== undefined) target[key] = stream[key];
+            else delete target[key]
+        });
+        return target
+    }
+
+    function collectStreamLinks(value, inherited) {
+        var result = [];
+        function append(item, metadata) {
+            if (Array.isArray(item)) return item.forEach(function(child) { append(child, metadata) });
+            if (item && typeof item === "object") {
+                var own = copyStreamMetadata({}, metadata);
+                ["headers", "segments", "hls_manifest_timeout", "subtitles", "subtitles_call", "translate_name"].forEach(function(key) {
+                    if (item[key] !== undefined) own[key] = item[key]
+                });
+                append(item.url, own);
+                append(item.reserve, own);
+                return
+            }
+            if (typeof item !== "string") return;
+            item.split(/\s+or\s+/).forEach(function(url) {
+                url = url.trim();
+                if (url.charAt(0) === "/" && url.charAt(1) !== "/") url = lampacBase + url;
+                if (/^https?:\/\//i.test(url) && !result.some(function(record) { return record.url === url }))
+                    result.push({url: url, metadata: copyStreamMetadata({}, metadata)})
+            })
+        }
+        append(value, inherited || {});
+        return result
+    }
+
+    function requestHeaders() {
+        var key = Lampa.Storage.get("kit_aesgcmkey", "");
+        return key ? {"X-Kit-AesGcm": key} : {}
+    }
+
+    function N(value) {
+        var safe = ownUrl(value);
+        if (!safe) return "";
+        var url = new URL(safe), owner = window.rch_nws && window.rch_nws[U];
+        var identity = {
+            rjson: "true",
+            uid: Lampa.Storage.get("lampac_unic_id", "") || "guest",
+            account_email: Lampa.Storage.get("account_email", ""),
+            profile_id: Lampa.Storage.get("lampac_profile_id", ""),
+            token: ownToken(),
+            nws_id: owner && owner.connectionId || Lampa.Storage.get("lampac_nws_id", ""),
+            rchtype: owner && owner.type || (Lampa.Platform.is("android") ? "apk" : "web")
+        };
+        Object.keys(identity).forEach(function(key) {
+            if (identity[key] && !url.searchParams.has(key)) url.searchParams.set(key, identity[key])
+        });
+        return url.toString()
+    }
+    var U = "lampac.fun", rchPending = [];
+
+    function W(response, ready, failed) {
+        if (!response || !response.rch) return false;
+        if (response.nws) {
+            try {
+                var endpoint = new URL(response.nws);
+                if (endpoint.hostname !== U || !/^wss?:$/.test(endpoint.protocol)) {
+                    if (failed) failed();
+                    return false
                 }
-                "ping" == n ? l("pong") : r.native(n, l, (function() {
-                    l("")
-                }), i, {
-                    dataType: "text",
-                    timeout: 8e3,
-                    headers: a,
-                    returnHeaders: o
-                })
-            })), e.on("Connected", (function(e) {
-                window.rch_nws[U].connectionId = e, !0
-            })))
-        }, "undefined" == typeof NativeWsClient ? Lampa.Utils.putScript(["http://" + h + "/js/nws-client-es5.js?v18112025"], (function() {}), !1, (function() {
-            n()
-        }), !0) : n()
-    }
-
-    function W(e, t) {
-        return !(!e || !e.rch) && (G(e, (function() {
-            setTimeout((function() {
-                t && t()
-            }), 500)
-        })), !0)
+            } catch (error) { if (failed) failed(); return false }
+        }
+        var done = false;
+        var timer = setTimeout(function() { finish(false) }, 10000);
+        function finish(ok) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            var index = rchPending.indexOf(finish);
+            if (index >= 0) rchPending.splice(index, 1);
+            if (!rchPending.length) rchPending = [];
+            if (ok) { if (ready) ready() } else if (failed) failed()
+        }
+        if (typeof window.Online2RchHandshake === "function") {
+            if (!window.Online2RchHandshake(response, function() { finish(true) }, function() { return !done }))
+                finish(false);
+            return true
+        }
+        rchPending.push(finish);
+        if (rchPending.length > 1) return true;
+        var batch = rchPending;
+        function complete(ok) {
+            if (rchPending !== batch) return;
+            var callbacks = rchPending;
+            rchPending = [];
+            callbacks.forEach(function(callback) { callback(ok) })
+        }
+        function connect() {
+            if (rchPending !== batch) return;
+            var owner = window.rch_nws && window.rch_nws[U];
+            if (!owner || typeof owner.Registry !== "function" || typeof NativeWsClient === "undefined") {
+                complete(false); return
+            }
+            window.nwsClient = window.nwsClient || {};
+            var client = window.nwsClient[U];
+            if (client && client.connectionId != null) { complete(true); return }
+            if (client) {
+                if (typeof client.reconnect === "function") client.reconnect(function() { complete(true) });
+                else client.on("Connected", function() { complete(true) });
+                return
+            }
+            if (!response.nws) { complete(false); return }
+            client = window.nwsClient[U] = new NativeWsClient(response.nws, {autoReconnect: true});
+            client.on("Connected", function() {
+                // Registry and RCH requests stay owned by Lampac's own online module.
+                owner.Registry(client, function() { complete(true) })
+            });
+            client.on("Closed", function() { owner.connectionId = "" });
+            client.on("Error", function() { complete(false) });
+            client.connect()
+        }
+        if (typeof NativeWsClient === "undefined") {
+            Lampa.Utils.putScript([lampacBase + "/js/nws-client-es5.js?v21042026"],
+                function() {}, false, connect, true)
+        } else connect();
+        return true
     }
     var H = function() {
         function n(e) {
@@ -802,13 +772,13 @@ function _typeof(e) {
                     else {
                         var i = [];
                         i.push("id=" + e.object.movie.id), i.push("serial=" + (e.object.movie.name ? 1 : 0)), e.object.movie.imdb_id && i.push("imdb_id=" + (e.object.movie.imdb_id || "")), e.object.movie.kinopoisk_id && i.push("kinopoisk_id=" + (e.object.movie.kinopoisk_id || ""));
-                        var a = Lampa.Utils.protocol() + E.stream + "/externalids?" + i.join("&");
+                        var a = lampacBase + "/externalids?" + i.join("&");
                         e.network.timeout(1e4), e.network.silent(N(a), (function(n) {
                             for (var i in n) e.object.movie[i] = n[i];
                             t()
                         }), (function() {
                             t()
-                        }))
+                        }), false, {headers: requestHeaders()})
                     }
                 }))
             }
@@ -874,6 +844,7 @@ function _typeof(e) {
         }, {
             key: "source",
             value: function(e, t) {
+                if (!cleanSources([e]).length) return Promise.reject(400);
                 var n = this;
                 return new Promise((function(i, a) {
                     var o = function(e) {
@@ -891,20 +862,20 @@ function _typeof(e) {
                                 var e = o[r],
                                     s = function(o, c) {
                                         var u = o ? "/lite/" : "/",
-                                            d = Lampa.Utils.protocol() + E.stream + u + e,
+                                            d = lampacBase + u + e,
                                             m = n.requestParams(N(d));
                                         t && (m += "&s=" + t), n.network.timeout(1e4), n.network.silent(m, (function(e) {
                                             var t;
                                             try {
                                                 t = JSON.parse(e)
                                             } catch (e) {}
-                                            t ? t.rch && P() && !c ? W(t, (function() {
+                                            t ? t.rch && !c ? W(t, (function() {
                                                 s(o, !0)
-                                            })) : "disable" === t || t.disable || t.error && !t.data ? (r++, l()) : i(t) : "disable" === e ? (r++, l()) : a(500)
+                                            }), function() { a(500) }) : "disable" === t || t.disable || t.error && !t.data ? (r++, l()) : i(t) : "disable" === e ? (r++, l()) : a(500)
                                         }), (function() {
                                             o ? s(!1, c) : (r++, l())
                                         }), !1, {
-                                            dataType: "text"
+                                            dataType: "text", headers: requestHeaders()
                                         })
                                     },
                                     c = -1 == E.nolite.indexOf(e);
@@ -933,12 +904,17 @@ function _typeof(e) {
                         n(M.renameTranslate(o))
                     };
                     var s = function(e, n) {
-                        t.network.timeout(1e4), t.network.silent(N(e.url), (function(t) {
-                            if (t.rch && P() && !n) W(t, (function() {
+                        var safe = N(e.url);
+                        if (!safe) return void l.error();
+                        t.network.timeout(1e4), t.network.silent(safe, (function(t) {
+                            if (t.rch && !n) W(t, (function() {
                                 s(e, !0)
-                            }));
+                            }), l.error.bind(l));
                             else {
                                 var i = t;
+                                if (!i || i.error || i.accsdb || (!i.url && (!i.quality || !Object.keys(i.quality).length)))
+                                    return void l.error();
+                                i.source_name = e.source_name || i.source_name || "";
                                 if (!i.quality && i.url) {
                                     i.quality = {};
                                     var a = i.url;
@@ -946,7 +922,7 @@ function _typeof(e) {
                                 }
                                 i.details = e.details || i.details || "no details", i.translate = e.translate || i.translate || "no translate", o.push(i), l.next()
                             }
-                        }), l.error.bind(l))
+                        }), l.error.bind(l), false, {headers: requestHeaders()})
                     };
                     a.forEach((function(e) {
                         s(e, !1)
@@ -970,13 +946,13 @@ function _typeof(e) {
                             }))
                         };
                     for (var l in e.quality) r(l);
-                    t.network.silent(Lampa.Utils.protocol() + E.stream + "/m3u/add", (function(e) {
-                        n(Lampa.Utils.protocol() + E.stream + e.url)
+                    t.network.silent(lampacBase + "/m3u/add", (function(e) {
+                        n(lampacBase + e.url)
                     }), (function(e, t) {
                         i(400)
                     }), {
                         playlist: a
-                    })
+                    }, {headers: requestHeaders()})
                 }))
             }
         }, {
@@ -986,12 +962,13 @@ function _typeof(e) {
                     n = Lampa.Storage.field("video_quality_default"),
                     i = function(n) {
                         var i = [e[n].url].concat(e[n].reserve),
-                            a = parseInt(n);
+                            metadata = e[n].stream_meta || {}, a = parseInt(n);
                         i.forEach((function(e) {
                             t.push({
                                 int: a,
                                 label: a > 1440 ? "4K" : a >= 1440 ? "2K" : a >= 1080 ? "FHD" : a >= 720 ? "HD" : "",
                                 quality: n,
+                                stream_meta: metadata[e],
                                 url: e
                             })
                         }))
@@ -1016,7 +993,7 @@ function _typeof(e) {
                                 n.length && (t = t.concat(n))
                             })), t.forEach((function(e) {
                                 e.maxquality = e.maxquality || "1080p";
-                                var t = e.translate.match(/\[(.*?)\]/);
+                                var t = M.voice(e).match(/\[(.*?)\]/);
                                 t && (t = t[1].split(",").map((function(e) {
                                     return e.trim()
                                 })), e.lang = (t.map((function(e) {
@@ -1071,7 +1048,9 @@ function _typeof(e) {
                         s = [],
                         c = function e(n, i) {
                             return new Promise((function(a, o) {
-                                t.network.timeout(1e4), t.network.silent(N(n.url), (function(t) {
+                                var safe = N(n.url);
+                                if (!safe) return void o(400);
+                                t.network.timeout(1e4), t.network.silent(safe, (function(t) {
                                     var r, l = t;
                                     if ("string" == typeof t)
                                         if (-1 !== t.indexOf("<div") || -1 !== t.indexOf("data-json")) r = {
@@ -1088,21 +1067,21 @@ function _typeof(e) {
                                         } catch (e) {
                                             l = {}
                                         }
-                                    if (l.rch && P() && !i) W(l, (function() {
+                                    if (l.rch && !i) W(l, (function() {
                                         e(n, !0).then(a).catch(o)
-                                    }));
+                                    }), function() { o(500) });
                                     else {
                                         if (!l.data || 0 === l.data.length) return void o("no data");
                                         ! function(e, t) {
                                             e.data.forEach((function(e) {
-                                                e.translate_name = t
+                                                e.translate_name = t, e.source_name = n.source_name || e.source_name || ""
                                             }))
                                         }(l, M.voice(n)), a(l.data)
                                     }
                                 }), (function(e) {
                                     o(e)
                                 }), !1, {
-                                    dataType: "text"
+                                    dataType: "text", headers: requestHeaders()
                                 })
                             }))
                         };
@@ -1204,70 +1183,83 @@ function _typeof(e) {
                 }), (function() {
                     ++i >= n && t(e)
                 }), !1, {
-                    dataType: "text"
+                    dataType: "text", headers: a.headers || {}
                 })
             }
         })) : t(e)
     }
+    var playbackSequence = 0;
     var J = function() {
         function e(n) {
             var i = this;
-            t(this, e), this.object = n, this.extract = new H(n), this.voice = new o(n), this.on_error_timer = null;
-            Lampa.Player.listener.follow("destroy", (function e() {
-                Lampa.Player.listener.remove("close", e), clearTimeout(i.on_error_timer)
-            }))
+            t(this, e), this.object = n, this.extract = new H(n), this.voice = new o(n), this.on_error_timer = null, this.instanceId = ++playbackSequence;
+            var started = function(data) {
+                if (data && data.lampac_fastonline_owner === i.instanceId && data.lampac_merged_quality) {
+                    i.applyStreamData(data);
+                    i.setFlowsForQuality(data)
+                } else if (data && data.lampac_fastonline_owner) {
+                    Lampa.Player.listener.remove("start", started);
+                    Lampa.Player.listener.remove("destroy", destroyed)
+                }
+            };
+            var destroyed = function() { clearTimeout(i.on_error_timer) };
+            Lampa.Player.listener.follow("start", started);
+            Lampa.Player.listener.follow("destroy", destroyed)
         }
         return i(e, [{
             key: "getQuality",
-            value: function(e) {
-                var t = this,
-                    n = {};
-                e.forEach((function(e, i) {
-                    var a = e.quality;
-                    if (!a || "object" !== _typeof(a)) {
-                        if (!e.url) return;
-                        a = {
-                            auto: e.url
-                        }
-                    }
-                    var o = function(e) {
-                        var i = parseInt(e),
-                            o = t.getSplitLinks(a[e]);
-                        n[e] ? n[e].reserve = n[e].reserve.concat(o) : n[e] = {
-                            label: i > 1440 ? "4K" : i >= 1440 ? "2K" : i >= 1080 ? "FHD" : i >= 720 ? "HD" : "",
-                            url: o[0],
-                            reserve: o.length > 1 ? o.slice(1) : [],
-                            used: [],
-                            error: [],
+            value: function(items) {
+                var player = this, merged = {};
+                (items || []).forEach(function(item) {
+                    var quality = item.quality;
+                    if (!quality || typeof quality !== "object") quality = {auto: item.url};
+                    Object.keys(quality).forEach(function(name) {
+                        var number = parseInt(String(name).replace(/[^0-9]/g, ""), 10) || 0;
+                        var key = number ? number + "p" : name;
+                        var metadata = copyStreamMetadata({}, item);
+                        metadata.translate_name = item.translate_name || M.voice(item);
+                        var records = collectStreamLinks(quality[name], metadata);
+                        if (!records.length) return;
+                        if (!merged[key]) merged[key] = {
+                            label: number > 1440 ? "4K" : number >= 1440 ? "2K" : number >= 1080 ? "FHD" : number >= 720 ? "HD" : "",
+                            url: records[0].url, reserve: [], used: [], error: [], stream_meta: {},
+                            call: function(instance, ready) {
+                                var data = Lampa.Player.playdata();
+                                data.url = instance.url;
+                                data.quality_switched = key;
+                                player.applyStreamData(data);
+                                ready(instance.url)
+                            },
                             trigger: function() {
-                                t.setFlowsForQuality(Lampa.Player.playdata())
+                                var data = Lampa.Player.playdata();
+                                player.applyStreamData(data);
+                                player.setFlowsForQuality(data)
                             }
-                        }
-                    };
-                    for (var r in a) o(r)
-                }));
-                var i = Lampa.Arrays.getKeys(n),
-                    a = {};
-                return i.sort((function(e, t) {
-                    var n = parseInt((e + "").replace(/[^0-9]/g, "")) || 0,
-                        i = parseInt((t + "").replace(/[^0-9]/g, "")) || 0;
-                    return 0 === n && 0 === i ? (e + "").localeCompare(t + "") : 0 === n ? 1 : 0 === i ? -1 : i - n
-                })), i.forEach((function(e) {
-                    var t = parseInt((e + "").replace(/[^0-9]/g, "")) || 0;
-                    t > 0 && !n[e].label && (n[e].label = t > 1440 ? "4K" : t >= 1440 ? "2K" : t >= 1080 ? "FHD" : t >= 720 ? "HD" : ""), a[e] = n[e]
-                })), a
+                        };
+                        var group = merged[key];
+                        records.forEach(function(record) {
+                            if (record.url !== group.url && group.reserve.indexOf(record.url) < 0) group.reserve.push(record.url);
+                            if (!group.stream_meta[record.url]) group.stream_meta[record.url] = record.metadata
+                        })
+                    })
+                });
+                var result = {};
+                Object.keys(merged).sort(function(left, right) {
+                    return (parseInt(right, 10) || 0) - (parseInt(left, 10) || 0)
+                }).forEach(function(key) { result[key] = merged[key] });
+                return result
             }
         }, {
             key: "getSplitLinks",
-            value: function(e) {
-                return "string" != typeof e ? e && e.url ? [e.url] : [String(e)] : e.split(" or ")
+            value: function(value) {
+                return collectStreamLinks(value).map(function(record) { return record.url })
             }
         }, {
             key: "getSelectedQuality",
             value: function(e) {
                 var t = null,
                     n = e.url,
-                    i = e.quality;
+                    i = e.quality || e.lampac_merged_quality || {};
                 if (e.quality_switched) {
                     for (var a in i)
                         if (a == e.quality_switched) {
@@ -1292,14 +1284,14 @@ function _typeof(e) {
         }, {
             key: "getQualityLevelDown",
             value: function(e) {
-                var t, n, i = this.getSelectedQuality(e);
-                for (var a in e.quality)
-                    if (i == e.quality[a]) {
+                var t, n, quality = e.quality || e.lampac_merged_quality || {}, i = this.getSelectedQuality(e);
+                for (var a in quality)
+                    if (i == quality[a]) {
                         t = a;
                         break
                     }
                 if (t) {
-                    var o = Lampa.Arrays.getKeys(e.quality);
+                    var o = Lampa.Arrays.getKeys(quality);
                     o.sort((function(e, t) {
                         return parseInt(t) - parseInt(e)
                     })), o.forEach((function(e) {
@@ -1310,12 +1302,15 @@ function _typeof(e) {
             }
         }, {
             key: "getReserveQuality",
-            value: function(e) {
-                var t = this.getSelectedQuality(e),
-                    n = "";
-                return t && (t.error.push(Lampa.Manifest.app_digital >= 236 ? e.url : t.url), t.reserve.forEach((function(e) {
-                    -1 != t.used.indexOf(e) || n || (n = e, t.used.push(e))
-                }))), n
+            value: function(data) {
+                var quality = this.getSelectedQuality(data);
+                if (!quality) return "";
+                if (quality.error.indexOf(data.url) < 0) quality.error.push(data.url);
+                var next = quality.reserve.find(function(url) {
+                    return url !== data.url && quality.used.indexOf(url) < 0 && quality.error.indexOf(url) < 0
+                });
+                if (next) quality.used.push(next);
+                return next || ""
             }
         }, {
             key: "getPlayData",
@@ -1333,56 +1328,63 @@ function _typeof(e) {
             }
         }, {
             key: "getNextVoice",
-            value: function(e, t, n) {
-                var i = this.getSelectedQuality(e);
-                if (i && (0 == i.reserve.length || i.used.length == i.reserve.length)) {
-                    var a = this.getQualityLevelDown(e);
-                    a ? (e.quality_switched = a, i = this.getSelectedQuality(e), Lampa.Arrays.remove(i.reserve, i.url), Lampa.Arrays.insert(i.reserve, 0, i.url)) : i = null
+            value: function(data, voices, callback) {
+                var next = this.getReserveQuality(data);
+                while (!next) {
+                    var lower = this.getQualityLevelDown(data);
+                    if (!lower) break;
+                    data.quality_switched = lower;
+                    var quality = (data.quality || data.lampac_merged_quality)[lower];
+                    next = [quality.url].concat(quality.reserve).find(function(url) {
+                        return quality.error.indexOf(url) < 0 && quality.used.indexOf(url) < 0
+                    });
+                    if (next) quality.used.push(next)
                 }
-                i ? (e.url = this.getReserveQuality(e), n(e.url || "nofound"), this.setFlowsForQuality(e)) : M.modalChoiceTranstale({
-                    from: t.find((function(e) {
-                        return e.selected
-                    })).name,
-                    voicelist: t
+                if (next) {
+                    data.url = next;
+                    this.applyStreamData(data);
+                    callback(next);
+                    this.setFlowsForQuality(data)
+                } else M.modalChoiceTranstale({
+                    from: M.voice(voices.find(function(voice) { return voice.selected }) || voices[0] || {}),
+                    voicelist: voices
                 })
             }
         }, {
             key: "setFlowsForQuality",
-            value: function(e) {
-                if (e && e.quality) {
-                    var t = Object.keys(e.quality);
-                    if (1 !== t.length || "auto" !== t[0]) {
-                        var n = this.getSelectedQuality(e);
-                        if (n) {
-                            r = [];
-                            var i = [n.url].concat(n.reserve.filter((function(e) {
-                                return e !== n.url
-                            }))).filter((function(e) {
-                                return -1 == n.error.indexOf(e)
-                            }));
-                            i.length > 0 && i.forEach((function(e, t) {
-                                r.push({
-                                    title: "Поток " + (t + 1),
-                                    subtitle: Lampa.Utils.shortText(e, 35),
-                                    url: e,
-                                    selected: e == n.url
-                                })
-                            })), Lampa.PlayerPanel.setFlows(!!r.length && r)
-                        }
-                    } else {
-                        var a = e.quality.auto,
-                            o = a.url || a;
-                        if ("string" == typeof o && o) {
-                            var r = [{
-                                title: "Поток 1",
-                                subtitle: Lampa.Utils.shortText(o, 35),
-                                url: o,
-                                selected: !0
-                            }];
-                            Lampa.PlayerPanel.setFlows(r)
-                        }
-                    }
+            value: function(data) {
+                var player = this;
+                if (!data || !(data.quality || data.lampac_merged_quality)) return;
+                var quality = this.getSelectedQuality(data);
+                if (!quality) return;
+                var urls = [quality.url].concat(quality.reserve).filter(function(url) {
+                    return quality.error.indexOf(url) < 0
+                });
+                Lampa.PlayerPanel.setFlows(urls.length ? urls.map(function(url, index) {
+                    return {title: "Поток " + (index + 1), subtitle: Lampa.Utils.shortText(url, 35),
+                        url: url, selected: url === data.url,
+                        onSelect: function() {
+                            var active = Lampa.Player.playdata();
+                            active.url = url;
+                            active.flow_switched = url;
+                            player.applyStreamData(active);
+                            Lampa.Controller.toggle("player");
+                            Lampa.PlayerPanel.listener.send("flow", {url: url});
+                            player.setFlowsForQuality(active)
+                        }}
+                }) : false)
+            }
+        }, {
+            key: "applyStreamData",
+            value: function(data) {
+                if (data.quality) {
+                    data.lampac_merged_quality = data.quality;
+                    data.lampac_fastonline_owner = this.instanceId
                 }
+                var quality = this.getSelectedQuality(data);
+                if (quality && quality.stream_meta && quality.stream_meta[data.url])
+                    copyStreamMetadata(data, quality.stream_meta[data.url]);
+                return data
             }
         }, {
             key: "movie",
@@ -1457,7 +1459,7 @@ function _typeof(e) {
                                 }), 2e3)
                             }
                         };
-                        Lampa.Player.runas("inner"), Lampa.Player.play(m), Lampa.Player.playlist([]), t.setFlowsForQuality(m)
+                        Lampa.Player.runas("inner"), Lampa.Player.play(t.applyStreamData(m)), Lampa.Player.playlist([]), t.setFlowsForQuality(m)
                     }))
                 })) : M.selectChoiceTranstale(e.translates, i, (function(n) {
                     t.voice.set(M.voice(n)), t.extract.links([e.translates.filter((function(e) {
@@ -1479,7 +1481,7 @@ function _typeof(e) {
                                 timeline: Lampa.Timeline.view(o),
                                 subtitles: !!i && i.subtitles
                             };
-                            Lampa.Player.play(n)
+                            Lampa.Player.play(copyStreamMetadata(n, e.stream_meta || {}))
                         }))
                     })).catch((function(e) {
                         t.extract.error(e)
@@ -1541,12 +1543,8 @@ function _typeof(e) {
                                 "inner" == M.player() ? (Lampa.Player.loading(!0), i.extract.links([e.plays.filter((function(e) {
                                     return e.e == t.number
                                 }))]).then((function(e) {
-                                    0 == e.length ? (r.url = "nofound", n()) : (r.quality = i.getQuality(e), r.url = Lampa.Player.getUrlQuality(r.quality), n(), setTimeout((function() {
-                                        i.setFlowsForQuality({
-                                            url: "string" == typeof r.url ? r.url : "",
-                                            quality: r.quality,
-                                            quality_switched: null
-                                        })
+                                    0 == e.length ? (r.url = "nofound", n()) : (r.quality = i.getQuality(e), r.url = Lampa.Player.getUrlQuality(r.quality), i.applyStreamData(r), n(), setTimeout((function() {
+                                        if (Lampa.Player.playdata() === r) i.setFlowsForQuality(r)
                                     }), 100))
                                 })).catch((function() {
                                     r.url = "nofound", n()
@@ -1573,7 +1571,7 @@ function _typeof(e) {
                                                 timeline: t.timeline,
                                                 subtitles: !!a && a.subtitles
                                             };
-                                            t.mark(), Lampa.Player.play(n)
+                                            t.mark(), Lampa.Player.play(copyStreamMetadata(n, e.stream_meta || {}))
                                         }))
                                     })).catch((function(e) {
                                         i.extract.error(e)
@@ -1604,11 +1602,7 @@ function _typeof(e) {
                     voicelist: o
                 });
                 u.url((function() {
-                    Lampa.Player.opened() && Lampa.Player.close(), Lampa.Player.runas("inner"), Lampa.Player.play(u), Lampa.Player.playlist(a), u.quality && Object.keys(u.quality).length > 0 && i.setFlowsForQuality({
-                        url: "string" == typeof u.url ? u.url : "",
-                        quality: u.quality,
-                        quality_switched: null
-                    })
+                    Lampa.Player.opened() && Lampa.Player.close(), Lampa.Player.runas("inner"), Lampa.Player.play(u), Lampa.Player.playlist(a), i.setFlowsForQuality(u)
                 }))
             }
         }]), e
@@ -1617,26 +1611,8 @@ function _typeof(e) {
             function e(n) {
                 t(this, e);
                 var i = this;
-                if (this.object = n, P()) {
-                    if (!O()) return void Lampa.Noty.show("BWA код не указан. Укажите его в настройках.");
-                    ! function(e) {
-                        var t = O();
-                        if (t)
-                            if (z) e && e(!0);
-                            else {
-                                var n = "http://" + h + "/online/js/" + t;
-                                Lampa.Utils.putScriptAsync([n], (function() {
-                                    z = !0, e && e(!0)
-                                }))
-                            }
-                        else e && e(!1)
-                    }((function(e) {
-                        i.startPlay()
-                    }))
-                } else {
-                    if (!x()) return void Lampa.Noty.show("Сервер не указан. Добавьте сервер в настройках.");
-                    this.startPlay()
-                }
+                this.object = n;
+                this.startPlay()
             }
             return i(e, [{
                 key: "startPlay",
@@ -1664,7 +1640,7 @@ function _typeof(e) {
                     Lampa.Activity.push({
                         url: "",
                         title: "",
-                        component: "episodes",
+                        component: "lampac_fastonline_episodes",
                         movie: this.object.movie,
                         page: 1
                     })
@@ -1827,24 +1803,10 @@ function _typeof(e) {
         }
     }
 
-    function Z(e) {
-        Lampa.Input.edit({
-            title: "Адрес сервера",
-            value: "",
-            placeholder: "192.168.1.1:9118",
-            nosave: !0,
-            free: !0,
-            nomic: !0
-        }, (function(t) {
-            t && k(t) && w(L().length - 1);
-            e && e(t)
-        }))
-    }
-
     function Y(e) {
-        var t = P() ? Lampa.Utils.protocol() + h : x();
+        var t = lampacBase;
         if (t) {
-            var n = t + "/lite/events?life=true&id=76600&imdb_id=tt1630029&kinopoisk_id=505898&serial=0&title=Avatar&original_title=Avatar&original_language=en&year=2022&source=tmdb&clarification=0&similar=false&rchtype=&uid=guest";
+            var n = t + "/lite/events?life=true&id=76600&imdb_id=tt1630029&kinopoisk_id=505898&serial=0&title=Avatar&original_title=Avatar&original_language=en&year=2022&source=tmdb&clarification=0&similar=false";
             n = N(n);
             var i, a = 0,
                 o = "",
@@ -1858,7 +1820,7 @@ function _typeof(e) {
             }, ! function i() {
                 var s = new Lampa.Reguest;
                 s.timeout(5e3);
-                var c = o ? t + "/lifeevents?memkey=" + o + "&id=76600&imdb_id=tt1630029&kinopoisk_id=505898&serial=0&title=Avatar&original_title=Avatar&original_language=en&year=2022&source=tmdb&clarification=0&similar=false&rchtype=&uid=guest" : n;
+                var c = o ? t + "/lifeevents?memkey=" + o + "&id=76600&imdb_id=tt1630029&kinopoisk_id=505898&serial=0&title=Avatar&original_title=Avatar&original_language=en&year=2022&source=tmdb&clarification=0&similar=false" : n;
                 c = N(c), s.silent(c, (function(t) {
                     var n;
                     try {
@@ -1866,9 +1828,9 @@ function _typeof(e) {
                     } catch (e) {
                         n = t
                     }
-                    if (n && n.rch && P() && !l) return l = !0, void W(n, (function() {
+                    if (n && n.rch && !l) return l = !0, void W(n, (function() {
                         a = 0, o = "", setTimeout(i, 500)
-                    }));
+                    }), function() { e(null, "Ошибка подключения Lampac") });
                     var s = n && n.online ? n.online : Lampa.Arrays.isArray(n) ? n : [];
                     if (n && n.accsdb) e(null, "Доступ запрещён");
                     else {
@@ -1887,7 +1849,7 @@ function _typeof(e) {
                                                 }
                                             if (i) break
                                         }
-                                        i || -1 !== t.indexOf(n) || t.push(n)
+                                        // Unknown sources are not accepted as resolver paths.
                                     }
                                 }
                             })), t) : t
@@ -1899,7 +1861,7 @@ function _typeof(e) {
                 }), (function(t) {
                     e(null, "Ошибка соединения")
                 }), !1, {
-                    dataType: "text"
+                    dataType: "text", headers: requestHeaders()
                 })
             }()
         } else e(null, "Сервер не указан");
@@ -1968,238 +1930,32 @@ function _typeof(e) {
     }
 
     function ae() {
-        Lampa.Settings.listener.follow("open", (function(e) {
-            "main" == e.name && (0 == Lampa.Settings.main().render().find('[data-component="online_settings"]').length && Lampa.SettingsApi.addComponent({
-                component: "online_settings",
-                name: "Онлайн HFix",
-                icon: g,
-                before: "interface"
-            }), Lampa.Settings.main().update())
-        })), Lampa.SettingsApi.addParam({
-            component: "online_settings",
-            param: {
-                name: "online_mode_title",
-                type: "title"
-            },
-            field: {
-                name: "Режим работы"
+        Lampa.Settings.listener.follow("open", function(event) {
+            if (event.name === "main") {
+                if (!Lampa.Settings.main().render().find('[data-component="lampac_fastonline_settings"]').length)
+                    Lampa.SettingsApi.addComponent({component: "lampac_fastonline_settings",
+                        name: "Склеивание Lampac", icon: g, before: "interface"});
+                Lampa.Settings.main().update()
             }
-        }), Lampa.SettingsApi.addParam({
-            component: "online_settings",
-            param: {
-                name: "online_use_bwa_toggle",
-                type: "trigger",
-                default: !1
-            },
-            field: {
-                name: "Использовать BWA",
-                description: "Переключить между сервером и BWA"
-            },
-            onChange: function(e) {
-                F(e)
-            },
-            onRender: function(e) {
-                e.find(".settings-param__value").text(P() ? "Да" : "Нет"), e.on("hover:enter", (function() {
-                    F(!P()), e.find(".settings-param__value").text(P() ? "Да" : "Нет")
-                }))
-            }
-        }), Lampa.SettingsApi.addParam({
-            component: "online_settings",
-            param: {
-                name: "online_bwa_code_btn",
-                type: "static"
-            },
-            field: {
-                name: "BWA код",
-                description: "Введите код от bwa.to (например: abc1xyz)"
-            },
-            onRender: function(e) {
-                var t = O();
-                e.find(".settings-param__value").text(t || "Не указан"), e.on("hover:enter", (function() {
-                    var t, n;
-                    t = function() {
-                        var t = O();
-                        e.find(".settings-param__value").text(t || "Не указан")
-                    }, n = O(), Lampa.Input.edit({
-                        title: "BWA код",
-                        value: n,
-                        placeholder: "abc1xyz",
-                        nosave: !0,
-                        free: !0,
-                        nomic: !0
-                    }, (function(e) {
-                        null !== e ? (function(e) {
-                            Lampa.Storage.set(f, e)
-                        }(e = e.trim()), e && (F(!0), Lampa.Noty.show("BWA код сохранён")), t && t()) : t && t()
-                    }))
-                }))
-            }
-        }), Lampa.SettingsApi.addParam({
-            component: "online_settings",
-            param: {
-                name: "online_server_title",
-                type: "title"
-            },
-            field: {
-                name: "Свой сервер"
-            }
-        }), Lampa.SettingsApi.addParam({
-            component: "online_settings",
-            param: {
-                name: "online_add_server_btn",
-                type: "static"
-            },
-            field: {
-                name: "Добавить сервер",
-                description: "Например: 192.168.1.1:9118"
-            },
-            onRender: function(e) {
-                e.on("hover:enter", (function() {
-                    Z((function() {
-                        Lampa.Settings.update()
-                    }))
-                }))
-            }
-        }), Lampa.SettingsApi.addParam({
-            component: "online_settings",
-            param: {
-                name: "online_sources_title",
-                type: "title"
-            },
-            field: {
-                name: "Источники"
-            }
-        }), Lampa.SettingsApi.addParam({
-            component: "online_settings",
-            param: {
-                name: "online_sources_btn",
-                type: "static"
-            },
-            field: {
-                name: "Выбор источников",
-                description: "Выбрать балансеры для поиска"
-            },
-            onRender: function(e) {
-                e.on("hover:enter", (function() {
-                    ee()
-                }))
-            }
-        }), Lampa.SettingsApi.addParam({
-            component: "online_settings",
-            param: {
-                name: "online_servers_title",
-                type: "title"
-            },
-            field: {
-                name: "Список серверов"
-            }
-        }), Lampa.Settings.listener.follow("open", (function(e) {
-            "online_settings" == e.name && oe(e.body)
-        }))
-    }
-
-    function oe(e) {
-        e.find(".online-server-item").remove();
-        var t = L(),
-            n = _(),
-            i = e.find(".settings-param-title").last();
-        if (i.length || (i = e.find(".settings-param").last()), t.forEach((function(t, a) {
-                var o = a === n,
-                    r = !!j(t),
-                    l = [];
-                o && l.push("Текущий сервер"), r && l.push("Токен установлен");
-                var s = l.join(" • "),
-                    c = $('<div class="settings-param selector online-server-item" data-server-index="' + a + '"><div class="settings-param__name">' + C(t) + '</div><div class="settings-param__value"></div>' + (s ? '<div class="settings-param__descr">' + s + "</div>" : "") + "</div>");
-                c.on("hover:enter", (function() {
-                    re(a, (function() {
-                        oe(e)
-                    }))
-                })), i.after(c), i = c
-            })), 0 === t.length) {
-            var a = $('<div class="settings-param online-server-item"><div class="settings-param__name" style="opacity: 0.5">Не указан</div></div>');
-            i.after(a)
-        }
-        e.find(".online-server-item").on("hover:focus", (function() {
-            Lampa.Params.listener.send("update_scroll_position")
-        })), Lampa.Params.listener.send("update_scroll")
-    }
-
-    function re(e, t, n) {
-        var i = L(),
-            a = _(),
-            o = e === a,
-            r = i[e],
-            l = j(r),
-            s = [];
-        o || s.push({
-            title: "Выбрать",
-            select: !0
-        }), n && (s.push({
-            title: l ? "Изменить токен" : "Добавить токен",
-            token: !0
-        }), l && s.push({
-            title: "Удалить токен",
-            removeToken: !0
-        })), s.push({
-            title: "Редактировать",
-            edit: !0
-        }), s.push({
-            title: "Удалить",
-            remove: !0
         });
-        var u = Lampa.Controller.enabled().name;
-        Lampa.Select.show({
-            title: C(i[e]),
-            items: s,
-            onBack: function() {
-                Lampa.Controller.toggle(u)
-            },
-            onSelect: function(n) {
-                Lampa.Select.close(), n.select ? (w(e), t && t(), setTimeout((function() {
-                    Lampa.Controller.toggle(u)
-                }), 10)) : n.token ? Lampa.Input.edit({
-                    title: "Токен сервера",
-                    value: l,
-                    placeholder: "showy_token=abc123 или token=xyz",
-                    nosave: !0,
-                    free: !0,
-                    nomic: !0
-                }, (function(e) {
-                    null !== e && (D(r, e.trim()), e.trim() && Lampa.Noty.show("Токен сохранён")), t && t(), setTimeout((function() {
-                        Lampa.Controller.toggle(u)
-                    }), 10)
-                })) : n.removeToken ? (D(r, ""), Lampa.Noty.show("Токен удалён"), t && t(), setTimeout((function() {
-                    Lampa.Controller.toggle(u)
-                }), 10)) : n.edit ? Lampa.Input.edit({
-                    title: "Адрес сервера",
-                    value: i[e],
-                    placeholder: "192.168.1.1:9118",
-                    nosave: !0,
-                    free: !0,
-                    nomic: !0
-                }, (function(n) {
-                    if (n && n !== i[e]) {
-                        var a = j(i[e]);
-                        a && (D(i[e], ""), D(n, a)), i[e] = n, Lampa.Storage.set(c, i)
-                    }
-                    t && t(), setTimeout((function() {
-                        Lampa.Controller.toggle(u)
-                    }), 10)
-                })) : n.remove && (D(i[e], ""), S(e), t && t(), setTimeout((function() {
-                    Lampa.Controller.toggle(u)
-                }), 10))
-            },
-            onLong: function(n) {
-                n.edit && (Lampa.Select.close(), re(e, t, !0))
-            }
-        })
+        Lampa.SettingsApi.addParam({component: "lampac_fastonline_settings",
+            param: {name: "fastonline_lampac_server", type: "static"},
+            field: {name: "Сервер Lampac", description: lampacBase}});
+        Lampa.SettingsApi.addParam({component: "lampac_fastonline_settings",
+            param: {name: "fastonline_lampac_sources_button", type: "static"},
+            field: {name: "Выбор источников", description: "Источники для склеивания"},
+            onRender: function(element) {
+                element.on("hover:enter", function() { ee() })
+            }});
     }! function() {
-        if (!window.plugin_init) {
-            window.plugin_init = !0, ae(), Lampa.Component.add("episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
+        if (!window.lampac_fastonline_plugin) {
+            window.lampac_fastonline_plugin = {version: "1.1.0", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
                 if ("complite" == e.type) {
-                    var t = '<div class="full-start__button selector view--online" data-subtitle="' + (P() ? "BWA: " + (O() ? O().substring(0, 2) + "****" : "не указан") : "Сервер: " + (C(x()) || "не указан")) + '">' + g + "<span>Онлайн</span></div>",
+                    var root = e.object.activity.render();
+                    if (root.find(".view--lampac-merged").length) return;
+                    var t = '<div class="full-start__button selector view--online view--lampac-merged" data-subtitle="Lampac">' + g + "<span>Склеивание</span></div>",
                         n = $(Lampa.Lang.translate(t));
-                    e.object.activity.render().find(".view--torrent").after(n), n.on("hover:enter", (function() {
+                    root.find(".view--torrent").length ? root.find(".view--torrent").last().after(n) : root.find(".full-start-new__buttons, .full-start__buttons").first().append(n), n.on("hover:enter", (function() {
                         Lampa.Controller.toggle("content"), new Q(e.data)
                     }))
                 }
