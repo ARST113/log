@@ -1504,6 +1504,17 @@
               var Constructor = Lampa.Component && typeof Lampa.Component.get === 'function' && Lampa.Component.get(replayComponent);
               if (typeof Constructor !== 'function') return false;
               var instance = new Constructor(replayContext);
+              if (typeof instance.requestParams === 'function') {
+                var requestParams = instance.requestParams;
+                instance.requestParams = function (url) {
+                  var args = Array.prototype.slice.call(arguments);
+                  // A saved provider is already selected; availability probes can hide it.
+                  if (typeof url === 'string' && /\/lite\/events\?/.test(url)) {
+                    args[0] = url.replace(/([?&])life=true(?=&|$)/g, '$1life=false');
+                  }
+                  return requestParams.apply(this, args);
+                };
+              }
               if (typeof instance.initialize !== 'function' || typeof instance.render !== 'function') {
                 if (typeof instance.destroy === 'function') instance.destroy();
                 return false;

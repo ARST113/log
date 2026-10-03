@@ -297,6 +297,28 @@ test('native resume waits for Lampac source discovery lasting a minute', async t
     assert.equal(f.Lampa.Activity.active(), f.origin);
 });
 
+test('native resume uses the saved provider list without waiting for availability probes', async () => {
+    const f = directFixture();
+    const Constructor = f.Lampa.Component.get('lampac');
+    let requested = '';
+    f.Lampa.Component.get = () => function(context) {
+        const instance = new Constructor(context);
+        const initialize = instance.initialize;
+        instance.requestParams = url => {requested = url; return url;};
+        instance.initialize = () => {
+            const url = instance.requestParams('https://lampac.invalid/lite/events?life=true');
+            // Availability probes can leave a saved, reachable provider hidden indefinitely.
+            if (url.includes('life=false')) initialize();
+        };
+        return instance;
+    };
+    const result = await resumeNative(f).then(() => ({success:true}), error => ({error:error.message}));
+    assert.deepEqual(result, {success:true});
+    assert.equal(requested, 'https://lampac.invalid/lite/events?life=false');
+    assert.equal(f.played[0].timeline.time, 321);
+    assert.equal(f.values.active_balanser, 'phantom');
+});
+
 test('direct resume retains its resolver during the core next-episode transition', async () => {
     const f = directFixture();
     await resumeNative(f);
