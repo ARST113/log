@@ -10,6 +10,26 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'ContinueWatching.js')
 const marker = '    return exports;';
 const series = {source: 'tmdb', id: 4242, name: 'Resume fixture', original_name: 'Resume fixture', media_type: 'tv', number_of_seasons: 1};
 
+test('switching the Lampac sync ID resets the in-memory resume store to the selected owner', () => {
+    const values = {lampac_sync_owner_v1: 'server|base|'};
+    const storage = {get(key, fallback) { return key in values ? values[key] : fallback; }, set(key, value) { values[key] = value; }};
+    const store = loadApi().createRecipeStore({Storage: storage});
+    store.upsert(series, onlineRecord());
+    const basic = JSON.parse(JSON.stringify(store.read()));
+    values.lampac_sync_owner_v1 = 'server|custom|';
+    values.lampac_resume_history_v1 = {schema: 1, cards: {}};
+    values.lampac_resume_history_cache_v1 = {schema: 1, cards: {}};
+    store.mergeSynced();
+    assert.equal(Object.keys(store.read().cards).length, 0);
+    assert.equal(Object.keys(values.lampac_resume_history_v1.cards).length, 0);
+    values.lampac_sync_owner_v1 = 'server|base|';
+    values.lampac_resume_history_v1 = basic;
+    values.lampac_resume_history_cache_v1 = basic;
+    store.mergeSynced();
+    assert.ok(store.find(series));
+    assert.equal(store.find(series).modes.online.online.balanser, 'phantom');
+});
+
 function loadApi($) {
     return vm.runInNewContext(source.replace(marker,
         '    exports.createCapture = createCapture; exports.createRecipeStore = createRecipeStore; exports.renderButton = renderButton; exports.chooseResumeTarget = chooseResumeTarget;\n' + marker),

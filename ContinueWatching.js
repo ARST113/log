@@ -871,6 +871,7 @@
     }
     function createRecipeStore(Lampa) {
       var value = mergeHistory(Lampa.Storage.get(SYNC_KEY, emptyHistory()), Lampa.Storage.get(CACHE_KEY, emptyHistory()));
+      var syncOwner = Lampa.Storage.get('lampac_sync_owner_v1', '');
       var listeners = [];
       function persist(next) {
         var clean = sanitizeHistory(next);
@@ -918,7 +919,11 @@
         return next.cards[identity.key];
       }
       function mergeSynced() {
-        persist(mergeHistory(value, Lampa.Storage.get(SYNC_KEY, emptyHistory())));
+        var owner = Lampa.Storage.get('lampac_sync_owner_v1', '');
+        if (owner && owner !== syncOwner) {
+          syncOwner = owner;
+          persist(mergeHistory(Lampa.Storage.get(SYNC_KEY, emptyHistory()), Lampa.Storage.get(CACHE_KEY, emptyHistory())));
+        } else persist(mergeHistory(value, Lampa.Storage.get(SYNC_KEY, emptyHistory())));
       }
       return {
         read: function read() {
