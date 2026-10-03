@@ -1,0 +1,9 @@
+bin/
+obj/
+*.sqlite*
+*.db*
+*.env
+*.log
+data/
+backups/
+__pycache__/
