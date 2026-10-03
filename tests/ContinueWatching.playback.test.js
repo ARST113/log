@@ -275,6 +275,28 @@ test('supported online components resume directly without opening the online scr
     assert.equal(f.destroyed(), 1, 'the detached resolver must be released on player close');
 });
 
+test('native resume waits for Lampac source discovery lasting a minute', async t => {
+    t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
+    const f = directFixture();
+    const Constructor = f.Lampa.Component.get('lampac');
+    f.Lampa.Component.get = () => function(context) {
+        const instance = new Constructor(context);
+        const render = instance.render;
+        let ready = false;
+        instance.render = () => ready ? render() : collection([]);
+        setTimeout(() => {ready = true;}, 60000);
+        return instance;
+    };
+    const result = f.api.createNativeOnline(f.Lampa).launch(series, onlineRecord())
+        .then(() => ({success: true}), error => ({error: error.message}));
+    await Promise.resolve();
+    t.mock.timers.tick(60000);
+    t.mock.timers.tick(100);
+    assert.deepEqual(await result, {success: true});
+    assert.equal(f.played[0].timeline.time, 321);
+    assert.equal(f.Lampa.Activity.active(), f.origin);
+});
+
 test('direct resume retains its resolver during the core next-episode transition', async () => {
     const f = directFixture();
     await resumeNative(f);

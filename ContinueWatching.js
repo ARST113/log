@@ -1300,7 +1300,8 @@
       };
     }
 
-    var DEFAULT_TIMEOUT_MS = 30000;
+    // Lampac can spend over a minute polling source availability before listing files.
+    var DEFAULT_TIMEOUT_MS = 120000;
     var DEFAULT_POLL_MS = 100;
     var MIN_LEGACY_SEASON_CANDIDATES = 16;
     var LEGACY_SEASON_CANDIDATE_SLACK = 8;
