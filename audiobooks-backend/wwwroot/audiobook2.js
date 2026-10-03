@@ -1,7 +1,7 @@
 (function() {
   'use strict';
 
-  var VERSION = '2.0.11-own-server-key';
+  var VERSION = '2.0.13-own-server-settings';
   var RUNTIME_KEY = '__lampacAudiobooks2Runtime';
   var previousRuntime = window[RUNTIME_KEY];
 
@@ -135,7 +135,7 @@
   var PRESET_API_BASE = window.lampacAudiobooks2ApiBase || '';
   var API_BASE = '';
   var API_KEY = '';
-  var API_CONFIGURATION_ERROR = 'Укажите адрес своего сервера в window.lampacAudiobooks2ApiBase или загрузите audiobook2.js с собственного бэкенда.';
+  var API_CONFIGURATION_ERROR = 'Укажите свой сервер в настройках «Аудиокниги 2».';
   var BOOK_CACHE = window.__lampacAudiobooks2BookCache || {};
   window.__lampacAudiobooks2BookCache = BOOK_CACHE;
   var SEARCH_SOURCE = null;
@@ -331,20 +331,31 @@
   function audiobookUiLog(event, details) {
     if (!audiobookDebugEnabled() || !window.console || !console.log) return;
     try {
-      console.log('[Audiobooks][PlayerUI] ' + event, details || {});
+      console.log('[Audiobooks][PlayerUI] ' + event, safeDebugDetails(details));
     } catch (e) {}
   }
 
   function audiobookFullButtonLog(event, details) {
     if (!audiobookDebugEnabled() || !window.console || !console.log) return;
     try {
-      console.log('[Audiobooks][FullButton] ' + event, details || {});
+      console.log('[Audiobooks][FullButton] ' + event, safeDebugDetails(details));
     } catch (e) {}
   }
 
   function cleanApiBase(value) {
     value = (value || '').toString().replace(/^\s+|\s+$/g, '').replace(/\/+$/, '');
     return /^https?:\/\/[^\/?#\s]+(?:\/[^?#\s]*)?$/i.test(value) ? value : '';
+  }
+
+  function safeDebugDetails(details) {
+    return JSON.parse(JSON.stringify(details || {}).replace(/\/access\/[^\/?#"\\]+/g, '/access/[redacted]').replace(/([?&]api_key=)[^&#"\\]+/g, '$1[redacted]'));
+  }
+
+  function apiSetting(name) {
+    try {
+      if (window.Lampa && Lampa.Storage && Lampa.Storage.get) return (Lampa.Storage.get(name, '') || '').toString();
+    } catch (e) {}
+    return '';
   }
 
   function pluginScriptSource() {
@@ -387,6 +398,8 @@
 
   function detectApiBase() {
     if (PRESET_API_BASE) return cleanApiBase(PRESET_API_BASE);
+    var stored = apiSetting('audiobooks2_api_base');
+    if (stored) return cleanApiBase(stored);
     return scriptApiBase();
   }
 
@@ -397,17 +410,76 @@
     if (match && match[1]) {
       try { return decodeURIComponent(match[1]); } catch (e) { return ''; }
     }
-    try {
-      if (window.Lampa && Lampa.Storage && Lampa.Storage.get) return (Lampa.Storage.get('audiobooks2_api_key', '') || '').toString();
-    } catch (e) {}
-    return '';
+    return apiSetting('audiobooks2_api_key');
   }
 
   API_BASE = detectApiBase();
   API_KEY = detectApiKey();
   window.lampacAudiobooks2ApiBase = API_BASE;
-  window.lampacAudiobooks2Debug.apiBase = API_BASE;
+  window.lampacAudiobooks2Debug.apiBase = API_BASE.replace(/\/access\/[^\/?#]+/g, '/access/[redacted]');
   window.lampacAudiobooks2Debug.configurationError = API_BASE ? '' : API_CONFIGURATION_ERROR;
+
+  function updateApiConfiguration(name, value) {
+    value = (value || '').toString().replace(/^\s+|\s+$/g, '');
+    if (name === 'audiobooks2_api_base') {
+      if (value && !cleanApiBase(value)) {
+        if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show('Введите HTTP(S)-адрес своего сервера.');
+        return false;
+      }
+      API_BASE = cleanApiBase(value);
+    } else API_KEY = value;
+
+    if (Lampa.Storage && Lampa.Storage.set) Lampa.Storage.set(name, value);
+    runtime.requestCache = {};
+    runtime.bookCacheOrder = [];
+    for (var cacheKey in BOOK_CACHE) {
+      if (BOOK_CACHE.hasOwnProperty(cacheKey)) delete BOOK_CACHE[cacheKey];
+    }
+    window.lampacAudiobooks2ApiBase = API_BASE;
+    window.lampacAudiobooks2Debug.apiBase = API_BASE.replace(/\/access\/[^\/?#]+/g, '/access/[redacted]');
+    window.lampacAudiobooks2Debug.configurationError = API_BASE ? '' : API_CONFIGURATION_ERROR;
+
+    if (!API_BASE) {
+      window.lampacAudiobooks2PluginReady = false;
+      runtime.stop();
+    } else if (!runtime.active) {
+      runtime.active = true;
+      runtime.started = false;
+      window.lampacAudiobooks2PluginReady = true;
+      startPlugin();
+    }
+    return true;
+  }
+
+  function registerApiSettings() {
+    if (runtime.settingsRegistered || !Lampa.SettingsApi) return;
+    runtime.settingsRegistered = true;
+    Lampa.SettingsApi.addComponent({
+      component: 'audiobooks2_settings', name: 'Аудиокниги 2', before: 'interface',
+      icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M3 3h8v18H3zm10 0h8v18h-8z"/></svg>'
+    });
+    ['audiobooks2_api_base', 'audiobooks2_api_key'].forEach(function(name) {
+      var isKey = name === 'audiobooks2_api_key';
+      var spec = {
+        component: 'audiobooks2_settings',
+        param: { name: name, type: 'static', default: '' },
+        field: { name: isKey ? 'Ключ доступа' : 'Свой сервер', description: isKey ? 'Ключ вашего бэкенда. Пустое значение удаляет сохранённый ключ.' : 'HTTP(S)-адрес вашего бэкенда.' },
+        onChange: function(value) { return updateApiConfiguration(name, value); },
+        onRender: function(row) {
+          function displayValue() {
+            row.find('.settings-param__value').text(isKey ? (API_KEY ? 'Сохранён' : 'Не указан') : (API_BASE.replace(/\/access\/[^\/?#]+/g, '/access/[redacted]') || 'Не указан'));
+          }
+          displayValue();
+          row.on('hover:enter', function() {
+            Lampa.Input.edit({ title: spec.field.name, value: isKey ? '' : API_BASE, placeholder: isKey ? 'Введите ключ доступа' : 'Адрес своего сервера', nosave: true, free: true, nomic: true }, function(value) {
+              if (value !== null && spec.onChange(value)) displayValue();
+            });
+          });
+        }
+      };
+      Lampa.SettingsApi.addParam(spec);
+    });
+  }
 
   function addParam(url, key, value) {
     if (value === undefined || value === null || value === '') return url;
@@ -424,7 +496,13 @@
     if (!url) return '';
     if (/^https?:\/\//i.test(url)) return withApiKey(url);
     if (url.indexOf('//') === 0) return withApiKey((location.protocol || 'https:') + url);
-    if (url.charAt(0) === '/') return withApiKey(API_BASE + url);
+    if (url.charAt(0) === '/') {
+      var originMatch = API_BASE.match(/^https?:\/\/[^\/?#]+/i);
+      var origin = originMatch ? originMatch[0] : '';
+      var prefix = API_BASE.slice(origin.length);
+      var prefixed = prefix && (url === prefix || url.indexOf(prefix + '/') === 0 || url.indexOf(prefix + '?') === 0);
+      return withApiKey((prefixed ? origin : API_BASE) + url);
+    }
     return API_BASE ? withApiKey(API_BASE + '/' + url.replace(/^\/+/, '')) : url;
   }
 
@@ -478,7 +556,7 @@
 
   function apiUrl(path, params) {
     if (!API_BASE) throw new Error(API_CONFIGURATION_ERROR);
-    var url = /^https?:\/\//i.test(path) ? path : API_BASE + path;
+    var url = path;
 
     params = params || {};
     for (var key in params) {
@@ -495,7 +573,7 @@
       if (profile && url.indexOf('profile_id=') < 0) url = addParam(url, 'profile_id', profile);
     }
 
-    return withApiKey(url);
+    return absoluteUrl(url);
   }
 
   function escapeHtml(value) {
@@ -5072,6 +5150,7 @@ function playVoice(voices, voice, options) {
 
   function startPlugin() {
     if (!isCurrentRuntime() || runtime.started) return;
+    registerApiSettings();
     runtime.started = true;
 
     if (!API_BASE) {
