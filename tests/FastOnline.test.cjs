@@ -449,7 +449,7 @@ test('switching a translation updates the active player and preserves the curren
     f.context.Lampa.PlayerVideo={video:()=>({currentTime:321,paused:true}),destroy:()=>{},setParams:()=>{},
         url:(url)=>{reload=url;},to:time=>{seek=time;},pause:()=>{},
         listener:{follow:(event,fn)=>{listeners[event]=fn;},remove:()=>{}}};
-    f.context.Lampa.PlayerPanel.setQualitys=()=>{};
+    f.context.Lampa.PlayerPanel.quality=()=>{};
     f.context.Lampa.PlayerPanel.setTracks=()=>{};
     const voices=[{name:'LostFilm',selected:true},{name:'Дубляж',selected:false}];
     await f.playback.switchTranslation(Promise.resolve([{translate:'Дубляж',quality:{'1080p':'https://cdn.example/b'}}]),'Дубляж',voices);
@@ -468,7 +468,7 @@ test('overlapping translation changes cannot let a late request replace the last
     f.context.Lampa.Player.playdata=()=>data;
     f.context.Lampa.PlayerVideo={video:()=>({currentTime:1}),destroy:()=>{},setParams:()=>{},url:()=>{},
         listener:{follow:()=>{},remove:()=>{}}};
-    f.context.Lampa.PlayerPanel.setQualitys=()=>{};
+    f.context.Lampa.PlayerPanel.quality=()=>{};
     f.context.Lampa.PlayerPanel.setTracks=()=>{};
     const slow=f.playback.switchTranslation(new Promise(resolve=>{finish=resolve;}),'Slow',[]);
     await f.playback.switchTranslation(Promise.resolve([{translate:'Fast',quality:{'1080p':'https://cdn.example/fast'}}]),'Fast',[]);
@@ -485,7 +485,7 @@ test('core loading pause does not pause a playing video after a translation swit
     f.context.Lampa.Player.loading=value=>{paused=!!value;};
     f.context.Lampa.PlayerVideo={video:()=>({currentTime:100,paused}),destroy:()=>{},setParams:()=>{},url:()=>{},to:()=>{},pause:()=>{paused=true;},
         listener:{follow:(event,fn)=>{loaded=fn;},remove:()=>{}}};
-    f.context.Lampa.PlayerPanel.setQualitys=()=>{}; f.context.Lampa.PlayerPanel.setTracks=()=>{};
+    f.context.Lampa.PlayerPanel.quality=()=>{}; f.context.Lampa.PlayerPanel.setTracks=()=>{};
     await f.playback.switchTranslation(Promise.resolve([{quality:{'1080p':'https://cdn.example/b'}}]),'Voice',[]);
     loaded();
     assert.equal(paused,false);
@@ -514,7 +514,7 @@ test('resolved previous TV episodes are invalidated when switching voices', asyn
     f.context.Lampa.Player.playlist=items=>{playlist=items;};
     f.context.Lampa.PlayerVideo={video:()=>({currentTime:100,paused:false}),destroy:()=>{},setParams:()=>{},url:()=>{},
         listener:{follow:()=>{},remove:()=>{}}};
-    f.context.Lampa.PlayerPanel.setQualitys=()=>{}; f.context.Lampa.PlayerPanel.setTracks=()=>{};
+    f.context.Lampa.PlayerPanel.quality=()=>{}; f.context.Lampa.PlayerPanel.setTracks=()=>{};
     const sources=[{voice:[{name:'Voice A',url:'https://lampac.fun/a'},{name:'Voice B',url:'https://lampac.fun/b'}]}];
     const initial=await f.extract.voice(sources);
     initial.sources=sources;
@@ -547,7 +547,7 @@ test('a mislabeled FHD stream actually720 gets an HD quality label', () => {
     const f=fixture(); let menu;
     const data=f.playback.applyStreamData({quality:f.playback.getQuality([{quality:{'1080p':'https://cdn.example/mislabeled'}}]),url:'https://cdn.example/mislabeled'});
     f.context.Lampa.Player.playdata=()=>data;
-    f.context.Lampa.PlayerPanel.setQualitys=quality=>{menu=quality;};
+    f.context.Lampa.PlayerPanel.quality=quality=>{menu=quality;};
     f.playback.checkVideoResolution({width:1280,height:534});
     assert.equal(data.quality_switched,'720p');
     assert.deepEqual(Object.keys(menu),['720p']);
