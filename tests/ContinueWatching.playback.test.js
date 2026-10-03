@@ -424,6 +424,93 @@ test('loading the plugin after a full card restores its Continue button immediat
     button.stop();
 });
 
+const film = {source:'tmdb', id:603, media_type:'movie', title:'The Matrix', release_date:'1999-03-30'};
+function filmRecord(percent = 2) {
+    return {...onlineRecord(0), episode:{season:0, episode:0, timeline_hash:'film-hash'},
+        progress:{time:152, duration:8589, percent}, online:{component:'lampac', balanser:'phantom', season_index:0, search:{title:film.title}}};
+}
+
+function cardButtonFixture(card, record) {
+    const inserted = [];
+    const api = loadApi(html => ({html, on(name, callback) {this[name] = callback; return this;}}));
+    const action = {length:1, last() {return this;}, after(button) {inserted.push(button);}};
+    const absent = {length:0, remove() {}, last() {return this;}};
+    const container = {length:1, last() {return this;}, find(selector) {return selector==='.view--online' ? action : absent;}};
+    const root = {find(selector) {return selector==='.full-start-new__buttons, .full-start__buttons' ? container : absent;}};
+    const Lampa = {Listener:emitter(), Activity:{active:() => ({component:'full',card,activity:{render:()=>root}})}};
+    const values = {};
+    Lampa.Storage = {get(key, fallback) {return key in values ? values[key] : fallback;}, set(key, value) {values[key] = value;}};
+    const store = api.createRecipeStore(Lampa);
+    if (record) store.upsert(card,record);
+    let resumed = null;
+    const controller = api.createResumeButton(Lampa,store,{async resume(selected) {resumed = selected;}});
+    controller.start();
+    return {inserted, controller, resumed:()=>resumed};
+}
+
+test('the film card offers Continue and sends its own card to restoration', async () => {
+    const f = cardButtonFixture(film,filmRecord());
+    try {
+        assert.equal(f.inserted.length,1,'saved film progress must create a card button');
+        assert.match(f.inserted[0].html,/<span>Continue<\/span>/);
+        assert.doesNotMatch(f.inserted[0].html,/S00E00|Next episode/);
+        await f.inserted[0]['hover:enter']();
+        assert.equal(f.resumed(),film);
+    } finally {f.controller.stop();}
+});
+
+test('a film above 90 percent still offers Continue without an episode label', () => {
+    const f = cardButtonFixture(film,filmRecord(95));
+    try {
+        assert.equal(f.inserted.length,1);
+        assert.match(f.inserted[0].html,/<span>Continue<\/span>/);
+        assert.doesNotMatch(f.inserted[0].html,/Next episode|S00E00/);
+    } finally {f.controller.stop();}
+});
+
+test('a film without saved history has no Continue button', () => {
+    const f = cardButtonFixture(film,null);
+    try {assert.equal(f.inserted.length,0);} finally {f.controller.stop();}
+});
+
+test('a synchronized anime card retains its season and episode label', () => {
+    const anime = {...series, id:1429, name:'Attack on Titan'};
+    const f = cardButtonFixture(anime,onlineRecord(2));
+    try {
+        assert.equal(f.inserted.length,1);
+        assert.match(f.inserted[0].html,/Continue.*S01E02/);
+    } finally {f.controller.stop();}
+});
+
+test('film restoration above 90 percent keeps its saved position in a single-item playlist', () => {
+    const api = loadApi();
+    const item = {season:0,episode:0,timeline:{hash:'film-hash'},url:'https://example.test/film.mp4'};
+    const target = api.chooseResumeTarget(filmRecord(95),[item]);
+    assert.equal(target.item,item);
+    assert.equal(target.time,152);
+});
+
+test('native film restoration above 90 percent starts the saved film rather than advancing episodes', async () => {
+    const f = fixture(node=>collection([node]));
+    const origin = {component:'full',movie:film};
+    f.activate(origin);
+    f.Lampa.Utils = {hash:value=>value};
+    const node = {find(selector) {return selector==='.time-line' ? [{'data-hash':'film-hash'}] : [];},
+        trigger() {f.Lampa.Player.play({card:film,season:0,episode:0,url:'https://example.test/film.mp4',
+            timeline:{...f.Lampa.Timeline.view('film-hash'),duration:8589},isonline:true});}};
+    f.Lampa.Component = {get() {return function (context) {
+        const root = collection([{find:selector=>selector==='.online-prestige--full' ? [node] : []}]);
+        this.create = ()=>root; this.render = ()=>root;
+        this.initialize = ()=>{f.values.active_balanser=context.lampac_custom_select;}; this.destroy = ()=>{};
+    };}};
+    try {
+        await f.api.createNativeOnline(f.Lampa,{timeoutMs:100,pollMs:1}).launch(film,filmRecord(95));
+        assert.equal(f.played.length,1);
+        assert.equal(f.played[0].timeline.time,152);
+        assert.equal(f.Lampa.Activity.active(),origin);
+    } finally {f.Lampa.Player.destroy(); await new Promise(resolve=>setTimeout(resolve,5));}
+});
+
 test('an unavailable saved provider fails before starting playback or changing history', async () => {
     const f = nativeFixture({missingPhantom: true});
     f.store.upsert(series, onlineRecord());

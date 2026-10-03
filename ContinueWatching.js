@@ -969,7 +969,7 @@
       });
       if (index < 0) throw new Error('resume-episode-missing');
       var progress = record && record.progress ? record.progress : {};
-      if (episodeCompleted(progress)) {
+      if (Number(episode.season) > 0 && Number(episode.episode) > 0 && episodeCompleted(progress)) {
         if (index + 1 >= items.length) throw new Error('resume-next-episode-missing');
         var nextIndex = index + 1;
         var item = items[nextIndex];
@@ -1143,12 +1143,12 @@
       if (rendered && typeof rendered.find === 'function') return rendered;
       return typeof $ === 'function' ? $(rendered) : null;
     };
-    var latestRecord = function latestRecord(history) {
+    var latestRecord = function latestRecord(history, series) {
       if (!history || !history.modes) return null;
       return Object.values(history.modes).filter(function (record) {
         return record && (record.mode === 'online' || record.mode === 'torrent');
       }).filter(function (record) {
-        return record.episode && Number(record.episode.season) > 0 && Number(record.episode.episode) > 0;
+        return !series || record.episode && Number(record.episode.season) > 0 && Number(record.episode.episode) > 0;
       }).sort(function (left, right) {
         return Number(right.updated_at) - Number(left.updated_at);
       })[0] || null;
@@ -1170,6 +1170,7 @@
       return lampac && lampac.length ? lampac.last() : actions.last();
     };
     function resumeButtonText(Lampa, label, progress) {
+      if (!label) return translation(Lampa, 'watch_resume_continue', 'Continue');
       return episodeCompleted(progress) ? translation(Lampa, 'watch_resume_next', 'Next episode') : translation(Lampa, 'watch_resume_continue', 'Continue') + ' · ' + label;
     }
     var renderButton = function renderButton(Lampa, label, progress) {
@@ -1209,21 +1210,21 @@
         var root = rootFor(event);
         if (!root) return;
         var existing = root.find('.view--watch-resume');
-        if (!isSeries(card)) {
+        if (!card) {
           existing.remove();
           return;
         }
-        var record = latestRecord(store.find(card));
+        var record = latestRecord(store.find(card), isSeries(card));
         if (!record) {
           existing.remove();
           return;
         }
         if (existing.length) {
           existing.find('.watch-resume__progress').attr('stroke-dasharray', (sanitizeProgress(record.progress).percent * 65.97 / 100).toFixed(2) + ' 65.97');
-          existing.find('span').text(resumeButtonText(Lampa, labelFor(record), record.progress));
+          existing.find('span').text(resumeButtonText(Lampa, isSeries(card) ? labelFor(record) : '', record.progress));
           return;
         }
-        var button = $(renderButton(Lampa, labelFor(record), record.progress));
+        var button = $(renderButton(Lampa, isSeries(card) ? labelFor(record) : '', record.progress));
         button.on('hover:enter', /*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee() {
           var loading, stopLoading;
           return _regenerator().w(function (_context) {
@@ -1455,7 +1456,7 @@
               clarification: Boolean(text$2(recipe.clarification)),
               lampac_custom_select: text$2(recipe.balanser)
             };
-            var completed = episodeCompleted(record.progress);
+            var completed = isSeries(card) && episodeCompleted(record.progress);
             var advancingSeason = false;
             var originActivity = Lampa.Activity && typeof Lampa.Activity.active === 'function' ? Lampa.Activity.active() : null;
             var candidates = restored.hasSeasonIndex ? [restored.seasonIndex] : seasonCandidates(card, record, restored.seasonIndex);
