@@ -1,7 +1,7 @@
 (function() {
   'use strict';
 
-  var VERSION = '2.0.9-no-stutter-resume';
+  var VERSION = '2.0.10-own-server';
   var RUNTIME_KEY = '__lampacAudiobooks2Runtime';
   var previousRuntime = window[RUNTIME_KEY];
 
@@ -131,9 +131,10 @@
   var COMPONENT = 'lampac_audiobooks2';
   var SOURCE = 'lampac_audiobooks2';
   var PAGE_SIZE = 20;
-  var DEFAULT_API_BASE = 'https://knigaslovo.duckdns.org';
+  var DEFAULT_API_BASE = '';
   var PRESET_API_BASE = window.lampacAudiobooks2ApiBase || '';
   var API_BASE = '';
+  var API_CONFIGURATION_ERROR = 'Укажите адрес своего сервера в window.lampacAudiobooks2ApiBase или загрузите audiobook2.js с собственного бэкенда.';
   var BOOK_CACHE = window.__lampacAudiobooks2BookCache || {};
   window.__lampacAudiobooks2BookCache = BOOK_CACHE;
   var SEARCH_SOURCE = null;
@@ -341,7 +342,8 @@
   }
 
   function cleanApiBase(value) {
-    return (value || '').toString().replace(/\/$/, '');
+    value = (value || '').toString().replace(/^\s+|\s+$/g, '').replace(/\/+$/, '');
+    return /^https?:\/\/[^\/?#\s]+(?:\/[^?#\s]*)?$/i.test(value) ? value : '';
   }
 
   function scriptApiBase() {
@@ -377,19 +379,14 @@
   }
 
   function detectApiBase() {
-    var explicit = cleanApiBase(PRESET_API_BASE || '');
-    var fromScript = scriptApiBase();
-    var pageOrigin = '';
-
-    if (explicit) return explicit;
-    if (fromScript) return fromScript;
-
-    return cleanApiBase(DEFAULT_API_BASE);
+    if (PRESET_API_BASE) return cleanApiBase(PRESET_API_BASE);
+    return scriptApiBase();
   }
 
   API_BASE = detectApiBase();
   window.lampacAudiobooks2ApiBase = API_BASE;
   window.lampacAudiobooks2Debug.apiBase = API_BASE;
+  window.lampacAudiobooks2Debug.configurationError = API_BASE ? '' : API_CONFIGURATION_ERROR;
 
   function addParam(url, key, value) {
     if (value === undefined || value === null || value === '') return url;
@@ -453,6 +450,7 @@
   }
 
   function apiUrl(path, params) {
+    if (!API_BASE) throw new Error(API_CONFIGURATION_ERROR);
     var url = /^https?:\/\//i.test(path) ? path : API_BASE + path;
 
     params = params || {};
@@ -5048,6 +5046,13 @@ function playVoice(voices, voice, options) {
   function startPlugin() {
     if (!isCurrentRuntime() || runtime.started) return;
     runtime.started = true;
+
+    if (!API_BASE) {
+      window.lampacAudiobooks2PluginReady = false;
+      if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(API_CONFIGURATION_ERROR);
+      runtime.stop();
+      return;
+    }
 
     injectStyles();
     try { $('.lampac-audiobook2-head-player').remove(); } catch (e) {}

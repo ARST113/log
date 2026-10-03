@@ -7,19 +7,21 @@ ASP.NET Core 10, SQLite и парсеры источников. Для рабо�
 На Ubuntu/Debian с доменом, направленным на сервер:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ARST113/log/main/audiobooks-backend/install.sh | sudo bash -s -- --domain knigaslovo.duckdns.org
+curl -fsSL https://raw.githubusercontent.com/ARST113/log/main/audiobooks-backend/install.sh | sudo bash -s -- --domain YOUR-DOMAIN
 ```
 
-Используйте свой домен на другом сервере. Скрипт собирает контейнер, подключает Caddy/HTTPS и запускает сервис. При отсутствии Docker устанавливает пакет Docker из репозитория ОС. Порты 80/443 должны быть доступны для HTTPS. Существующий Caddyfile сохраняется; сайт добавляется отдельным импортом.
+Замените `YOUR-DOMAIN` на собственный домен, направленный на ваш сервер. Скрипт собирает контейнер, подключает Caddy/HTTPS и запускает сервис. При отсутствии Docker устанавливает пакет Docker из репозитория ОС. Порты 80/443 должны быть доступны для HTTPS. Существующий Caddyfile сохраняется; сайт добавляется отдельным импортом.
 
 Повторный запуск той же команды обновляет приложение, сохраняет `.env` и делает согласованную резервную копию существующей базы. Установщик не переносит рабочую базу с чужого сервера автоматически и не содержит паролей.
 
 ## Клиенты
 
-- [Скачать APK «СЛОво» 1.8.10](https://raw.githubusercontent.com/ARST113/log/main/audiobooks-backend/android/slovo-1.8.10.apk) — Android 6.0 и новее. [Установка и контрольная сумма](android/README.md).
-- В «СЛОво»: адрес API `https://knigaslovo.duckdns.org`.
-- В Lampa: плагин `https://knigaslovo.duckdns.org/audiobook2.js`.
-- Для другого домена можно задать `window.lampacAudiobooks2ApiBase` до загрузки плагина. При прямой загрузке с домена сервиса адрес берётся из URL скрипта.
+- Android «СЛОво» используется как пример клиента для собственного бэкенда. [Настройка своего сервера и статус APK](android/README.md).
+- В «СЛОво»: укажите HTTPS-адрес вашего API, например `https://example.invalid` (замените пример своим доменом).
+- В Lampa: добавьте `https://example.invalid/audiobook2.js`, заменив домен на адрес своего бэкенда. При прямой загрузке адрес API берётся из URL скрипта.
+- При загрузке плагина из другого места задайте `window.lampacAudiobooks2ApiBase = 'https://example.invalid';` до загрузки, указав свой сервер. Также поддерживается параметр `?api=` в URL скрипта. Без настроенного адреса плагин показывает сообщение и не запускает запросы API.
+
+Публикация содержит код для самостоятельного развёртывания. Доступ к серверу автора не предоставляется. APK временно снят с загрузки: проверенная сборка содержала прежний сервер по умолчанию. Для публикации требуется сборка с обязательным вводом собственного сервера.
 
 ## Данные и настройки
 
@@ -43,6 +45,13 @@ curl -fsSL https://raw.githubusercontent.com/ARST113/log/main/audiobooks-backend
 `/healthz` проверяет процесс, `/readyz` — доступность базы. HTTP API доступен с CORS для клиентов Lampa. Контейнер слушает только loopback хоста; доверие к Forwarded-заголовкам предназначено для локального reverse proxy. Не публикуйте порт контейнера напрямую: перед ним должен стоять Caddy/nginx.
 
 ## Проверки
+
+Проверка выбора адреса API плагина (Node.js):
+
+```bash
+node tests/plugin-api-base.test.cjs
+node --check wwwroot/audiobook2.js
+```
 
 ```bash
 docker run --rm -v "$PWD:/project" -w /project/tests mcr.microsoft.com/dotnet/sdk:10.0 sh -c 'cp fixtures/*.html .; dotnet run --project Checks.csproj'
