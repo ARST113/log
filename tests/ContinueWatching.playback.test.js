@@ -301,6 +301,22 @@ test('the Continue icon reflects the saved percentage rather than a fixed arc', 
     assert.ok(Math.abs(arc({time: 900, duration: 1800}) - 32.98) < 0.02);
 });
 
+test('loading the plugin after a full card restores its Continue button immediately', () => {
+    let added = 0;
+    const api = loadApi(html => ({on() {return this;},html}));
+    const action = {length:1,after() {added++;}};
+    const absent = {length:0,remove() {},last() {return this;}};
+    const container = {length:1,last() {return this;},find(selector) {return selector==='.view--online' ? action : absent;}};
+    const root = {find(selector) {return selector==='.full-start-new__buttons, .full-start__buttons' ? container : absent;}};
+    const Lampa = {Listener:emitter(),Activity:{active:() => ({component:'full',card:series,activity:{render:()=>root}})}};
+    const store = {find:()=>({modes:{online:onlineRecord()}}),subscribe:()=>()=>{}};
+    const button = api.createResumeButton(Lampa,store,{resume() {throw new Error('unexpected playback');}});
+    action.last=()=>action;
+    button.start();
+    assert.equal(added,1,'a deep link can finish rendering before external plugins load');
+    button.stop();
+});
+
 test('an unavailable saved provider fails before starting playback or changing history', async () => {
     const f = nativeFixture({missingPhantom: true});
     f.store.upsert(series, onlineRecord());

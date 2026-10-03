@@ -1265,6 +1265,10 @@
               if (currentEvent) onFull(currentEvent);
             });
           }
+          var active = Lampa.Activity && typeof Lampa.Activity.active === 'function' ? Lampa.Activity.active() : null;
+          if (active && active.component === 'full') {
+            onFull({type: 'complite', object: active, data: {movie: active.card || active.movie}});
+          }
           return this;
         },
         stop: function stop() {
