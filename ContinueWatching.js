@@ -564,7 +564,11 @@
     }
     function itemMatch(items, data) {
       var hash = timelineHash$1(data);
-      return items.find(function (item) {
+      var torrent = data && text$3(data.torrent_hash);
+      var selected = torrent && items.find(function (item) {
+        return item && text$3(item.torrent_hash) && sameItem(item, data);
+      });
+      return selected || items.find(function (item) {
         return timelineHash$1(item) === hash;
       }) || items.find(function (item) {
         return number$2(item.season) === number$2(data.season) && number$2(item.episode) === number$2(data.episode);
@@ -578,12 +582,12 @@
       });
     }
     function sameItem(left, right) {
-      var leftHash = timelineHash$1(left);
-      var rightHash = timelineHash$1(right);
-      if (leftHash && rightHash) return leftHash === rightHash;
       if (left && right && text$3(left.torrent_hash) && text$3(right.torrent_hash)) {
         return text$3(left.torrent_hash) === text$3(right.torrent_hash) && number$2(left.id) === number$2(right.id);
       }
+      var leftHash = timelineHash$1(left);
+      var rightHash = timelineHash$1(right);
+      if (leftHash && rightHash) return leftHash === rightHash;
       return Boolean(left && right && (number$2(left.season) || number$2(left.episode)) && number$2(left.season) === number$2(right.season) && number$2(left.episode) === number$2(right.episode));
     }
     function createCapture(Lampa, store) {
@@ -736,6 +740,11 @@
         if (playlist[position]) {
           session.item = playlist[position];
           if (session.mode === 'torrent') session.torrent = torrentForItem(session.item, session.torrent);
+        }
+        // Native movie files can share a timeline hash; progress belongs to the playing file.
+        if (session.mode === 'torrent') {
+          var currentHash = timelineHash$1(session.item);
+          if (currentHash) session.byHash[currentHash] = session.item;
         }
       }
       function onPlaylistSet(event) {
@@ -957,13 +966,14 @@
         return Number(right.updated_at) - Number(left.updated_at);
       })[0] || null;
     }
-    function chooseResumeTarget(record, playlist) {
+    function chooseResumeTarget(record, playlist, selected) {
       var episode = record && record.episode ? record.episode : {};
       var items = Array.isArray(playlist) ? playlist : [];
       var hash = episode.timeline_hash;
-      var index = hash ? items.findIndex(function (item) {
+      var index = record && record.mode === 'torrent' && selected ? items.indexOf(selected) : -1;
+      if (index < 0 && hash) index = items.findIndex(function (item) {
         return item && item.timeline && item.timeline.hash === hash;
-      }) : -1;
+      });
       if (index < 0) index = items.findIndex(function (item) {
         return item && Number(item.season) === Number(episode.season) && Number(item.episode) === Number(episode.episode);
       });
@@ -1039,7 +1049,7 @@
                   }
                   return _context.a(2);
                 case 3:
-                  target = chooseResumeTarget(record, resolved.playlist);
+                  target = chooseResumeTarget(record, resolved.playlist, resolved.item);
                   prepare();
                   _context.n = 4;
                   return launcher.launch({
@@ -2005,7 +2015,8 @@
         movie: card,
         files: allFiles,
         filename: file.path_human,
-        path: file.path
+        path: file.path,
+        is_file: ['vob', 'm2ts'].indexOf(extension(file.path)) >= 0
       });
       var timeline = Lampa.Timeline.view(parsed.hash);
       var serverRoad = viewedEntries.find(function (item) {
