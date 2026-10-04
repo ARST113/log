@@ -363,6 +363,47 @@
         cards: {}
       };
     }
+    function pidtorChoice(input) {
+      if (!input || typeof input !== 'object') return null;
+      var track = input.track || {};
+      var title = text$4(input.title) || text$4(track.title);
+      if (!title) return null;
+      var language = text$4(track.language).toLowerCase();
+      if (/^(?:ru|rus|russian)$/.test(language)) language = 'ru';
+      else if (/^(?:en|eng|english)$/.test(language)) language = 'en';
+      else if (/^(?:ja|jpn|japanese)$/.test(language)) language = 'ja';
+      return {
+        title: title,
+        track: {
+          title: text$4(track.title),
+          language: language,
+          codec: text$4(track.codec),
+          channels: Math.max(0, number$3(track.channels)),
+          forced: track.forced === true
+        }
+      };
+    }
+    function pidtorRecipe(input) {
+      if (!input || input.pidtor_nextgen !== true && text$4(input.component) !== 'pidtor_nextgen') return null;
+      function choice(field) {
+        var key = text$4(input['pidtor_' + field + '_key']);
+        var options = input['pidtor_' + field + '_options'];
+        var selected = (Array.isArray(options) ? options : []).filter(function (item) {
+          return item && item.key === key;
+        })[0];
+        return pidtorChoice(selected || input['pidtor_' + field + '_choice']);
+      }
+      return {
+        component: 'pidtor_nextgen',
+        balanser: 'pidtor',
+        pidtor_manifest_schema: Math.max(1, number$3(input.pidtor_manifest_schema)),
+        pidtor_quality_key: text$4(input.pidtor_quality_key),
+        pidtor_audio_key: text$4(input.pidtor_audio_key),
+        pidtor_subtitle_key: text$4(input.pidtor_subtitle_key),
+        pidtor_audio_choice: choice('audio'),
+        pidtor_subtitle_choice: choice('subtitle')
+      };
+    }
     function sanitizeModeRecord() {
       var input = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
       var mode = input.mode === 'torrent' ? 'torrent' : input.mode === 'online' ? 'online' : '';
@@ -386,7 +427,7 @@
       if (mode === 'online') {
         var source = input.online || {};
         var search = source.search || {};
-        base.online = {
+        base.online = pidtorRecipe(source) || {
           component: text$4(source.component) || 'lampac',
           balanser: text$4(source.balanser),
           voice_id: text$4(source.voice_id),
@@ -463,6 +504,8 @@
     };
     function onlineRecipe() {
       var input = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
+      var pidtor = pidtorRecipe(input);
+      if (pidtor) return pidtor;
       var search = input.search || {};
       var recipe = {
         component: text$3(input.component) || 'lampac',
@@ -592,6 +635,7 @@
     }
     function createCapture(Lampa, store) {
       var options = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : {};
+      var stateSource = options.globalObject || (typeof window !== 'undefined' ? window : {});
       var session = null;
       var lastWrite = 0;
       // Lampa destroys the previous player before launching the selected playlist item.
@@ -612,7 +656,8 @@
       function stagePlayback(data) {
         if (!data) return null;
         var metadata = resumeMetadata$1(data);
-        var nativeOnline = metadata.mode === 'online' ? null : nativeOnlineRecipe(Lampa, data);
+        var pidtor = pidtorRecipe(data);
+        var nativeOnline = pidtor || metadata.mode === 'online' ? null : nativeOnlineRecipe(Lampa, data);
         var card = data.card || nativeOnline && nativeOnline.card;
         var playlist = Array.isArray(data.playlist) ? data.playlist.slice() : [];
         var selected = itemMatch(playlist, data);
@@ -622,7 +667,7 @@
           var hash = timelineHash$1(item);
           if (hash) byHash[hash] = item;
         });
-        var recipe = metadata.mode === 'online' && metadata.online ? onlineRecipe(metadata.online) : nativeOnline && nativeOnline.recipe;
+        var recipe = pidtor || (metadata.mode === 'online' && metadata.online ? onlineRecipe(metadata.online) : nativeOnline && nativeOnline.recipe);
         if (recipe && card) {
           var staged = {
             card: card,
@@ -780,7 +825,18 @@
         writeTorrentTimecode(true);
         session = null;
       }
+      function onPidtorState(event) {
+        var detail = event && event.detail;
+        if (!session || !session.confirmed || session.mode !== 'online' || session.online.component !== 'pidtor_nextgen'
+            || !detail || detail.pidtor_nextgen !== true || !detail.card || !sameCard(session.card, detail.card)
+            || !text$3(detail.timeline_hash) || text$3(detail.timeline_hash) !== timelineHash$1(session.item)
+            || number$2(detail.season) !== number$2(session.item.season)
+            || number$2(detail.episode) !== number$2(session.item.episode)) return;
+        session.online = pidtorRecipe(_objectSpread2(_objectSpread2({}, session.online), detail));
+        commit(true);
+      }
       function start() {
+        if (typeof stateSource.addEventListener === 'function') stateSource.addEventListener('pidtor-nextgen-state', onPidtorState);
         Lampa.Player.listener.follow('create', onCreate);
         Lampa.Player.listener.follow('start', onStart);
         Lampa.Player.listener.follow('external', onExternal);
@@ -791,6 +847,8 @@
         Lampa.Listener.follow('torrent_file', onTorrentFile);
       }
       function stop() {
+        onDestroy();
+        if (typeof stateSource.removeEventListener === 'function') stateSource.removeEventListener('pidtor-nextgen-state', onPidtorState);
         Lampa.Player.listener.remove('create', onCreate);
         Lampa.Player.listener.remove('start', onStart);
         Lampa.Player.listener.remove('external', onExternal);
@@ -1718,6 +1776,38 @@
       var _native = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : createNativeOnline(Lampa);
       return {
         resolve: function resolve(card, record) {
+          if (record && record.online && record.online.component === 'pidtor_nextgen') {
+            var pidtorOptions = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : {};
+            return Promise.resolve().then(function () {
+              var api = globalObject.PidTorNextGen;
+              if (!api || typeof api.resume !== 'function') throw new Error('resume-pidtor-unavailable');
+              var recipe = pidtorRecipe(record.online);
+              var episode = record.episode || {};
+              var progress = sanitizeProgress(record.progress);
+              var params = {
+                pidtor_manifest_schema: recipe.pidtor_manifest_schema,
+                pidtor_quality_key: recipe.pidtor_quality_key,
+                pidtor_audio_key: recipe.pidtor_audio_key,
+                pidtor_subtitle_key: recipe.pidtor_subtitle_key,
+                pidtor_audio_choice: recipe.pidtor_audio_choice,
+                pidtor_subtitle_choice: recipe.pidtor_subtitle_choice,
+                season: number$2(episode.season),
+                episode: number$2(episode.episode),
+                timeline_hash: text$3(episode.timeline_hash),
+                time: progress.time,
+                duration: progress.duration,
+                percent: progress.percent
+              };
+              if (isSeries(card) && params.season > 0 && params.episode > 0 && episodeCompleted(progress)) {
+                params.pidtor_resume_next = true;
+              }
+              if (typeof pidtorOptions.beforeLaunch === 'function') pidtorOptions.beforeLaunch();
+              return Promise.resolve(api.resume(card, params)).then(function (launched) {
+                if (launched !== true) throw new Error('resume-pidtor-launch');
+                return { launched: true };
+              });
+            });
+          }
           var _arguments = arguments;
           return _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee() {
             var options, bridge, result;
@@ -2189,7 +2279,8 @@
       var torrentContext = createTorrentContext(Lampa);
       var capture = createCapture(Lampa, store, {
         findTorrentContext: torrentContext.find,
-        writeTorrentTimecode: torrentTimecodes.write
+        writeTorrentTimecode: torrentTimecodes.write,
+        globalObject: options.globalObject || (typeof window !== 'undefined' ? window : {})
       });
       var launcher = createPlayerLauncher(Lampa);
       var adapterGlobal = options.onlineBridge ? {
