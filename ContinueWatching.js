@@ -398,6 +398,7 @@
         balanser: 'pidtor',
         pidtor_manifest_schema: Math.max(1, number$3(input.pidtor_manifest_schema)),
         pidtor_quality_key: text$4(input.pidtor_quality_key),
+        pidtor_manual_quality: input.pidtor_manual_quality === true,
         pidtor_audio_key: text$4(input.pidtor_audio_key),
         pidtor_subtitle_key: text$4(input.pidtor_subtitle_key),
         pidtor_audio_choice: choice('audio'),
@@ -1787,6 +1788,7 @@
               var params = {
                 pidtor_manifest_schema: recipe.pidtor_manifest_schema,
                 pidtor_quality_key: recipe.pidtor_quality_key,
+                pidtor_manual_quality: recipe.pidtor_manual_quality,
                 pidtor_audio_key: recipe.pidtor_audio_key,
                 pidtor_subtitle_key: recipe.pidtor_subtitle_key,
                 pidtor_audio_choice: recipe.pidtor_audio_choice,
