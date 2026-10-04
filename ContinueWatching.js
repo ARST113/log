@@ -1189,12 +1189,22 @@
             Lampa.Player.listener.follow('external', complete);
             Lampa.Player.listener.follow('destroy', complete);
             timer = setTimeout(complete, 10000);
+            var primeTimeline = function primeTimeline(event) {
+              if (!event || event.data !== data) return;
+              Lampa.Player.listener.remove('create', primeTimeline);
+              // Android rereads core timelines; prime after capture has staged this launch.
+              var timeline = result.item.timeline;
+              timeline.handler(timeline.percent, timeline.time, timeline.duration);
+            };
             try {
+              Lampa.Player.listener.follow('create', primeTimeline);
               Lampa.Player.play(data);
               Lampa.Player.playlist(result.playlist);
             } catch (error) {
               cleanup();
               reject(error);
+            } finally {
+              Lampa.Player.listener.remove('create', primeTimeline);
             }
           });
         }
