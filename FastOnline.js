@@ -156,7 +156,7 @@ function _typeof(e) {
     s.sort((function(e, t) {
         return t.length - e.length
     }));
-    // SmartOnline 1.2.2: one Lampac server, merged online streams.
+    // SmartOnline 1.2.3: one Lampac server, merged online streams.
     var d = "fastonline_lampac_sources",
         lampacBase = "https://lampac.fun",
         g = '<svg viewBox="3 6 42 36" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="8" width="38" height="32" rx="2" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M13 8v32M5 16h8m-8 8h8m-8 8h8" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="24" r="9" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="24" r="3" fill="currentColor"/></svg>',
@@ -1336,6 +1336,8 @@ function _typeof(e) {
                             subtitle:'Аудио в текущем источнике',selected:!!track.selected,onSelect:function() {
                                 event.tracks.forEach(function(item) { item.enabled=false; item.selected=false });
                                 track.enabled=true; track.selected=true;
+                                extra.forEach(function(item) { item.selected=false });
+                                this.selected=true;
                                 Lampa.Controller.toggle('player')
                             }}
                     });
@@ -1453,7 +1455,7 @@ function _typeof(e) {
                 var quality = this.getSelectedQuality(data);
                 if (!quality) return "";
                 if (quality.error.indexOf(data.url) < 0) quality.error.push(data.url);
-                var next = quality.reserve.find(function(url) {
+                var next = [quality.url].concat(quality.reserve).find(function(url) {
                     return url !== data.url && quality.used.indexOf(url) < 0 && quality.error.indexOf(url) < 0
                 });
                 if (next) quality.used.push(next);
@@ -1577,7 +1579,9 @@ function _typeof(e) {
             key: "switchTranslation",
             value: function(links, name, voices, commit) {
                 var player=this, data=Lampa.Player.playdata(), sequence=(this.voiceSequence || 0)+1;
-                var initialVideo=Lampa.PlayerVideo.video(), wasPaused=initialVideo && initialVideo.paused;
+                var initialVideo=Lampa.PlayerVideo.video(), pending=player.voicePending;
+                var wasPaused=pending && pending.data===data ? pending.wasPaused : initialVideo && initialVideo.paused;
+                player.voicePending={data:data,wasPaused:wasPaused,sequence:sequence};
                 var previousVoice=voices.find(function(voice) { return voice.selected });
                 this.voiceSequence=sequence;
                 Lampa.Player.loading(true);
@@ -1587,6 +1591,7 @@ function _typeof(e) {
                     if (!Object.keys(quality).length) throw new Error('Нет доступного качества от 720p');
                     var video=Lampa.PlayerVideo.video(), time=video && video.currentTime || 0;
                     var current=data.quality_switched, url=current && quality[current] ? quality[current].url : preferredUrl(quality);
+                    clearTimeout(player.on_error_timer);
                     if(commit) commit(items);
                     voices.forEach(function(voice) { voice.selected=M.compareVoice(voice.name,name) });
                     player.voice.set(name);
@@ -1613,6 +1618,7 @@ function _typeof(e) {
                 }).catch(function(error) {
                     if(sequence===player.voiceSequence) { if(previousVoice) player.voice.set(previousVoice.name); Lampa.Noty.show(error.message || 'Не удалось сменить озвучку') }
                 }).finally(function() {
+                    if(sequence===player.voiceSequence) player.voicePending=null;
                     if(sequence===player.voiceSequence && data===Lampa.Player.playdata()) {
                         Lampa.Player.loading(false);
                         if(wasPaused) Lampa.PlayerVideo.pause()
@@ -1644,6 +1650,7 @@ function _typeof(e) {
                     o = Lampa.Utils.hash(this.object.movie.original_title);
                 "inner" == n ? this.extract.links([a]).then((function(n) {
                     (function(n) {
+                        if(!Object.keys(t.getQuality(n)).length) return void Lampa.Noty.show('Нет доступного качества от 720p');
                         Lampa.Player.opened() && Lampa.Player.close();
                         var a = [],
                             r = t.getQuality(n),
@@ -1687,8 +1694,10 @@ function _typeof(e) {
                             card: t.object.movie,
                             voiceovers: a,
                             error: function(e, n) {
+                                var failedUrl=e.url;
+                                clearTimeout(t.on_error_timer);
                                 t.on_error_timer = setTimeout((function() {
-                                    t.getNextVoice(e, a, n)
+                                    if(Lampa.Player.playdata()===e && e.url===failedUrl) t.getNextVoice(e, a, n)
                                 }), 2e3)
                             }
                         };
@@ -1793,16 +1802,28 @@ function _typeof(e) {
                             timeline: t.timeline,
                             launch_player: "inner",
                             url: function(n) {
-                                "inner" == M.player() ? (Lampa.Player.loading(!0), i.extract.links([e.plays.filter((function(e) {
+                                var requestedData=Lampa.Player.playdata();
+                                return "inner" == M.player() ? (Lampa.Player.loading(!0), i.extract.links([e.plays.filter((function(e) {
                                     return e.e == t.number
                                 }))]).then((function(e) {
-                                    0 == e.length ? (r.url = "nofound", n()) : (r.quality = i.getQuality(e), r.url = preferredUrl(r.quality), i.applyStreamData(r), n(), setTimeout((function() {
+                                    if(requestedData!==Lampa.Player.playdata()) return;
+                                    r.quality = i.getQuality(e);
+                                    var url = preferredUrl(r.quality);
+                                    if(!url) throw new Error('Нет доступного качества от 720p');
+                                    r.url = url;
+                                    i.applyStreamData(r);
+                                    n();
+                                    setTimeout((function() {
                                         if (Lampa.Player.playdata() === r) i.setFlowsForQuality(r)
-                                    }), 100))
-                                })).catch((function() {
-                                    r.url = "nofound", n()
+                                    }), 100)
+                                })).catch((function(error) {
+                                    r.url = r.lampac_resolve_url;
+                                    if(requestedData===Lampa.Player.playdata()) {
+                                        if(requestedData && requestedData.lampac_fastonline_owner===i.instanceId && Lampa.Player.opened()) Lampa.Player.close();
+                                        Lampa.Noty.show(error.message || 'Нет доступного качества от 720p')
+                                    }
                                 })).finally((function() {
-                                    Lampa.Player.loading(!1)
+                                    if(Lampa.Player.playdata()===r || Lampa.Player.playdata()===requestedData) Lampa.Player.loading(!1)
                                 }))) : M.selectChoiceTranstale(e.translates, M.voice(o.find((function(e) {
                                     return e.selected
                                 }))), (function(n) {
@@ -1837,8 +1858,10 @@ function _typeof(e) {
                                 t.mark(), n = t
                             },
                             error: function(e, t) {
+                                var failedUrl=e.url;
+                                clearTimeout(i.on_error_timer);
                                 i.on_error_timer = setTimeout((function() {
-                                    i.getNextVoice(e, o, t)
+                                    if(Lampa.Player.playdata()===e && e.url===failedUrl) i.getNextVoice(e, o, t)
                                 }), 2e3)
                             }
                         };
@@ -2186,7 +2209,7 @@ function _typeof(e) {
             }});
     }! function() {
         if (!window.lampac_fastonline_plugin) {
-            window.lampac_fastonline_plugin = {version: "1.2.2", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
+            window.lampac_fastonline_plugin = {version: "1.2.3", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
                 if ("complite" == e.type) {
                     var root = e.object.activity.render();
                     if (root.find(".view--lampac-merged").length) return;
