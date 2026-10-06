@@ -1357,8 +1357,13 @@ function _typeof(e) {
                                             t ? t.rch && !c ? W(t, (function() {
                                                 s(o, !0)
                                             }), function() { a(500) }) : "disable" === t || t.disable || t.error && !t.data ? (r++, l()) : i(t) : "disable" === e ? (r++, l()) : a(500)
-                                        }), (function() {
-                                            o ? s(!1, c) : (r++, l())
+                                        }), (function(error) {
+                                            var status = parseInt(error && error.status, 10) || 0;
+                                            // A 5xx from /lite/<source> means the source/backend itself
+                                            // failed. Retrying the legacy /<source> route only adds a
+                                            // guaranteed extra request (usually 404) and delays playback.
+                                            if (o && !(status >= 500 && status < 600)) s(!1, c);
+                                            else (r++, l())
                                         }), !1, {
                                             dataType: "text", headers: requestHeaders()
                                         })
@@ -2600,7 +2605,7 @@ function _typeof(e) {
             }});
     }! function() {
         if (!window.lampac_fastonline_plugin) {
-            window.lampac_fastonline_plugin = {version: "1.4.2", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
+            window.lampac_fastonline_plugin = {version: "1.4.3", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
                 if (!e || "complite" != e.type || !e.object || !e.object.activity || typeof e.object.activity.render !== "function") return;
                 var raw = e.data && typeof e.data === "object" ? e.data : {},
                     activity = e.object.activity,
