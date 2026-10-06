@@ -167,7 +167,69 @@ function _typeof(e) {
     var d = "fastonline_lampac_sources",
         AVAILABLE_KEY = "fastonline_lampac_available",
         SERVER_CACHE_KEY = "fastonline_lampac_server_auto",
+        QUALITY_MEMORY_KEY = "fastonline_quality_memory_v1",
         lampacBase = "",
+        fastRuntime = {available:{}, source:{}, links:{}, badSource:{}};
+
+    function runtimeMediaKey(object, season) {
+        var movie = object && object.movie || {}, stable = [
+            movie.source || "tmdb", movie.tmdb_id || movie.id || "", movie.imdb_id || "",
+            movie.original_title || movie.original_name || "", season || 0
+        ].join("|");
+        return String(Lampa.Utils.hash(stable))
+    }
+
+    function runtimeGet(bucket, key, ttl) {
+        var item = fastRuntime[bucket] && fastRuntime[bucket][key];
+        return item && Date.now() - item.time < ttl ? item.value : null
+    }
+
+    function runtimeSet(bucket, key, value) {
+        if (!fastRuntime[bucket]) fastRuntime[bucket] = {};
+        fastRuntime[bucket][key] = {time:Date.now(), value:value};
+        return value
+    }
+
+    function linksRuntimeKey(groups) {
+        var bits = [];
+        (groups || []).forEach(function(group) {
+            (group || []).forEach(function(item) {
+                if (item) bits.push([item.method || "", item.url || "", item.source_name || "", item.e || item.episode || ""].join("~"))
+            })
+        });
+        bits.sort();
+        return String(Lampa.Utils.hash(bits.join("|")))
+    }
+
+    function qualityMemoryId(movie) {
+        movie = movie || {};
+        return String(Lampa.Utils.hash([
+            movie.source || "tmdb", movie.tmdb_id || movie.id || "", movie.imdb_id || "",
+            movie.original_title || movie.original_name || ""
+        ].join("|")))
+    }
+
+    function rememberedQuality(movie) {
+        try {
+            var all = Lampa.Storage.get(QUALITY_MEMORY_KEY, "{}") || {}, row = all[qualityMemoryId(movie)];
+            return row && parseInt(row.quality, 10) || 0
+        } catch (error) { return 0 }
+    }
+
+    function rememberQuality(movie, quality) {
+        quality = parseInt(quality, 10) || 0;
+        if (quality < 720) return;
+        try {
+            var all = Lampa.Storage.get(QUALITY_MEMORY_KEY, "{}") || {}, key = qualityMemoryId(movie);
+            all[key] = {quality:quality, time:Date.now()};
+            var keys = Object.keys(all);
+            if (keys.length > 250) {
+                keys.sort(function(a,b) { return (all[b].time || 0) - (all[a].time || 0) });
+                keys.slice(250).forEach(function(k) { delete all[k] })
+            }
+            Lampa.Storage.set(QUALITY_MEMORY_KEY, all)
+        } catch (error) {}
+    }
         g = '<svg viewBox="3 6 42 36" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="8" width="38" height="32" rx="2" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M13 8v32M5 16h8m-8 8h8m-8 8h8" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="24" r="9" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="24" r="3" fill="currentColor"/></svg>',
         y = [{
             id: "rezka",
@@ -1218,7 +1280,7 @@ function _typeof(e) {
                         var i = [];
                         i.push("id=" + e.object.movie.id), i.push("serial=" + (e.object.movie.name ? 1 : 0)), e.object.movie.imdb_id && i.push("imdb_id=" + (e.object.movie.imdb_id || "")), e.object.movie.kinopoisk_id && i.push("kinopoisk_id=" + (e.object.movie.kinopoisk_id || ""));
                         var a = lampacBase + "/externalids?" + i.join("&");
-                        e.network.timeout(1e4), e.network.silent(N(a), (function(n) {
+                        e.network.timeout(4000), e.network.silent(N(a), (function(n) {
                             for (var i in n) e.object.movie[i] = n[i];
                             t()
                         }), (function() {
@@ -1237,22 +1299,30 @@ function _typeof(e) {
             }
         }, {
             key: "availableSources",
-            value: function() {
-                var reader=this;
+            value: function(options) {
+                var reader=this, cacheKey=runtimeMediaKey(this.object, options && options.season || 0);
                 return new Promise(function(resolve) {
+                    var cached=runtimeGet("available",cacheKey,120000);
+                    function apply(discovered) {
+                        discovered=discovered || [];
+                        var chosen=A();
+                        if (hasManualSources()) {
+                            var allowed=discovered.filter(function(id) { return chosen.indexOf(id)>=0 });
+                            resolve(allowed.length ? allowed : chosen)
+                        } else resolve(discovered.length ? discovered : chosen)
+                    }
+                    if(cached) { apply(cached); return }
                     withLampacServer(function(base) {
                         if (!base) { resolve([]); return }
                         var count=0, found=[], memkey='', retriedRch=false;
                         function finish() {
-                            var discovered = rememberAvailable(found), chosen = A();
-                            if (hasManualSources()) {
-                                var allowed = discovered.filter(function(id) { return chosen.indexOf(id) >= 0 });
-                                resolve(allowed.length ? allowed : chosen)
-                            } else resolve(discovered.length ? discovered : chosen)
+                            var discovered=rememberAvailable(found);
+                            runtimeSet("available",cacheKey,discovered);
+                            apply(discovered)
                         }
                         function request() {
                             var url=memkey ? base+'/lifeevents?memkey='+encodeURIComponent(memkey) : base+'/lite/events?life=true';
-                            reader.network.timeout(10000);
+                            reader.network.timeout(5000);
                             reader.network.silent(reader.requestParams(N(url)),function(response) {
                                 if (response && response.rch && !retriedRch) {
                                     retriedRch=true;
@@ -1262,8 +1332,8 @@ function _typeof(e) {
                                 var items=serverSources(Array.isArray(response) ? response : response && response.online);
                                 items.forEach(function(id) { if(found.indexOf(id)<0) found.push(id) });
                                 if (response && response.memkey) memkey=response.memkey;
-                                if (Array.isArray(response) || response && response.ready || !memkey || ++count>=15) finish();
-                                else setTimeout(request,500)
+                                if (Array.isArray(response) || response && response.ready || !memkey || ++count>=10) finish();
+                                else setTimeout(request,350)
                             },finish,false,{headers:requestHeaders()})
                         }
                         request()
@@ -1273,7 +1343,7 @@ function _typeof(e) {
             key: "query",
             value: function(options) {
                 var reader=this;
-                return this.availableSources().then(function(sources) { return reader.querySources(options,sources) })
+                return this.availableSources(options).then(function(sources) { return reader.querySources(options,sources) })
             }
         }, {
             key: "querySources",
@@ -1330,7 +1400,11 @@ function _typeof(e) {
             key: "source",
             value: function(e, t) {
                 if (!cleanSources([e]).length) return Promise.reject(400);
-                var n = this;
+                var n = this, cacheKey=runtimeMediaKey(this.object,t||0)+"|"+e,
+                    cached=runtimeGet("source",cacheKey,120000),
+                    badUntil=fastRuntime.badSource[cacheKey] || 0;
+                if (cached) return Promise.resolve(cached);
+                if (badUntil>Date.now()) return Promise.reject(503);
                 return new Promise((function(i, a) {
                     var o = function(e) {
                             for (var t = 0; t < y.length; t++) {
@@ -1349,19 +1423,20 @@ function _typeof(e) {
                                         var u = o ? "/lite/" : "/",
                                             d = lampacBase + u + e,
                                             m = n.requestParams(N(d));
-                                        t && (m += "&s=" + t), n.network.timeout(1e4), n.network.silent(m, (function(e) {
+                                        t && (m += "&s=" + t), n.network.timeout(4500), n.network.silent(m, (function(e) {
                                             var t;
                                             try {
                                                 t = JSON.parse(e)
                                             } catch (e) {}
                                             t ? t.rch && !c ? W(t, (function() {
                                                 s(o, !0)
-                                            }), function() { a(500) }) : "disable" === t || t.disable || t.error && !t.data ? (r++, l()) : i(t) : "disable" === e ? (r++, l()) : a(500)
+                                            }), function() { a(500) }) : "disable" === t || t.disable || t.error && !t.data ? (r++, l()) : i(runtimeSet("source",cacheKey,t)) : "disable" === e ? (r++, l()) : a(500)
                                         }), (function(error) {
                                             var status = parseInt(error && error.status, 10) || 0;
                                             // A 5xx from /lite/<source> means the source/backend itself
                                             // failed. Retrying the legacy /<source> route only adds a
                                             // guaranteed extra request (usually 404) and delays playback.
+                                            if (status >= 500 && status < 600) fastRuntime.badSource[cacheKey]=Date.now()+45000;
                                             if (o && !(status >= 500 && status < 600)) s(!1, c);
                                             else (r++, l())
                                         }), !1, {
@@ -1378,7 +1453,8 @@ function _typeof(e) {
         }, {
             key: "links",
             value: function(e) {
-                var t = this;
+                var t = this, cacheKey=linksRuntimeKey(e), cached=runtimeGet("links",cacheKey,300000);
+                if (cached) return Promise.resolve(cached);
                 return new Promise((function(n, i) {
                     var a = [],
                         o = [];
@@ -1391,12 +1467,16 @@ function _typeof(e) {
                     }));
                     var l = new r(a.length);
                     l.onComplite = function() {
-                        K(o, function(items) { n(M.renameTranslate(items)) })
+                        K(o, function(items) {
+                            items=M.renameTranslate(items);
+                            runtimeSet("links",cacheKey,items);
+                            n(items)
+                        })
                     };
                     var s = function(e, n) {
                         var safe = N(e.url);
                         if (!safe) return void l.error();
-                        t.network.timeout(1e4), t.network.silent(safe, (function(t) {
+                        t.network.timeout(4500), t.network.silent(safe, (function(t) {
                             if (t.rch && !n) W(t, (function() {
                                 s(e, !0)
                             }), l.error.bind(l));
@@ -1416,7 +1496,11 @@ function _typeof(e) {
                     };
                     a.forEach((function(e) {
                         s(e, !1)
-                    })), 0 == a.length && K(o, function(items) { n(M.renameTranslate(items)) })
+                    })), 0 == a.length && K(o, function(items) {
+                        items=M.renameTranslate(items);
+                        runtimeSet("links",cacheKey,items);
+                        n(items)
+                    })
                 }))
             }
         }, {
@@ -1540,7 +1624,7 @@ function _typeof(e) {
                             return new Promise((function(a, o) {
                                 var safe = N(n.url);
                                 if (!safe) return void o(400);
-                                t.network.timeout(1e4), t.network.silent(safe, (function(response) {
+                                t.network.timeout(4500), t.network.silent(safe, (function(response) {
                                     var r, l = response;
                                     if ("string" == typeof response)
                                         if (-1 !== response.indexOf("<div") || -1 !== response.indexOf("data-json")) r = {
@@ -1660,11 +1744,22 @@ function _typeof(e) {
         return 0
     }
 
-    function preferredUrl(quality) {
-        var keys = Object.keys(quality || {}), wanted = +Lampa.Storage.field('video_quality_default');
-        var selected = keys.find(function(key) { return qualityNumber(key) === wanted && wanted >= 720 });
-        if (!selected) selected = keys.sort(function(a, b) { return qualityNumber(b) - qualityNumber(a) })[0];
-        return selected ? quality[selected].url : ''
+    function preferredQualityKey(quality, movie) {
+        var keys=Object.keys(quality || {}).filter(function(key) { return qualityNumber(key)>=720 });
+        keys.sort(function(a,b) { return qualityNumber(b)-qualityNumber(a) });
+        if(!keys.length) return "";
+        var wanted=rememberedQuality(movie) || (+Lampa.Storage.field('video_quality_default') || 0);
+        if(wanted<720) return keys[0];
+        var exact=keys.find(function(key) { return qualityNumber(key)===wanted });
+        if(exact) return exact;
+        var lower=keys.find(function(key) { return qualityNumber(key)<wanted });
+        if(lower) return lower;
+        return keys[keys.length-1]
+    }
+
+    function preferredUrl(quality, movie) {
+        var selected=preferredQualityKey(quality,movie);
+        return selected ? quality[selected].url : ""
     }
 
     var managedManifests = {};
@@ -1728,12 +1823,13 @@ function _typeof(e) {
                 collectStreamLinks(source[name], copyStreamMetadata({}, item)).forEach(function(record) {
                     if (seen[record.url]) return;
                     seen[record.url] = true;
-                    if (!/\.m3u8(?:[?#]|$)/i.test(record.url) || /^blob:/.test(record.url)) {
+                    var declared=qualityNumber(name);
+                    if (declared>=720 || !/\.m3u8(?:[?#]|$)/i.test(record.url) || /^blob:/.test(record.url)) {
                         store(name, Object.assign({url:record.url},record.metadata)); return
                     }
                     jobs.push(function(done) {
                         var request = new Lampa.Reguest;
-                        request.timeout(6000);
+                        request.timeout(2500);
                         request.native(record.url, function(text) {
                             if (typeof text === 'string' && text.indexOf('#EXT-X-STREAM-INF:') >= 0) {
                                 var parsed;
@@ -1840,6 +1936,7 @@ function _typeof(e) {
                                 if(!selected) return void Lampa.Noty.show('Источники этого качества недоступны');
                                 data.url = selected;
                                 data.quality_switched = key;
+                                rememberQuality(player.object && player.object.movie,qualityNumber(key));
                                 player.applyStreamData(data);
                                 ready(selected)
                             },
@@ -1932,8 +2029,9 @@ function _typeof(e) {
                     n = this.getQuality(e.quality);
                 return {
                     title: this.object.movie.title || this.object.movie.name,
-                    url: preferredUrl(n),
+                    url: preferredUrl(n,this.object.movie),
                     quality: n,
+                    quality_switched: preferredQualityKey(n,this.object.movie),
                     timeline: Lampa.Timeline.view(t),
                     translate_name: e.translate,
                     card: this.object.movie
@@ -2045,6 +2143,7 @@ function _typeof(e) {
                 var player=this, data=Lampa.Player.playdata(), sequence=(this.voiceSequence || 0)+1,
                     key = voice && typeof voice === "object" ? voice.key : String(voice || ""),
                     name = voice && typeof voice === "object" ? voice.label : String(voice || "");
+                clearTimeout(player.on_error_timer);
                 var initialVideo=Lampa.PlayerVideo.video(), pending=player.voicePending;
                 var wasPaused=pending && pending.data===data ? pending.wasPaused : initialVideo && initialVideo.paused;
                 player.voicePending={data:data,wasPaused:wasPaused,sequence:sequence};
@@ -2056,7 +2155,9 @@ function _typeof(e) {
                     var quality=player.getQuality(items);
                     if (!Object.keys(quality).length) throw new Error('Нет доступного качества от 720p');
                     var video=Lampa.PlayerVideo.video(), time=video && video.currentTime || 0;
-                    var current=data.quality_switched, url=current && quality[current] ? quality[current].url : preferredUrl(quality);
+                    var current=data.quality_switched || preferredQualityKey(quality,player.object && player.object.movie),
+                        selectedKey=current && quality[current] ? current : preferredQualityKey(quality,player.object && player.object.movie),
+                        url=selectedKey && quality[selectedKey] ? quality[selectedKey].url : preferredUrl(quality,player.object && player.object.movie);
                     clearTimeout(player.on_error_timer);
                     if(commit) commit(items);
                     voices.forEach(function(track) { track.selected = track.voice_key ? track.voice_key === key : M.compareVoice(track.name,name) });
@@ -2065,7 +2166,7 @@ function _typeof(e) {
                     data.quality=quality;
                     delete data.lampac_merged_quality;
                     delete data.flow_switched;
-                    delete data.quality_switched;
+                    data.quality_switched=selectedKey;
                     data.url=url;
                     player.applyStreamData(data);
                     Lampa.PlayerVideo.destroy(true);
@@ -2112,8 +2213,9 @@ function _typeof(e) {
                     });
                     var play = {
                         title: t.object.movie.title || t.object.movie.name,
-                        url: items.length ? preferredUrl(quality) : "nofound",
+                        url: items.length ? preferredUrl(quality,t.object.movie) : "nofound",
                         quality: quality,
+                        quality_switched: preferredQualityKey(quality,t.object.movie),
                         timeline: Lampa.Timeline.view(timelineHash),
                         subtitles: subs.length ? subs : undefined,
                         card: t.object.movie,
@@ -2124,7 +2226,7 @@ function _typeof(e) {
                             var failedUrl=data.url;
                             clearTimeout(t.on_error_timer);
                             t.on_error_timer = setTimeout((function() {
-                                if(Lampa.Player.playdata()===data && data.url===failedUrl) t.getNextVoice(data, tracks, reserve)
+                                if(!t.voicePending && Lampa.Player.playdata()===data && data.url===failedUrl) t.getNextVoice(data, tracks, reserve)
                             }), 2e3)
                         }
                     };
@@ -2164,7 +2266,7 @@ function _typeof(e) {
                 var i = this,
                     a = [],
                     o = [],
-                    r = (e.plays[0] && e.plays[0].translate_key) || this.voice.get(), seriesPlaylist = a;
+                    r = this.voice.get() || (e.plays[0] && e.plays[0].translate_key), seriesPlaylist = a;
                 Lampa.Controller.toggle("content");
                 var voiceGroups = VoiceKit.group(e.translates, this.object.movie),
                     selectedGroup = VoiceKit.find(voiceGroups, r);
@@ -2213,14 +2315,22 @@ function _typeof(e) {
                                 }))]).then((function(e) {
                                     if(requestedData!==Lampa.Player.playdata()) return;
                                     r.quality = i.getQuality(e);
-                                    var url = preferredUrl(r.quality);
+                                    var selectedKey=preferredQualityKey(r.quality,i.object.movie),
+                                        url = selectedKey && r.quality[selectedKey] ? r.quality[selectedKey].url : preferredUrl(r.quality,i.object.movie);
                                     if(!url) throw new Error('Нет доступного качества от 720p');
                                     r.url = url;
+                                    r.quality_switched=selectedKey;
                                     i.applyStreamData(r);
                                     n();
                                     setTimeout((function() {
                                         if (Lampa.Player.playdata() === r) i.setFlowsForQuality(r)
-                                    }), 100)
+                                    }), 100);
+                                    // Resolve the next episode in the background. links() is cached, so
+                                    // autoplay/next usually starts without another resolver pause.
+                                    setTimeout(function() {
+                                        var next=e.plays.filter(function(item) { return item.e==t.number+1 });
+                                        if(next.length) i.extract.links([next]).catch(function(){})
+                                    },1200)
                                 })).catch((function(error) {
                                     r.url = r.lampac_resolve_url;
                                     if(requestedData===Lampa.Player.playdata()) {
@@ -2266,7 +2376,7 @@ function _typeof(e) {
                                 var failedUrl=e.url;
                                 clearTimeout(i.on_error_timer);
                                 i.on_error_timer = setTimeout((function() {
-                                    if(Lampa.Player.playdata()===e && e.url===failedUrl) i.getNextVoice(e, o, t)
+                                    if(!i.voicePending && Lampa.Player.playdata()===e && e.url===failedUrl) i.getNextVoice(e, o, t)
                                 }), 2e3)
                             }
                         };
@@ -2605,7 +2715,7 @@ function _typeof(e) {
             }});
     }! function() {
         if (!window.lampac_fastonline_plugin) {
-            window.lampac_fastonline_plugin = {version: "1.4.3", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
+            window.lampac_fastonline_plugin = {version: "1.5.0", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
                 if (!e || "complite" != e.type || !e.object || !e.object.activity || typeof e.object.activity.render !== "function") return;
                 var raw = e.data && typeof e.data === "object" ? e.data : {},
                     activity = e.object.activity,
