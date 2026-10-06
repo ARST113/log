@@ -2232,6 +2232,7 @@ function _typeof(e) {
                     };
                     t.voice.set(selected.key);
                     VoiceKit.touch(selected);
+                    if(play.quality_switched) rememberQuality(t.object.movie,qualityNumber(play.quality_switched));
                     Lampa.Player.runas("inner"), Lampa.Player.play(t.applyStreamData(play)), Lampa.Player.playlist([]), t.setFlowsForQuality(play)
                 })).catch((function(err) {
                     t.extract.error(err)
@@ -2266,7 +2267,7 @@ function _typeof(e) {
                 var i = this,
                     a = [],
                     o = [],
-                    r = this.voice.get() || (e.plays[0] && e.plays[0].translate_key), seriesPlaylist = a;
+                    r = (e.plays[0] && e.plays[0].translate_key) || this.voice.get(), seriesPlaylist = a;
                 Lampa.Controller.toggle("content");
                 var voiceGroups = VoiceKit.group(e.translates, this.object.movie),
                     selectedGroup = VoiceKit.find(voiceGroups, r);
@@ -2320,6 +2321,7 @@ function _typeof(e) {
                                     if(!url) throw new Error('Нет доступного качества от 720p');
                                     r.url = url;
                                     r.quality_switched=selectedKey;
+                                    if(selectedKey) rememberQuality(i.object.movie,qualityNumber(selectedKey));
                                     i.applyStreamData(r);
                                     n();
                                     setTimeout((function() {
@@ -2715,7 +2717,7 @@ function _typeof(e) {
             }});
     }! function() {
         if (!window.lampac_fastonline_plugin) {
-            window.lampac_fastonline_plugin = {version: "1.5.0", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
+            window.lampac_fastonline_plugin = {version: "1.5.1", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
                 if (!e || "complite" != e.type || !e.object || !e.object.activity || typeof e.object.activity.render !== "function") return;
                 var raw = e.data && typeof e.data === "object" ? e.data : {},
                     activity = e.object.activity,
