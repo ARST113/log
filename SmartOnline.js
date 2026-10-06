@@ -52,6 +52,7 @@ function _typeof(e) {
     }
     var o = function() {
         function e(n) {
+            n = n || {};
             var m = n.movie || {},
                 stable = [m.source || "tmdb", m.tmdb_id || m.id || "", m.imdb_id || "", m.original_title || m.original_name || "", (m.release_date || m.first_air_date || "").slice(0, 4)].join("|");
             t(this, e), this.hash = Lampa.Utils.hash(stable), this.legacy_hash = Lampa.Utils.hash(m.original_title || m.original_name || ""), this.field = "fastonline_selected_voice_v2", this.legacy_field = "online_selected_voice"
@@ -481,7 +482,7 @@ function _typeof(e) {
             // Online-script token, uid and account data through N().
             xhr = new XMLHttpRequest();
             xhr.open("GET", base + "/lite/events?rjson=true", true);
-            xhr.timeout = 4500;
+            xhr.timeout = 2500;
             xhr.onload = function() {
                 var body = null;
                 try { body = JSON.parse(xhr.responseText) } catch (error) {}
@@ -511,10 +512,26 @@ function _typeof(e) {
             var waiters = serverState.waiters.splice(0);
             waiters.forEach(function(fn) { try { fn(lampacBase) } catch (error) {} })
         }
-        (function next(index) {
-            if (index >= uniq.length) { complete(""); return }
-            probeServer(uniq[index], function(ok) { if (ok) complete(uniq[index]); else next(index + 1) })
-        })(0)
+        if (!uniq.length) { complete(""); return }
+        var left = uniq.length, finished = false;
+        uniq.forEach(function(item, index) {
+            setTimeout(function() {
+                if (finished) return;
+                probeServer(item, function(ok) {
+                    if (finished) return;
+                    if (ok) {
+                        finished = true;
+                        complete(item);
+                        return
+                    }
+                    left--;
+                    if (left <= 0) {
+                        finished = true;
+                        complete("")
+                    }
+                })
+            }, Math.min(index, 5) * 100)
+        })
     }
 
     function withLampacServer(callback) {
@@ -2272,7 +2289,11 @@ function _typeof(e) {
             function e(n) {
                 t(this, e);
                 var i = this;
-                this.object = n;
+                this.object = n && n.movie ? n : null;
+                if (!this.object) {
+                    Lampa.Noty.show("SmartOnline: не удалось определить карточку фильма/сериала");
+                    return
+                }
                 this.startPlay()
             }
             return i(e, [{
@@ -2579,20 +2600,30 @@ function _typeof(e) {
             }});
     }! function() {
         if (!window.lampac_fastonline_plugin) {
-            window.lampac_fastonline_plugin = {version: "1.4.0", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
-                if ("complite" == e.type) {
-                    var root = e.object.activity.render();
-                    if (root.find(".view--lampac-merged").length) return;
-                    var t = '<div class="full-start__button selector view--online view--lampac-merged" data-subtitle="Lampac">' + g + "<span>SmartOnline</span></div>",
-                        n = $(Lampa.Lang.translate(t));
-                    root.find(".view--torrent").length ? root.find(".view--torrent").last().after(n) : root.find(".full-start-new__buttons, .full-start__buttons").first().append(n), n.on("hover:enter", (function() {
-                        Lampa.Controller.toggle("content");
-                        withLampacServer(function(base) {
-                            if (!base) { Lampa.Noty.show("SmartOnline: Lampac/Online не найден"); return }
-                            new Q(e.data)
-                        })
-                    }))
-                }
+            window.lampac_fastonline_plugin = {version: "1.4.1", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
+                if (!e || "complite" != e.type || !e.object || !e.object.activity || typeof e.object.activity.render !== "function") return;
+                var raw = e.data && typeof e.data === "object" ? e.data : {},
+                    activity = e.object.activity,
+                    movie = raw.movie || raw.card ||
+                        e.object.movie || e.object.card ||
+                        e.object.data && (e.object.data.movie || e.object.data.card) ||
+                        activity.movie || activity.card ||
+                        activity.params && (activity.params.movie || activity.params.card);
+                if (!movie) return;
+                var data = {};
+                for (var key in raw) data[key] = raw[key];
+                data.movie = movie;
+                var root = activity.render();
+                if (root.find(".view--lampac-merged").length) return;
+                var t = '<div class="full-start__button selector view--online view--lampac-merged" data-subtitle="Lampac">' + g + "<span>SmartOnline</span></div>",
+                    n = $(Lampa.Lang.translate(t));
+                root.find(".view--torrent").length ? root.find(".view--torrent").last().after(n) : root.find(".full-start-new__buttons, .full-start__buttons").first().append(n), n.on("hover:enter", (function() {
+                    Lampa.Controller.toggle("content");
+                    withLampacServer(function(base) {
+                        if (!base) { Lampa.Noty.show("SmartOnline: Lampac/Online не найден"); return }
+                        new Q(data)
+                    })
+                }))
             }));
             // Warm the auto-detection cache so the first SmartOnline click is normally immediate.
             setTimeout(function() { discoverLampac(false, function() {}) }, 300);
