@@ -1535,12 +1535,12 @@ function _typeof(e) {
                             return new Promise((function(a, o) {
                                 var safe = N(n.url);
                                 if (!safe) return void o(400);
-                                t.network.timeout(1e4), t.network.silent(safe, (function(t) {
-                                    var r, l = t;
-                                    if ("string" == typeof t)
-                                        if (-1 !== t.indexOf("<div") || -1 !== t.indexOf("data-json")) r = {
+                                t.network.timeout(1e4), t.network.silent(safe, (function(response) {
+                                    var r, l = response;
+                                    if ("string" == typeof response)
+                                        if (-1 !== response.indexOf("<div") || -1 !== response.indexOf("data-json")) r = {
                                             data: []
-                                        }, $(t).find("[data-json]").each((function() {
+                                        }, $(response).find("[data-json]").each((function() {
                                             try {
                                                 var e = $(this).attr("data-json"),
                                                     t = JSON.parse(e);
@@ -1548,7 +1548,7 @@ function _typeof(e) {
                                             } catch (e) {}
                                         })), l = r;
                                         else try {
-                                            l = JSON.parse(t)
+                                            l = JSON.parse(response)
                                         } catch (e) {
                                             l = {}
                                         }
@@ -1558,7 +1558,7 @@ function _typeof(e) {
                                     else {
                                         if (!l.data || 0 === l.data.length) return void o("no data");
                                         ! function(e, item) {
-                                            var desc = VoiceKit.describe(item, t.object.movie) || {key:"",label:M.voice(item)};
+                                            var desc = VoiceKit.describe(item, t.object && t.object.movie ? t.object.movie : {}) || {key:"",label:M.voice(item)};
                                             e.data.forEach((function(e) {
                                                 e.translate_name = desc.label, e.translate_key = desc.key, e.source_name = item.source_name || e.source_name || ""
                                             }))
@@ -2600,7 +2600,7 @@ function _typeof(e) {
             }});
     }! function() {
         if (!window.lampac_fastonline_plugin) {
-            window.lampac_fastonline_plugin = {version: "1.4.1", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
+            window.lampac_fastonline_plugin = {version: "1.4.2", server: lampacBase}, ae(), Lampa.Component.add("lampac_fastonline_episodes", X), Lampa.VPN.region((function() {})), Lampa.Listener.follow("full", (function(e) {
                 if (!e || "complite" != e.type || !e.object || !e.object.activity || typeof e.object.activity.render !== "function") return;
                 var raw = e.data && typeof e.data === "object" ? e.data : {},
                     activity = e.object.activity,
