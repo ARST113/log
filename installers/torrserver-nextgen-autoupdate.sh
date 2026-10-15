@@ -142,7 +142,7 @@ do_update() {
   printf '%s  %s\n' "$sha" "$TS_AUTO_TEMP" | sha256sum -c --status ||
     die "SHA256 mismatch; original binary was not touched."
   chmod --reference="$binary" "$TS_AUTO_TEMP"
-  chown --reference="$binary" "$TS_AUTO_TEMP"
+  # Keep the replacement root-owned; the service user only needs execute permission.
   [[ -x "$TS_AUTO_TEMP" ]] || die "Downloaded binary is not executable."
   # Check that the downloaded executable can at least start in version mode.
   timeout 10 "$TS_AUTO_TEMP" --version >/dev/null 2>&1 ||
