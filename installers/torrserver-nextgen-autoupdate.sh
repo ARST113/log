@@ -110,50 +110,55 @@ do_update() {
     fi
   fi
 
-  local temp backup url must_restart=0 replaced=0
-  temp=$(mktemp "${binary}.download.XXXXXXXX")
-  backup=$(mktemp "${binary}.backup.XXXXXXXX")
+  local url
+  # EXIT traps run after local function variables go out of scope.
+  # Rollback state must be global so it remains available to the trap.
+  TS_AUTO_MUST_RESTART=0
+  TS_AUTO_REPLACED=0
+  TS_AUTO_TEMP=$(mktemp "${binary}.download.XXXXXXXX")
+  TS_AUTO_BACKUP=$(mktemp "${binary}.backup.XXXXXXXX")
+  TS_AUTO_BINARY="$binary"
   cleanup() {
     local rc=$?
     trap - EXIT
-    if (( rc != 0 && must_restart == 1 )); then
+    if (( rc != 0 && TS_AUTO_MUST_RESTART == 1 )); then
       log "Update failed; restoring old binary and service..."
-      if (( replaced == 1 )) && [[ -s "$backup" ]]; then
-        mv -f -- "$backup" "$binary" || log "CRITICAL: rollback of binary failed!"
+      if (( TS_AUTO_REPLACED == 1 )) && [[ -s "$TS_AUTO_BACKUP" ]]; then
+        mv -f -- "$TS_AUTO_BACKUP" "$binary" || log "CRITICAL: rollback of binary failed!"
       fi
       systemctl start "$SERVICE" || log "CRITICAL: cannot restart old service."
       if systemctl is-active --quiet "$SERVICE"; then
         log "Previous TorrServer service has been restored."
       fi
     fi
-    rm -f -- "$temp" "$backup"
+    rm -f -- "$TS_AUTO_TEMP" "$TS_AUTO_BACKUP"
   }
   trap cleanup EXIT
 
   url="https://github.com/${REPO}/releases/download/${latest}/${asset}"
   log "Downloading $latest ($asset); service stays online during download."
   curl -fLsS --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 600 \
-    --output "$temp" "$url" || die "Download failed."
-  printf '%s  %s\n' "$sha" "$temp" | sha256sum -c --status ||
+    --output "$TS_AUTO_TEMP" "$url" || die "Download failed."
+  printf '%s  %s\n' "$sha" "$TS_AUTO_TEMP" | sha256sum -c --status ||
     die "SHA256 mismatch; original binary was not touched."
-  chmod --reference="$binary" "$temp"
-  chown --reference="$binary" "$temp"
-  [[ -x "$temp" ]] || die "Downloaded binary is not executable."
+  chmod --reference="$binary" "$TS_AUTO_TEMP"
+  chown --reference="$binary" "$TS_AUTO_TEMP"
+  [[ -x "$TS_AUTO_TEMP" ]] || die "Downloaded binary is not executable."
   # Check that the downloaded executable can at least start in version mode.
-  timeout 10 "$temp" --version >/dev/null 2>&1 ||
+  timeout 10 "$TS_AUTO_TEMP" --version >/dev/null 2>&1 ||
     die "Downloaded binary did not pass the --version startup test."
 
-  cp -p -- "$binary" "$backup"
+  cp -p -- "$binary" "$TS_AUTO_BACKUP"
   log "Checksum verified. Restarting TorrServer to install $latest..."
   systemctl stop "$SERVICE" || die "Could not stop TorrServer."
-  must_restart=1
-  mv -f -- "$temp" "$binary"
-  replaced=1
+  TS_AUTO_MUST_RESTART=1
+  mv -f -- "$TS_AUTO_TEMP" "$binary"
+  TS_AUTO_REPLACED=1
   systemctl start "$SERVICE" || die "New service failed to start."
   sleep 4
   systemctl is-active --quiet "$SERVICE" ||
     die "New service did not remain active after startup."
-  must_restart=0
+  TS_AUTO_MUST_RESTART=0
   log "Updated successfully: ${installed:-unknown} -> $latest. Settings and accs.db unchanged."
 }
 
