@@ -582,23 +582,39 @@ getLang() {
 }
 
 getIP() {
-  local ip="localhost"
+  # Public IP lookup is informational only; never include DNS diagnostics in the URL.
+  local ip=""
 
   if command -v dig >/dev/null 2>&1; then
-    ip=$(dig +time=2 +tries=1 +short myip.opendns.com @resolver1.opendns.com 2>/dev/null || echo "")
-    if [[ -z "$ip" ]]; then
-      ip="localhost"
-    fi
-  elif command -v host >/dev/null 2>&1; then
-    local host_output=""
-    host_output=$(host -W 2 myip.opendns.com resolver1.opendns.com 2>/dev/null || true)
-    ip=$(printf "%s\n" "$host_output" | tail -n1 | awk '{print $NF}')
-    if [[ -z "$ip" ]]; then
-      ip="localhost"
-    fi
+    ip=$(dig -4 +time=2 +tries=1 +short myip.opendns.com @resolver1.opendns.com 2>/dev/null |
+      awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print; exit }' || true)
   fi
 
-  serverIP="$ip"
+  if [[ -z "$ip" ]] && command -v curl >/dev/null 2>&1; then
+    ip=$(curl -4fsS --connect-timeout 3 --max-time 6 https://api.ipify.org 2>/dev/null || true)
+  fi
+
+  if [[ -z "$ip" ]] && command -v host >/dev/null 2>&1; then
+    ip=$(host -W 2 myip.opendns.com resolver1.opendns.com 2>/dev/null |
+      awk '/has address/ && $NF ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $NF; exit }' || true)
+  fi
+
+  # Validate format and octet ranges; fall back to localhost if lookup failed.
+  serverIP="localhost"
+  if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    local -a octets=()
+    local octet valid=1
+    IFS=. read -r -a octets <<< "$ip"
+    for octet in "${octets[@]}"; do
+      if (( 10#$octet > 255 )); then
+        valid=0
+        break
+      fi
+    done
+    if [[ $valid -eq 1 ]]; then
+      serverIP="$ip"
+    fi
+  fi
 }
 
 promptYesNo() {
