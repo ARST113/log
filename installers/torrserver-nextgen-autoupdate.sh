@@ -20,7 +20,7 @@ require_root() {
 
 require_tools() {
   local tool
-  for tool in systemctl curl python3 sha256sum flock mktemp; do
+  for tool in systemctl curl python3 sha256sum flock mktemp timeout; do
     command -v "$tool" >/dev/null 2>&1 || die "Missing required tool: $tool"
   done
 }
@@ -124,7 +124,7 @@ do_update() {
     if (( rc != 0 && TS_AUTO_MUST_RESTART == 1 )); then
       log "Update failed; restoring old binary and service..."
       if (( TS_AUTO_REPLACED == 1 )) && [[ -s "$TS_AUTO_BACKUP" ]]; then
-        mv -f -- "$TS_AUTO_BACKUP" "$binary" || log "CRITICAL: rollback of binary failed!"
+        mv -f -- "$TS_AUTO_BACKUP" "$TS_AUTO_BINARY" || log "CRITICAL: rollback of binary failed!"
       fi
       systemctl start "$SERVICE" || log "CRITICAL: cannot restart old service."
       if systemctl is-active --quiet "$SERVICE"; then
