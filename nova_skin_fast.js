@@ -1,4 +1,4 @@
-// Nova Skin Fast (initial-hero rendering) — based on amikdn/nova_skin.js
+// Nova Skin Fast v1.1 — smooth transition from online-source loading to results (2026-10-17)
 // Keeps original skin and the original TMDB logo loader; only first render and cache writes optimized.
 // Source: https://github.com/amikdn/amikdn.github.io/blob/main/nova_skin.js
 (function () {
@@ -61,6 +61,7 @@
   function stepAside() {
     if (aside) return;
     aside = true;
+    revealStop();
     inplaceStop();
     try {
       if (ui.root) ui.root.remove();
@@ -482,7 +483,7 @@
     if (document.getElementById('nova-skin-css')) return;
     var style = document.createElement('style');
     style.id = 'nova-skin-css';
-    style.textContent = SKIN_CSS + EXTRA_CSS + CARD_CSS + FOCUS_CSS + FULL_CSS + FADE_CSS + MARK_CSS + BADGE_CSS + LOGO_CSS + LOGO_HOLD;
+    style.textContent = SKIN_CSS + EXTRA_CSS + CARD_CSS + FOCUS_CSS + FULL_CSS + FADE_CSS + MARK_CSS + BADGE_CSS + LOGO_CSS + LOGO_HOLD + REVEAL_CSS;
     (document.body || document.head).appendChild(style);
   }
 
@@ -882,6 +883,7 @@
   var leave_guard = null;
 
   function forget() {
+    revealStop();
     if (pendingLive() && ui.root) {
       root = null;
       host = null;
@@ -3742,6 +3744,10 @@
   function loadingPanel() {
     uiFrame();
     note_sig = '';
+    if (ui.phase !== 'loading') {
+      revealStop();
+      ui.phase = 'loading';
+    }
 
     // A source switch already has a usable hero; keep it unchanged.
     var heroExists = !!(ui.hero && ui.hero.parent().length);
@@ -3799,6 +3805,58 @@
     ui.load = null;
   }
 
+
+  // Crossfade the previous loading content over the first completed result.
+  // Snapshot only lightweight placeholder markup, never the movie artwork.
+  function revealCapture() {
+    var wasLoading = ui.phase === 'loading';
+    ui.phase = 'ready';
+    if (!wasLoading || !ui.root || !ui.list || !ui.list.length) return null;
+
+    var outgoing = null;
+    try {
+      var placeholders = ui.list.children('.nova-loading,.nova-skeleton');
+      if (placeholders.length) {
+        var position = ui.list.position();
+        outgoing = $('<div class="nova-skin__outgoing" aria-hidden="true"></div>');
+        outgoing.css({
+          top: Math.max(0, position.top) + 'px',
+          left: position.left + 'px',
+          width: ui.list.outerWidth() + 'px'
+        });
+        outgoing.append(placeholders.clone(false, false));
+      }
+    } catch (e) {
+      outgoing = null;
+    }
+    return { root: ui.root, outgoing: outgoing };
+  }
+
+  function revealStop() {
+    if (ui.reveal_timer) clearTimeout(ui.reveal_timer);
+    ui.reveal_timer = null;
+    if (ui.root) {
+      ui.root.removeClass('nova-skin-revealing');
+      ui.root.children('.nova-skin__outgoing').remove();
+    }
+  }
+
+  function revealCommit(transition) {
+    if (!transition || !transition.root || !ui.root ||
+        transition.root[0] !== ui.root[0]) return;
+
+    revealStop();
+    if (transition.outgoing) transition.root.append(transition.outgoing);
+    transition.root.addClass('nova-skin-revealing');
+
+    var frame = transition.root;
+    ui.reveal_timer = setTimeout(function () {
+      frame.removeClass('nova-skin-revealing');
+      frame.children('.nova-skin__outgoing').remove();
+      if (ui.root && frame[0] === ui.root[0]) ui.reveal_timer = null;
+    }, 630);
+  }
+
   function noteStamp(native) {
     return [
       native.node.find('.online-empty__title').text().trim(),
@@ -3821,6 +3879,7 @@
     note_sig = mark;
 
     uiFrame();
+    var reveal = revealCapture();
     loadingStop();
     lockRelease();
     switchDone();
@@ -3925,6 +3984,7 @@
 
     ui.list.empty().append(note);
     refreshCollection();
+    revealCommit(reveal);
 
     var first = actions.find('.selector').first();
     var wanted = seek(ui_focus);
@@ -4026,6 +4086,7 @@
 
     hopStop();
     hopReset();
+    var reveal = revealCapture();
     loadingStop();
     root.addClass('nova-skin-scope nova-skin-chips');
     uiFrame();
@@ -4106,6 +4167,7 @@
     switchDone();
     busy = false;
     relayout();
+    revealCommit(reveal);
     probeSchedule();
   }
 
@@ -4647,6 +4709,26 @@
       schedule();
     });
   }
+
+
+  // GPU-friendly animations; triggered only on loading -> results, never on every redraw.
+  var REVEAL_CSS = [
+    '.nova-skin-root{position:relative}',
+    '.nova-skin-root.nova-skin-revealing .nova__rows{-webkit-animation:nova-skin-rows-in .37s cubic-bezier(.16,1,.3,1) both;animation:nova-skin-rows-in .37s cubic-bezier(.16,1,.3,1) both}',
+    '.nova-skin-root.nova-skin-revealing .nova__list{-webkit-animation:nova-skin-list-in .52s cubic-bezier(.16,1,.3,1) both;animation:nova-skin-list-in .52s cubic-bezier(.16,1,.3,1) both}',
+    '.nova-skin-root.nova-skin-revealing .nova-hero__actions>.nova-btn--main{-webkit-animation:nova-skin-play-in .42s ease-out both;animation:nova-skin-play-in .42s ease-out both}',
+    '.nova-skin-root>.nova-skin__outgoing{position:absolute;z-index:3;pointer-events:none;overflow:hidden;-webkit-animation:nova-skin-out .4s ease-out both;animation:nova-skin-out .4s ease-out both}',
+    '.nova-skin-root>.nova-skin__outgoing .nova-skeleton__row{-webkit-animation:none!important;animation:none!important}',
+    '@-webkit-keyframes nova-skin-rows-in{from{opacity:0;-webkit-transform:translate3d(0,8px,0)}to{opacity:1;-webkit-transform:translate3d(0,0,0)}}',
+    '@keyframes nova-skin-rows-in{from{opacity:0;transform:translate3d(0,8px,0)}to{opacity:1;transform:translate3d(0,0,0)}}',
+    '@-webkit-keyframes nova-skin-list-in{from{opacity:0;-webkit-transform:translate3d(0,12px,0)}to{opacity:1;-webkit-transform:translate3d(0,0,0)}}',
+    '@keyframes nova-skin-list-in{from{opacity:0;transform:translate3d(0,12px,0)}to{opacity:1;transform:translate3d(0,0,0)}}',
+    '@-webkit-keyframes nova-skin-play-in{from{opacity:0;-webkit-transform:translate3d(0,5px,0)}to{opacity:1;-webkit-transform:translate3d(0,0,0)}}',
+    '@keyframes nova-skin-play-in{from{opacity:0;transform:translate3d(0,5px,0)}to{opacity:1;transform:translate3d(0,0,0)}}',
+    '@-webkit-keyframes nova-skin-out{from{opacity:1;-webkit-transform:translate3d(0,0,0)}to{opacity:0;-webkit-transform:translate3d(0,-6px,0)}}',
+    '@keyframes nova-skin-out{from{opacity:1;transform:translate3d(0,0,0)}to{opacity:0;transform:translate3d(0,-6px,0)}}',
+    '@media (prefers-reduced-motion:reduce){.nova-skin-root.nova-skin-revealing .nova__rows,.nova-skin-root.nova-skin-revealing .nova__list,.nova-skin-root.nova-skin-revealing .nova-hero__actions>.nova-btn--main,.nova-skin-root>.nova-skin__outgoing{-webkit-animation:none!important;animation:none!important}.nova-skin-root>.nova-skin__outgoing{opacity:0}}'
+  ].join('');
 
   var LOGO_CSS = ".nova-skin-root .nova-hero__title--logo>img.nova-logo--edge{-webkit-filter:drop-shadow(0 0 .02em rgba(255,255,255,.9)) drop-shadow(0 0 .06em rgba(255,255,255,.45)) drop-shadow(0 .04em .12em rgba(0,0,0,.5));filter:drop-shadow(0 0 .02em rgba(255,255,255,.9)) drop-shadow(0 0 .06em rgba(255,255,255,.45)) drop-shadow(0 .04em .12em rgba(0,0,0,.5))}";
 
