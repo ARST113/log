@@ -493,7 +493,7 @@
     if (document.getElementById('nova-skin-css')) return;
     var style = document.createElement('style');
     style.id = 'nova-skin-css';
-    style.textContent = SKIN_CSS + EXTRA_CSS + CARD_CSS + FOCUS_CSS + FULL_CSS + FADE_CSS + MARK_CSS + BADGE_CSS + LOGO_CSS + LOGO_HOLD;
+    style.textContent = SKIN_CSS + EXTRA_CSS + CARD_CSS + FOCUS_CSS + FULL_CSS + FADE_CSS + MARK_CSS + BADGE_CSS + LOGO_CSS + LOGO_HOLD + RESULT_ANIMATION_CSS;
     (document.body || document.head).appendChild(style);
   }
 
@@ -893,6 +893,12 @@
   var leave_guard = null;
 
   function forget() {
+    if (ui.resultAnimationTimer) {
+      clearTimeout(ui.resultAnimationTimer);
+      ui.resultAnimationTimer = null;
+    }
+    if (ui.root) ui.root.removeClass('nova-skin-result-entry');
+    ui.awaitingResult = false;
     if (pendingLive() && ui.root) {
       root = null;
       host = null;
@@ -3754,6 +3760,17 @@
     uiFrame();
     note_sig = '';
 
+    // One animation per actual loading -> result transition. DOM observers may
+    // call loadingPanel repeatedly, so do not restart it for every update.
+    if (!ui.awaitingResult) {
+      ui.awaitingResult = true;
+      if (ui.resultAnimationTimer) {
+        clearTimeout(ui.resultAnimationTimer);
+        ui.resultAnimationTimer = null;
+      }
+      if (ui.root) ui.root.removeClass('nova-skin-result-entry');
+    }
+
     // A source switch already has a usable hero; keep it unchanged.
     var heroExists = !!(ui.hero && ui.hero.parent().length);
     if (heroExists && !ui.hero_preloading) {
@@ -3808,6 +3825,19 @@
     clearInterval(loading_timer);
     loading_timer = null;
     ui.load = null;
+  }
+
+  function revealResult() {
+    if (!ui.awaitingResult || !ui.root || !ui.root.length) return;
+    ui.awaitingResult = false;
+    var display = ui.root;
+    display.addClass('nova-skin-result-entry');
+
+    if (ui.resultAnimationTimer) clearTimeout(ui.resultAnimationTimer);
+    ui.resultAnimationTimer = setTimeout(function () {
+      display.removeClass('nova-skin-result-entry');
+      if (ui.root && ui.root[0] === display[0]) ui.resultAnimationTimer = null;
+    }, 580);
   }
 
   function noteStamp(native) {
@@ -3936,6 +3966,7 @@
 
     ui.list.empty().append(note);
     refreshCollection();
+    revealResult();
 
     var first = actions.find('.selector').first();
     var wanted = seek(ui_focus);
@@ -4117,6 +4148,7 @@
     switchDone();
     busy = false;
     relayout();
+    revealResult();
     probeSchedule();
   }
 
@@ -4658,6 +4690,21 @@
       schedule();
     });
   }
+
+  // Safe CSS-only entrance animations, no DOM cloning/absolute overlays.
+  // Opacity starts above zero, preventing an empty flash when sources arrive.
+  var RESULT_ANIMATION_CSS = [
+    '.nova-skin-root.nova-skin-result-entry .nova__rows{-webkit-animation:nova-skin-rows-reveal .36s cubic-bezier(.22,1,.36,1) both;animation:nova-skin-rows-reveal .36s cubic-bezier(.22,1,.36,1) both}',
+    '.nova-skin-root.nova-skin-result-entry .nova__list{-webkit-animation:nova-skin-files-reveal .48s cubic-bezier(.22,1,.36,1) both;animation:nova-skin-files-reveal .48s cubic-bezier(.22,1,.36,1) both}',
+    '.nova-skin-root.nova-skin-result-entry .nova-hero__actions>.nova-btn--main{-webkit-animation:nova-skin-action-reveal .36s ease-out both;animation:nova-skin-action-reveal .36s ease-out both}',
+    '@-webkit-keyframes nova-skin-rows-reveal{from{opacity:.62;-webkit-transform:translate3d(0,6px,0)}to{opacity:1;-webkit-transform:translate3d(0,0,0)}}',
+    '@keyframes nova-skin-rows-reveal{from{opacity:.62;transform:translate3d(0,6px,0)}to{opacity:1;transform:translate3d(0,0,0)}}',
+    '@-webkit-keyframes nova-skin-files-reveal{from{opacity:.55;-webkit-transform:translate3d(0,9px,0)}to{opacity:1;-webkit-transform:translate3d(0,0,0)}}',
+    '@keyframes nova-skin-files-reveal{from{opacity:.55;transform:translate3d(0,9px,0)}to{opacity:1;transform:translate3d(0,0,0)}}',
+    '@-webkit-keyframes nova-skin-action-reveal{from{opacity:.65;-webkit-transform:translate3d(0,4px,0)}to{opacity:1;-webkit-transform:translate3d(0,0,0)}}',
+    '@keyframes nova-skin-action-reveal{from{opacity:.65;transform:translate3d(0,4px,0)}to{opacity:1;transform:translate3d(0,0,0)}}',
+    '@media(prefers-reduced-motion:reduce){.nova-skin-root.nova-skin-result-entry .nova__rows,.nova-skin-root.nova-skin-result-entry .nova__list,.nova-skin-root.nova-skin-result-entry .nova-hero__actions>.nova-btn--main{-webkit-animation:none!important;animation:none!important}}'
+  ].join('');
 
   var LOGO_CSS = ".nova-skin-root .nova-hero__title--logo>img.nova-logo--edge{-webkit-filter:drop-shadow(0 0 .02em rgba(255,255,255,.9)) drop-shadow(0 0 .06em rgba(255,255,255,.45)) drop-shadow(0 .04em .12em rgba(0,0,0,.5));filter:drop-shadow(0 0 .02em rgba(255,255,255,.9)) drop-shadow(0 0 .06em rgba(255,255,255,.45)) drop-shadow(0 .04em .12em rgba(0,0,0,.5))}";
 
