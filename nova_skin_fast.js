@@ -1,4 +1,4 @@
-// Nova Skin Fast v1.1 — smooth transition from online-source loading to results (2026-10-17)
+// Nova Skin Fast — smooth transition from online-source loading to results
 // Keeps original skin and the original TMDB logo loader; only first render and cache writes optimized.
 // Source: https://github.com/amikdn/amikdn.github.io/blob/main/nova_skin.js
 (function () {
