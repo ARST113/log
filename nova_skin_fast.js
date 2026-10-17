@@ -4,7 +4,18 @@
 (function () {
   'use strict';
 
-  if (window.nova_skin) return;
+  // Own-instance guard: the shared upstream window.nova_skin must not block Fast.
+  // Installing the same script twice is safe, but two different Nova versions
+  // still need to be disabled separately in Lampa's plugin manager.
+  if (window.__novaSkinFastBoot &&
+      window.__novaSkinFastBoot.status !== 'failed') return;
+  var fastBoot = window.__novaSkinFastBoot = {
+    status: 'waiting',
+    attempts: 0,
+    error: '',
+    sharedSkinWasPresent: !!window.nova_skin
+  };
+  // Compatibility signal for the original Nova Skin loaded AFTER this script.
   window.nova_skin = true;
 
   var ENABLED_KEY = 'nova_skin_enabled';
@@ -4736,12 +4747,54 @@
     'body.nova-skin-fade .nova-skin-root .nova-hero__shade{' + FADE_MASK + '}'
   ].join('');
 
-  if (window.appready) start();
-  else {
+  // Loading may happen before Lampa.Listener/SettingsApi exist.
+  // Wait for appready rather than leaving window.nova_skin=true without a menu.
+  function fastReady() {
+    return !!(window.appready && window.Lampa && window.jQuery &&
+      Lampa.Listener && typeof Lampa.Listener.follow === 'function' &&
+      Lampa.SettingsApi && Lampa.Activity && Lampa.Controller &&
+      Lampa.Storage && Lampa.Template);
+  }
+
+  function fastBegin() {
+    if (fastBoot.status !== 'waiting' || !fastReady()) return;
+    fastBoot.status = 'starting';
+    try {
+      start();
+      fastBoot.status = 'ready';
+      if (fastBoot.sharedSkinWasPresent) {
+        try { console.warn('[Nova Skin Fast] Another Nova Skin instance was initialized before Fast. Disable the duplicate if menus conflict.'); } catch (err) {}
+      }
+    } catch (e) {
+      fastBoot.status = 'failed';
+      fastBoot.error = String((e && e.stack) || e);
+      try { console.error('[Nova Skin Fast] Initialization error:', e); } catch (err) {}
+    }
+  }
+
+  function fastObserveReady() {
+    if (fastBoot.listenerAttached || !window.Lampa || !Lampa.Listener ||
+        typeof Lampa.Listener.follow !== 'function') return;
     try {
       Lampa.Listener.follow('app', function (e) {
-        if (e.type === 'ready') start();
+        if (e && e.type === 'ready') {
+          window.appready = true;
+          fastBegin();
+        }
       });
+      fastBoot.listenerAttached = true;
     } catch (e) {}
   }
+
+  fastObserveReady();
+  fastBegin();
+
+  (function retryReady() {
+    if (fastBoot.status !== 'waiting' || fastBoot.attempts++ >= 40) return;
+    setTimeout(function () {
+      fastObserveReady();
+      fastBegin();
+      retryReady();
+    }, 250);
+  })();
 })();
