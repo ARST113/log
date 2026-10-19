@@ -4,6 +4,9 @@
 (function () {
   'use strict';
 
+  // Standard Lampa double-load guard.
+  if (window.nova_skin_fast_ready) return;
+
   // Own-instance guard: the shared upstream window.nova_skin must not block Fast.
   // Installing the same script twice is safe, but two different Nova versions
   // still need to be disabled separately in Lampa's plugin manager.
@@ -3258,10 +3261,19 @@
   }
 
   function fitToolbar(toolbar) {
-    toolbar.removeClass(FIT_STEPS.join(' '));
+    toolbar.removeClass(FIT_STEPS.join(' ') + ' nova-toolbar--wrap');
 
     var node = toolbar[0];
     if (!node) return;
+
+    // On narrow screens let the toolbar wrap to a second line instead of
+    // shrinking/clipping chips (the clarification chip was pushed off-screen).
+    var narrow = false;
+    try { narrow = window.innerWidth <= 900; } catch (e) { narrow = false; }
+    if (narrow) {
+      toolbar.addClass('nova-toolbar--wrap');
+      return;
+    }
 
     var mobilePortrait = isMobilePortrait();
     var room = node.clientWidth || 0;
@@ -3309,6 +3321,12 @@
   }
 
   function buildRows() {
+    // Preserve controls injected by other plugins (e.g. the Lampac clarification
+    // chip) so a toolbar rebuild never makes them blink out for up to 500 ms.
+    var previousToolbar = ui.rows.children('.nova-toolbar').first();
+    var foreign = previousToolbar.length
+      ? previousToolbar.children('.nova-toolbar__clarification-label, [data-nova-focus="clarification"]').detach()
+      : $();
     var rows = ui.rows.empty();
     var toolbar = $('<div class="nova-toolbar"></div>');
     chip_actions = {};
@@ -3371,7 +3389,9 @@
     }
 
     rows.append(toolbar);
+    if (foreign && foreign.length) toolbar.append(foreign);
     fitToolbar(toolbar);
+    ui.rows_key = rowsRenderKey();
 
     if (ui_open === 'source') sourceRow();
     else if (ui_open === 'season' && groups.season) optionRow(groups.season);
@@ -3802,15 +3822,21 @@
   // This is deliberately local to the UI: Lampac requests are unchanged.
   function softLoading() {
     if (!ui.root || !ui.list) return false;
-    if (!ui.awaitingResult) {
-      ui.awaitingResult = true;
-      if (ui.resultAnimationTimer) clearTimeout(ui.resultAnimationTimer);
-      ui.resultAnimationTimer = null;
-      ui.root.removeClass('nova-skin-result-entry');
-      ui.list.children('.nova-skin-outgoing').remove();
-    }
     var visible = ui.list.children('.nova-card,.nova-note').length > 0;
-    ui.root.toggleClass('nova-skin-soft-loading', visible);
+    // Only arm the entrance animation for the first result or for a deliberate
+    // source switch. Progressive source arrivals must update the list in place,
+    // otherwise every arriving balancer replays the reveal animation (flicker).
+    var switchSource = typeof pendingLive === 'function' && pendingLive();
+    if (!visible || switchSource) {
+      if (!ui.awaitingResult) {
+        ui.awaitingResult = true;
+        if (ui.resultAnimationTimer) clearTimeout(ui.resultAnimationTimer);
+        ui.resultAnimationTimer = null;
+        ui.root.removeClass('nova-skin-result-entry');
+        ui.list.children('.nova-skin-outgoing').remove();
+      }
+    }
+    ui.root.toggleClass('nova-skin-soft-loading', visible && switchSource);
     return visible;
   }
 
@@ -4064,6 +4090,50 @@
     redraw();
   }
 
+  function itemRenderKey(item) {
+    return [
+      item.folder ? 'd' : 'f',
+      item.title || '',
+      item.num || '',
+      item.quality || '',
+      item.time || '',
+      (item.meta || []).join('\u001f'),
+      item.percent || 0,
+      item.viewed ? 1 : 0,
+      item.soon ? 1 : 0
+    ].join('\u001e');
+  }
+
+  function viewRenderKey() {
+    return [
+      movie ? movieIdentity(movie) : '',
+      nav ? 'nav' : 'files',
+      viewMode(),
+      sourceTitle(),
+      groups.season ? groups.season.subtitle : '',
+      groups.voice ? groups.voice.subtitle : '',
+      ui_page,
+      serial ? 1 : 0
+    ].join('\u001e');
+  }
+
+  function rowsRenderKey() {
+    var jump = (!nav && items.length > JUMP_FROM)
+      ? pageTitle(pageAt(pages(items.length), ui_page > 0 ? ui_page : 0))
+      : '';
+    return [
+      sourceTitle(),
+      groups.season ? groups.season.subtitle : '',
+      groups.voice ? groups.voice.subtitle : '',
+      extrasStamp(),
+      ui_all_sources ? 1 : 0,
+      ui_open,
+      jump,
+      serial ? 1 : 0,
+      nav ? 1 : 0
+    ].join('\u001e');
+  }
+
   function stamp() {
     return [
       items.length,
@@ -4197,22 +4267,65 @@
       end = page.end;
     } else ui_page = 0;
 
-    // Build every card offscreen; avoid repeated paints/reflows on the live list.
-    var nextList = document.createDocumentFragment();
+    var desired = [];
     list.forEach(function (item) {
       if (paged && (item.index < start || item.index > end)) {
         item.card = null;
         return;
       }
-      var card = buildCard(item, compact && !grid, grid);
-      if (card && card[0]) nextList.appendChild(card[0]);
+      desired.push(item);
     });
-    swapListContent(nextList, oldGrid);
-    listFree();
+
+    var vKey = viewRenderKey();
+    var keys = desired.map(itemRenderKey);
+    var oldKeys = ui.card_keys || [];
+    var oldEls = ui.card_els || [];
+    var appendOnly = !ui.awaitingResult && !paged && grid === oldGrid &&
+      ui.view_key === vKey && oldKeys.length > 0 && keys.length >= oldKeys.length &&
+      oldKeys.every(function (key, index) { return keys[index] === key; });
+
+    if (appendOnly) {
+      // Progressive source discovery: append new cards to the live list while
+      // keeping already rendered cards untouched (no full repaint, no flicker).
+      var keptEls = oldEls.slice(0, oldKeys.length);
+      for (var ai = 0; ai < oldKeys.length; ai++) {
+        if (keptEls[ai]) {
+          desired[ai].card = $(keptEls[ai]);
+          keptEls[ai].setAttribute('data-nova-focus', 'item:' + desired[ai].index);
+        }
+      }
+      for (var ni = oldKeys.length; ni < desired.length; ni++) {
+        var added = buildCard(desired[ni], compact && !grid, grid);
+        if (added && added[0]) {
+          ui.list[0].appendChild(added[0]);
+          keptEls.push(added[0]);
+        }
+      }
+      ui.card_keys = keys;
+      ui.card_els = keptEls;
+      listFree();
+    } else {
+      // Build every card offscreen; avoid repeated paints/reflows on the live list.
+      var nextList = document.createDocumentFragment();
+      var builtEls = [];
+      desired.forEach(function (item) {
+        var card = buildCard(item, compact && !grid, grid);
+        if (card && card[0]) {
+          nextList.appendChild(card[0]);
+          builtEls.push(card[0]);
+        }
+      });
+      swapListContent(nextList, oldGrid);
+      ui.card_keys = keys;
+      ui.card_els = builtEls;
+      listFree();
+    }
+    ui.view_key = vKey;
 
     var button = buildHero();
     ui.hero_preloading = false;
-    buildRows();
+    var rKey = rowsRenderKey();
+    if (!ui.rows.children().length || ui.rows_key !== rKey) buildRows();
 
     var locked = lockActive();
     var fallback = false;
@@ -4253,6 +4366,9 @@
   function redraw() {
     signature = '';
     note_sig = '';
+    ui.card_keys = [];
+    ui.card_els = [];
+    ui.view_key = '';
     if (ui.list) ui.list.empty();
     draw();
   }
@@ -4804,6 +4920,12 @@
 
   // Responsive labels: the search heading and the "Уточнить поиск" control.
   var MOBILE_TEXT_CSS = [
+    '.nova-skin-root .nova-toolbar--wrap{-webkit-flex-wrap:wrap!important;-ms-flex-wrap:wrap!important;flex-wrap:wrap!important;overflow:visible!important;row-gap:.15em}',
+    '.nova-skin-root .nova-toolbar--wrap>*{margin-bottom:.55em}',
+    '.nova-skin-root .nova-toolbar--wrap .nova-toolbar__label{-webkit-flex-shrink:0;-ms-flex-negative:0;flex-shrink:0}',
+    '.nova-skin-root .nova-toolbar--wrap .nova-chip{white-space:normal;height:auto;max-width:calc(100% - .2em);-webkit-flex-shrink:0;-ms-flex-negative:0;flex-shrink:0}',
+    '.nova-skin-root .nova-toolbar--wrap .nova-chip__label{white-space:normal!important;overflow-wrap:break-word;word-wrap:break-word;min-width:0}',
+    '@media screen and (max-width:900px){.nova-skin-root .nova-toolbar{overflow:visible}}',
     '@media screen and (max-width:768px){',
     '.nova-skin-root .nova-loading__title,.nova-skin-root .nova-note__title,.nova-skin-root .nova-hero__title{max-width:100%;min-width:0;white-space:normal!important;overflow-wrap:break-word;word-wrap:break-word}',
     '.nova-skin-root .nova-note__main,.nova-skin-root .nova-note__actions{min-width:0;max-width:100%;width:100%}',
@@ -4916,6 +5038,7 @@
     try {
       start();
       fastBoot.status = 'ready';
+      window.nova_skin_fast_ready = true;
       if (fastBoot.sharedSkinWasPresent) {
         try { console.warn('[Nova Skin Fast] Another Nova Skin instance was initialized before Fast. Disable the duplicate if menus conflict.'); } catch (err) {}
       }
@@ -4941,13 +5064,13 @@
   }
 
   fastObserveReady();
-  fastBegin();
+  if (!window.nova_skin_fast_ready) fastBegin();
 
   (function retryReady() {
     if (fastBoot.status !== 'waiting' || fastBoot.attempts++ >= 40) return;
     setTimeout(function () {
       fastObserveReady();
-      fastBegin();
+      if (!window.nova_skin_fast_ready) fastBegin();
       retryReady();
     }, 250);
   })();
