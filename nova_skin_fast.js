@@ -897,7 +897,10 @@
       clearTimeout(ui.resultAnimationTimer);
       ui.resultAnimationTimer = null;
     }
-    if (ui.root) ui.root.removeClass('nova-skin-result-entry');
+    if (ui.root) {
+      ui.root.removeClass('nova-skin-result-entry nova-skin-soft-loading');
+      ui.root.find('.nova__list > .nova-skin-outgoing').remove();
+    }
     ui.awaitingResult = false;
     if (pendingLive() && ui.root) {
       root = null;
@@ -1842,7 +1845,9 @@
     uiFrame();
     hideHost();
     loadingStop();
-    if (!ui.list.find('.nova-skeleton').length) listHold().empty().append(skeleton(4));
+    if (!softLoading() && !ui.list.find('.nova-skeleton').length) {
+      listHold().empty().append(skeleton(4));
+    }
     refreshCollection();
 
     var keep = seek(ui_lock) || seek(ui_focus);
@@ -2999,7 +3004,7 @@
     note_sig = '';
     buildRows();
     markSourceBusy(item);
-    if (ui.list) listHold().empty().append(skeleton(4));
+    if (!softLoading() && ui.list) listHold().empty().append(skeleton(4));
     refreshCollection();
     focusChip('source');
     switchStart('source');
@@ -3017,7 +3022,7 @@
     var host_filter = filter;
     ui_open = '';
     buildRows();
-    if (ui.list) listHold().empty().append(skeleton(4));
+    if (!softLoading() && ui.list) listHold().empty().append(skeleton(4));
     refreshCollection();
     focusChip(group.stype);
     switchStart(group.stype);
@@ -3756,29 +3761,56 @@
   var loading_started = 0;
   var loading_timer = null;
 
+  // Keep the previous visible result until the selected online source replies.
+  // This is deliberately local to the UI: Lampac requests are unchanged.
+  function softLoading() {
+    if (!ui.root || !ui.list) return false;
+    if (!ui.awaitingResult) {
+      ui.awaitingResult = true;
+      if (ui.resultAnimationTimer) clearTimeout(ui.resultAnimationTimer);
+      ui.resultAnimationTimer = null;
+      ui.root.removeClass('nova-skin-result-entry');
+      ui.list.children('.nova-skin-outgoing').remove();
+    }
+    var visible = ui.list.children('.nova-card,.nova-note').length > 0;
+    ui.root.toggleClass('nova-skin-soft-loading', visible);
+    return visible;
+  }
+
+  // Assemble the new results outside the live DOM, then swap them in one
+  // operation. The outgoing nodes are noninteractive and fade independently.
+  function swapListContent(content, oldGrid) {
+    if (!ui.list || !ui.list.length) return;
+    ui.list.children('.nova-skin-outgoing').remove();
+
+    var outgoing = null;
+    if (ui.awaitingResult && ui.list.children().length) {
+      outgoing = $('<div class="nova-skin-outgoing" aria-hidden="true"></div>');
+      if (oldGrid) outgoing.addClass('nova__list--grid');
+      var previous = ui.list.children().detach();
+      outgoing.append(previous);
+      outgoing.find('.selector,.focus').removeClass('selector focus');
+    }
+
+    ui.list.empty().append(content);
+    if (outgoing && outgoing.children().length) ui.list.append(outgoing);
+  }
+
   function loadingPanel() {
     uiFrame();
     note_sig = '';
 
-    // One animation per actual loading -> result transition. DOM observers may
-    // call loadingPanel repeatedly, so do not restart it for every update.
-    if (!ui.awaitingResult) {
-      ui.awaitingResult = true;
-      if (ui.resultAnimationTimer) {
-        clearTimeout(ui.resultAnimationTimer);
-        ui.resultAnimationTimer = null;
-      }
-      if (ui.root) ui.root.removeClass('nova-skin-result-entry');
-    }
-
-    // A source switch already has a usable hero; keep it unchanged.
+    // Repeated Life Events updates must never clear the previous cards.
+    var hasPrevious = softLoading();
     var heroExists = !!(ui.hero && ui.hero.parent().length);
     if (heroExists && !ui.hero_preloading) {
       loadingStop();
-      listHold().empty().append(skeleton(4));
-      refreshCollection();
+      if (!hasPrevious && !ui.list.children('.nova-skeleton').length) {
+        listHold().empty().append(skeleton(4));
+      }
+      if (!hasPrevious) refreshCollection();
       var keep = (lockActive() && seek(ui_lock)) || seek(ui_focus);
-      if (keep) focusNode(keep, true);
+      if (keep && !hasPrevious) focusNode(keep, true);
       return;
     }
 
@@ -3828,7 +3860,12 @@
   }
 
   function revealResult() {
-    if (!ui.awaitingResult || !ui.root || !ui.root.length) return;
+    if (!ui.root || !ui.root.length) return;
+    ui.root.removeClass('nova-skin-soft-loading');
+    if (!ui.awaitingResult) {
+      ui.list.children('.nova-skin-outgoing').remove();
+      return;
+    }
     ui.awaitingResult = false;
     var display = ui.root;
     display.addClass('nova-skin-result-entry');
@@ -3836,8 +3873,9 @@
     if (ui.resultAnimationTimer) clearTimeout(ui.resultAnimationTimer);
     ui.resultAnimationTimer = setTimeout(function () {
       display.removeClass('nova-skin-result-entry');
+      display.find('.nova__list > .nova-skin-outgoing').remove();
       if (ui.root && ui.root[0] === display[0]) ui.resultAnimationTimer = null;
-    }, 580);
+    }, 540);
   }
 
   function noteStamp(native) {
@@ -3964,7 +4002,7 @@
       actions.append(clarify);
     }
 
-    ui.list.empty().append(note);
+    swapListContent(note, ui.list.hasClass('nova__list--grid'));
     refreshCollection();
     revealResult();
 
@@ -4096,6 +4134,7 @@
 
     var compact = !serial && !nav && list.length > 1;
     var grid = !nav && list.length > 0 && viewMode() === 'grid';
+    var oldGrid = ui.list.hasClass('nova__list--grid');
     if (grid) ui.list.addClass('nova__list--grid');
     else ui.list.removeClass('nova__list--grid');
 
@@ -4115,14 +4154,17 @@
       end = page.end;
     } else ui_page = 0;
 
-    ui.list.empty();
+    // Build every card offscreen; avoid repeated paints/reflows on the live list.
+    var nextList = document.createDocumentFragment();
     list.forEach(function (item) {
       if (paged && (item.index < start || item.index > end)) {
         item.card = null;
         return;
       }
-      ui.list.append(buildCard(item, compact && !grid, grid));
+      var card = buildCard(item, compact && !grid, grid);
+      if (card && card[0]) nextList.appendChild(card[0]);
     });
+    swapListContent(nextList, oldGrid);
     listFree();
 
     var button = buildHero();
@@ -4694,16 +4736,27 @@
   // Safe CSS-only entrance animations, no DOM cloning/absolute overlays.
   // Opacity starts above zero, preventing an empty flash when sources arrive.
   var RESULT_ANIMATION_CSS = [
-    '.nova-skin-root.nova-skin-result-entry .nova__rows{-webkit-animation:nova-skin-rows-reveal .36s cubic-bezier(.22,1,.36,1) both;animation:nova-skin-rows-reveal .36s cubic-bezier(.22,1,.36,1) both}',
-    '.nova-skin-root.nova-skin-result-entry .nova__list{-webkit-animation:nova-skin-files-reveal .48s cubic-bezier(.22,1,.36,1) both;animation:nova-skin-files-reveal .48s cubic-bezier(.22,1,.36,1) both}',
-    '.nova-skin-root.nova-skin-result-entry .nova-hero__actions>.nova-btn--main{-webkit-animation:nova-skin-action-reveal .36s ease-out both;animation:nova-skin-action-reveal .36s ease-out both}',
-    '@-webkit-keyframes nova-skin-rows-reveal{from{opacity:.62;-webkit-transform:translate3d(0,6px,0)}to{opacity:1;-webkit-transform:translate3d(0,0,0)}}',
-    '@keyframes nova-skin-rows-reveal{from{opacity:.62;transform:translate3d(0,6px,0)}to{opacity:1;transform:translate3d(0,0,0)}}',
-    '@-webkit-keyframes nova-skin-files-reveal{from{opacity:.55;-webkit-transform:translate3d(0,9px,0)}to{opacity:1;-webkit-transform:translate3d(0,0,0)}}',
-    '@keyframes nova-skin-files-reveal{from{opacity:.55;transform:translate3d(0,9px,0)}to{opacity:1;transform:translate3d(0,0,0)}}',
+    '.nova-skin-root .nova__list{position:relative}',
+    '.nova-skin-root.nova-skin-soft-loading .nova__list>.nova-card,.nova-skin-root.nova-skin-soft-loading .nova__list>.nova-note{opacity:.88;-webkit-transition:opacity .18s;transition:opacity .18s}',
+    '.nova-skin-root.nova-skin-result-entry .nova__rows{-webkit-animation:nova-skin-rows-reveal .35s cubic-bezier(.22,1,.36,1) both;animation:nova-skin-rows-reveal .35s cubic-bezier(.22,1,.36,1) both}',
+    '.nova-skin-root.nova-skin-result-entry .nova__list>.nova-card,.nova-skin-root.nova-skin-result-entry .nova__list>.nova-note{-webkit-animation:nova-skin-files-reveal .43s cubic-bezier(.22,1,.36,1) both;animation:nova-skin-files-reveal .43s cubic-bezier(.22,1,.36,1) both}',
+    '.nova-skin-root.nova-skin-result-entry .nova__list>.nova-card:nth-child(2){-webkit-animation-delay:.025s;animation-delay:.025s}',
+    '.nova-skin-root.nova-skin-result-entry .nova__list>.nova-card:nth-child(3){-webkit-animation-delay:.05s;animation-delay:.05s}',
+    '.nova-skin-root.nova-skin-result-entry .nova__list>.nova-card:nth-child(4){-webkit-animation-delay:.075s;animation-delay:.075s}',
+    '.nova-skin-root.nova-skin-result-entry .nova__list>.nova-card:nth-child(5){-webkit-animation-delay:.1s;animation-delay:.1s}',
+    '.nova-skin-root.nova-skin-result-entry .nova-hero__actions>.nova-btn--main{-webkit-animation:nova-skin-action-reveal .35s ease-out both;animation:nova-skin-action-reveal .35s ease-out both}',
+    '.nova-skin-root .nova-skin-outgoing{position:absolute!important;top:0;left:0;right:0;width:100%;margin:0;z-index:2;pointer-events:none;overflow:hidden}',
+    '.nova-skin-root.nova-skin-result-entry .nova-skin-outgoing{-webkit-animation:nova-skin-list-out .36s ease-in both;animation:nova-skin-list-out .36s ease-in both}',
+    '.nova-skin-root .nova-skin-outgoing .nova-skeleton__row{-webkit-animation:none!important;animation:none!important}',
+    '@-webkit-keyframes nova-skin-rows-reveal{from{opacity:.65;-webkit-transform:translate3d(0,5px,0)}to{opacity:1;-webkit-transform:translate3d(0,0,0)}}',
+    '@keyframes nova-skin-rows-reveal{from{opacity:.65;transform:translate3d(0,5px,0)}to{opacity:1;transform:translate3d(0,0,0)}}',
+    '@-webkit-keyframes nova-skin-files-reveal{from{opacity:.25;-webkit-transform:translate3d(0,8px,0)}to{opacity:1;-webkit-transform:translate3d(0,0,0)}}',
+    '@keyframes nova-skin-files-reveal{from{opacity:.25;transform:translate3d(0,8px,0)}to{opacity:1;transform:translate3d(0,0,0)}}',
     '@-webkit-keyframes nova-skin-action-reveal{from{opacity:.65;-webkit-transform:translate3d(0,4px,0)}to{opacity:1;-webkit-transform:translate3d(0,0,0)}}',
     '@keyframes nova-skin-action-reveal{from{opacity:.65;transform:translate3d(0,4px,0)}to{opacity:1;transform:translate3d(0,0,0)}}',
-    '@media(prefers-reduced-motion:reduce){.nova-skin-root.nova-skin-result-entry .nova__rows,.nova-skin-root.nova-skin-result-entry .nova__list,.nova-skin-root.nova-skin-result-entry .nova-hero__actions>.nova-btn--main{-webkit-animation:none!important;animation:none!important}}'
+    '@-webkit-keyframes nova-skin-list-out{from{opacity:1;-webkit-transform:translate3d(0,0,0)}to{opacity:0;-webkit-transform:translate3d(0,-4px,0)}}',
+    '@keyframes nova-skin-list-out{from{opacity:1;transform:translate3d(0,0,0)}to{opacity:0;transform:translate3d(0,-4px,0)}}',
+    '@media(prefers-reduced-motion:reduce){.nova-skin-root.nova-skin-result-entry .nova__rows,.nova-skin-root.nova-skin-result-entry .nova__list>.nova-card,.nova-skin-root.nova-skin-result-entry .nova__list>.nova-note,.nova-skin-root.nova-skin-result-entry .nova-hero__actions>.nova-btn--main{-webkit-animation:none!important;animation:none!important}.nova-skin-root.nova-skin-result-entry .nova-skin-outgoing{display:none!important}}'
   ].join('');
 
   var LOGO_CSS = ".nova-skin-root .nova-hero__title--logo>img.nova-logo--edge{-webkit-filter:drop-shadow(0 0 .02em rgba(255,255,255,.9)) drop-shadow(0 0 .06em rgba(255,255,255,.45)) drop-shadow(0 .04em .12em rgba(0,0,0,.5));filter:drop-shadow(0 0 .02em rgba(255,255,255,.9)) drop-shadow(0 0 .06em rgba(255,255,255,.45)) drop-shadow(0 .04em .12em rgba(0,0,0,.5))}";
