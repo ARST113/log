@@ -5069,6 +5069,7 @@
       start();
       fastBoot.status = 'ready';
       window.nova_skin_fast_ready = true;
+      window.__novaSkinFastBuild = '2026.10.19-3f04bbd-srv1';
       if (fastBoot.sharedSkinWasPresent) {
         try { console.warn('[Nova Skin Fast] Another Nova Skin instance was initialized before Fast. Disable the duplicate if menus conflict.'); } catch (err) {}
       }
