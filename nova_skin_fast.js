@@ -1821,6 +1821,12 @@
     var real = comp.changeBalanser;
 
     comp.changeBalanser = function () {
+      // Новый Lampac online.js переключает балансер сам, без Activity.replace.
+      // Тогда наш reloadInPlace не нужен: он лишь дублировал запросы и тормозил.
+      if (comp.nova_balancer_inplace) {
+        inplaceStop();
+        return real.apply(comp, arguments);
+      }
       if (!inplace || !reloadable(comp)) return real.apply(comp, arguments);
 
       inplaceStop();
@@ -5072,7 +5078,7 @@
       start();
       fastBoot.status = 'ready';
       window.nova_skin_fast_ready = true;
-      window.__novaSkinFastBuild = '2026.10.19-3f04bbd-srv1';
+      window.__novaSkinFastBuild = '2026.10.19-fast2';
       if (fastBoot.sharedSkinWasPresent) {
         try { console.warn('[Nova Skin Fast] Another Nova Skin instance was initialized before Fast. Disable the duplicate if menus conflict.'); } catch (err) {}
       }
