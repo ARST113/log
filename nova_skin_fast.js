@@ -3823,20 +3823,16 @@
   function softLoading() {
     if (!ui.root || !ui.list) return false;
     var visible = ui.list.children('.nova-card,.nova-note').length > 0;
-    // Only arm the entrance animation for the first result or for a deliberate
-    // source switch. Progressive source arrivals must update the list in place,
-    // otherwise every arriving balancer replays the reveal animation (flicker).
-    var switchSource = typeof pendingLive === 'function' && pendingLive();
-    if (!visible || switchSource) {
-      if (!ui.awaitingResult) {
-        ui.awaitingResult = true;
-        if (ui.resultAnimationTimer) clearTimeout(ui.resultAnimationTimer);
-        ui.resultAnimationTimer = null;
-        ui.root.removeClass('nova-skin-result-entry');
-        ui.list.children('.nova-skin-outgoing').remove();
-      }
+    // Entrance animation only for the very first result. Source/voice switches
+    // must be instant: keep the old list until the new one is ready, then swap
+    // it in without any reveal animation or dimming.
+    if (!visible && !ui.awaitingResult) {
+      ui.awaitingResult = true;
+      if (ui.resultAnimationTimer) clearTimeout(ui.resultAnimationTimer);
+      ui.resultAnimationTimer = null;
+      ui.root.removeClass('nova-skin-result-entry');
+      ui.list.children('.nova-skin-outgoing').remove();
     }
-    ui.root.toggleClass('nova-skin-soft-loading', visible && switchSource);
     return visible;
   }
 
@@ -4166,6 +4162,7 @@
     host = found.body[0];
     movie = found.movie;
     ui.movie_key = nextMovie;
+    if (host !== hostObserved) watchHost();
     patchHost(componentNow());
     filter = activeFilter(root) || filter;
     groups = readGroups(filter);
@@ -4376,6 +4373,37 @@
   var timer = null;
   var observer = null;
   var observed = null;
+  var hostObserver = null;
+  var hostObserved = null;
+
+  // Native Lampac clears the scroll body (scroll.clear()) right before it draws
+  // the source list. That would detach our root for a frame or more (black
+  // screen). Put the root back synchronously in the mutation microtask.
+  function watchHost() {
+    if (hostObserver) {
+      try { hostObserver.disconnect(); } catch (e) {}
+      hostObserver = null;
+      hostObserved = null;
+    }
+    if (!host || !window.MutationObserver) return;
+    hostObserved = host;
+    hostObserver = new MutationObserver(function () {
+      if (!ui.root || !ui.root.length) return;
+      if (document.body.contains(ui.root[0])) return;
+      if (!document.body.contains(host)) return;
+      try { $(host).prepend(ui.root); } catch (e) {}
+      scheduleNow();
+    });
+    try { hostObserver.observe(host, { childList: true }); } catch (e) {}
+  }
+
+  function unwatchHost() {
+    if (hostObserver) {
+      try { hostObserver.disconnect(); } catch (e) {}
+    }
+    hostObserver = null;
+    hostObserved = null;
+  }
 
   function activeNode() {
     try {
@@ -4399,7 +4427,8 @@
 
   function scheduleNow() {
     if (busy) return;
-    if (scoped()) return schedule();
+    var attached = !!(root && root[0] && document.body.contains(root[0]));
+    if (scoped() && attached) return schedule();
     clearTimeout(timer);
     draw();
     if (!scoped()) schedule();
@@ -4428,6 +4457,7 @@
     if (observer) observer.disconnect();
     observer = null;
     observed = null;
+    unwatchHost();
     afterPlayerStop();
     hopStop();
     probeStop();
