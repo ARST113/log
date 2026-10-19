@@ -493,7 +493,7 @@
     if (document.getElementById('nova-skin-css')) return;
     var style = document.createElement('style');
     style.id = 'nova-skin-css';
-    style.textContent = SKIN_CSS + EXTRA_CSS + CARD_CSS + FOCUS_CSS + FULL_CSS + FADE_CSS + MARK_CSS + BADGE_CSS + LOGO_CSS + LOGO_HOLD + RESULT_ANIMATION_CSS;
+    style.textContent = SKIN_CSS + EXTRA_CSS + CARD_CSS + FOCUS_CSS + FULL_CSS + FADE_CSS + MARK_CSS + BADGE_CSS + LOGO_CSS + LOGO_HOLD + RESULT_ANIMATION_CSS + MOBILE_TEXT_CSS;
     (document.body || document.head).appendChild(style);
   }
 
@@ -958,6 +958,31 @@
     var sort = inst.nova_sets.sort || [];
     if (sort.length) out.sort = sort;
     return out;
+  }
+
+  // Keep the movie identity across Activity replacement and asynchronous callbacks.
+  function movieIdentity(card) {
+    if (!card) return '';
+    var type = (card.name || card.number_of_seasons) ? 'tv' : 'movie';
+    var id = card.id == null ? '' : String(card.id);
+    return type + ':' + (id || ('title:' +
+      String(card.title || card.name || '') + ':' +
+      String(card.release_date || card.first_air_date || '')));
+  }
+
+  // When opening another film, discard the old UI even if a source switch
+  // kept it alive while its network request was pending.
+  function resetForNextMovie() {
+    switchDone();
+    loadingStop();
+    try { if (ui.root) ui.root.remove(); } catch (e) {}
+    try {
+      if (root) {
+        root.removeClass('nova-skin-scope nova-skin-chips');
+        root.find('.nova-hidden').removeClass('nova-hidden');
+      }
+    } catch (e) {}
+    forget();
   }
 
   function scope() {
@@ -2762,9 +2787,11 @@
     var ready = logoPeek(movie);
     if (ready) return logoDraw(slot, ready, name);
 
-    var want = movie.id;
+    var want = movieIdentity(movie);
+    var heroNode = ui.hero && ui.hero[0];
     logoFetch(movie, function (path) {
-      if (!ui.hero || !movie || movie.id !== want) return;
+      if (!ui.hero || ui.hero[0] !== heroNode || !movie ||
+          movieIdentity(movie) !== want) return;
       logoDraw(logoSlot(), path, name);
     });
   }
@@ -2809,6 +2836,15 @@
     var kind = target ? 'full' : 'static';
     var withArt = artEnabled();
 
+    // The hero title, artwork and logo belong to a single movie/series.
+    if (ui.hero && ui.hero_movie_key !== movieIdentity(movie)) {
+      button.detach();
+      nextButton().detach();
+      ui.hero_box.empty();
+      ui.hero = null;
+      ui.hero_kind = '';
+    }
+
     if (ui.hero && ui.hero_kind !== kind) {
       // Same DOM structure: keep the preloaded image and pending logo request.
       if (ui.hero_preloading && ui.hero_kind === 'static' && kind === 'full') {
@@ -2823,6 +2859,7 @@
 
     if (!ui.hero) {
       ui.hero_kind = kind;
+      ui.hero_movie_key = movieIdentity(movie);
       ui.hero = $('<div class="nova-hero">' +
         (withArt ? '<div class="nova-hero__bg"><img alt=""></div><div class="nova-hero__shade"></div>' : '') +
         '<div class="nova-hero__body">' +
@@ -4050,9 +4087,15 @@
     var found = scope();
     if (!found) return;
 
+    var nextMovie = movieIdentity(found.movie);
+    if (ui.movie_key && ui.movie_key !== nextMovie) {
+      resetForNextMovie();
+    }
+
     root = found.root;
     host = found.body[0];
     movie = found.movie;
+    ui.movie_key = nextMovie;
     patchHost(componentNow());
     filter = activeFilter(root) || filter;
     groups = readGroups(filter);
@@ -4757,6 +4800,17 @@
     '@-webkit-keyframes nova-skin-list-out{from{opacity:1;-webkit-transform:translate3d(0,0,0)}to{opacity:0;-webkit-transform:translate3d(0,-4px,0)}}',
     '@keyframes nova-skin-list-out{from{opacity:1;transform:translate3d(0,0,0)}to{opacity:0;transform:translate3d(0,-4px,0)}}',
     '@media(prefers-reduced-motion:reduce){.nova-skin-root.nova-skin-result-entry .nova__rows,.nova-skin-root.nova-skin-result-entry .nova__list>.nova-card,.nova-skin-root.nova-skin-result-entry .nova__list>.nova-note,.nova-skin-root.nova-skin-result-entry .nova-hero__actions>.nova-btn--main{-webkit-animation:none!important;animation:none!important}.nova-skin-root.nova-skin-result-entry .nova-skin-outgoing{display:none!important}}'
+  ].join('');
+
+  // Responsive labels: the search heading and the "Уточнить поиск" control.
+  var MOBILE_TEXT_CSS = [
+    '@media screen and (max-width:768px){',
+    '.nova-skin-root .nova-loading__title,.nova-skin-root .nova-note__title,.nova-skin-root .nova-hero__title{max-width:100%;min-width:0;white-space:normal!important;overflow-wrap:break-word;word-wrap:break-word}',
+    '.nova-skin-root .nova-note__main,.nova-skin-root .nova-note__actions{min-width:0;max-width:100%;width:100%}',
+    '.nova-skin-root .nova-note__actions>.nova-btn{box-sizing:border-box;min-width:0;max-width:100%;white-space:normal!important;-webkit-flex-wrap:wrap;-ms-flex-wrap:wrap;flex-wrap:wrap}',
+    '.nova-skin-root .nova-note__actions>.nova-btn>span{min-width:0;max-width:100%;white-space:normal!important;overflow-wrap:break-word;word-wrap:break-word}',
+    '.nova-skin-root .nova-hero__hint{min-width:0;white-space:normal;overflow-wrap:break-word}',
+    '}'
   ].join('');
 
   var LOGO_CSS = ".nova-skin-root .nova-hero__title--logo>img.nova-logo--edge{-webkit-filter:drop-shadow(0 0 .02em rgba(255,255,255,.9)) drop-shadow(0 0 .06em rgba(255,255,255,.45)) drop-shadow(0 .04em .12em rgba(0,0,0,.5));filter:drop-shadow(0 0 .02em rgba(255,255,255,.9)) drop-shadow(0 0 .06em rgba(255,255,255,.45)) drop-shadow(0 .04em .12em rgba(0,0,0,.5))}";
