@@ -4955,6 +4955,9 @@
     '.nova-skin-root .nova-toolbar--wrap .nova-toolbar__label{-webkit-flex-shrink:0;-ms-flex-negative:0;flex-shrink:0}',
     '.nova-skin-root .nova-toolbar--wrap .nova-chip{white-space:normal;height:auto;max-width:calc(100% - .2em);-webkit-flex-shrink:0;-ms-flex-negative:0;flex-shrink:0}',
     '.nova-skin-root .nova-toolbar--wrap .nova-chip__label{white-space:normal!important;overflow-wrap:break-word;word-wrap:break-word;min-width:0}',
+    // Very long clarification titles are truncated with ellipsis instead of stretching the toolbar.
+    '.nova-skin-root .nova-toolbar .nova-chip--clarification{max-width:62vw}',
+    '.nova-skin-root .nova-toolbar .nova-chip--clarification .nova-chip__label{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap!important;min-width:0}',
     '@media screen and (max-width:900px){.nova-skin-root .nova-toolbar{overflow:visible}}',
     '@media screen and (max-width:768px){',
     '.nova-skin-root .nova-loading__title,.nova-skin-root .nova-note__title,.nova-skin-root .nova-hero__title{max-width:100%;min-width:0;white-space:normal!important;overflow-wrap:break-word;word-wrap:break-word}',
