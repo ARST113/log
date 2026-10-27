@@ -91,7 +91,7 @@
     // The embedded TorrServer JS client is independent from the torrent video player.
     // A player change must never disable it. Force the requested default for every profile.
     function ensureInternalTorrentClient() {
-        if (getStorage(INTERNAL_KEY, null) !== true) {
+        if (Lampa.Storage.get(INTERNAL_KEY, null) !== true) {
             setStorage(INTERNAL_KEY, true);
         }
         return true;
