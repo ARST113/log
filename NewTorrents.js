@@ -40,7 +40,7 @@
         );
     })();
 
-    var PLUGIN_VERSION = '2.1.0';
+    var PLUGIN_VERSION = '2.1.1';
     var PLAYER_KEY = 'player_torrent';
     var INTERNAL_KEY = 'internal_torrclient';
     var MIGRATION_KEY = 'new_torrents_v2_migrated';
@@ -88,12 +88,13 @@
         return mode === 'inner' || mode === 'lampa';
     }
 
-    function syncInternalTorrentClient() {
-        var inner = isInnerMode();
-        var current = getStorage(INTERNAL_KEY, null);
-
-        if (current !== inner) setStorage(INTERNAL_KEY, inner);
-        return inner;
+    // The embedded TorrServer JS client is independent from the torrent video player.
+    // A player change must never disable it. Force the requested default for every profile.
+    function ensureInternalTorrentClient() {
+        if (getStorage(INTERNAL_KEY, null) !== true) {
+            setStorage(INTERNAL_KEY, true);
+        }
+        return true;
     }
 
     function migrateLegacyDefault() {
@@ -129,7 +130,7 @@
             },
             onChange: function (value) {
                 setStorage(PLAYER_KEY, value);
-                syncInternalTorrentClient();
+                ensureInternalTorrentClient();
                 log('Torrent player mode:', value);
             }
         });
@@ -143,8 +144,9 @@
         if (!Lampa.Storage || !Lampa.Storage.listener || !Lampa.Storage.listener.follow) return;
 
         Lampa.Storage.listener.follow('change', function (event) {
-            if (!event || event.name !== PLAYER_KEY) return;
-            syncInternalTorrentClient();
+            if (!event || (event.name !== PLAYER_KEY && event.name !== INTERNAL_KEY)) return;
+            // Also correct stale/remote/profile writes that try to turn the client off.
+            ensureInternalTorrentClient();
         });
 
         storageBound = true;
@@ -182,7 +184,7 @@
     }
 
     function forceInnerPlayer() {
-        syncInternalTorrentClient();
+        ensureInternalTorrentClient();
 
         try {
             if (Lampa.Player && typeof Lampa.Player.runas === 'function') {
@@ -226,7 +228,7 @@
         started = true;
 
         migrateLegacyDefault();
-        syncInternalTorrentClient();
+        ensureInternalTorrentClient();
         bindStorage();
         addSettings();
 
