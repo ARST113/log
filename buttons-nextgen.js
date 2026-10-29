@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.0-nextgen
+ * Версия: 1.2.1-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -841,6 +841,8 @@
         var targetContainer = currentContainer.find('.full-start-new__buttons');
         if (!targetContainer.length) return;
 
+        // Lampa binds the native Watch menu to .button--play.
+        var bmNativePlay = targetContainer.children('.button--play').first().detach();
         targetContainer.find('.full-start__button').not('.button--edit-order').detach();
 
         var itemOrder = getItemOrder();
@@ -959,6 +961,7 @@
             });
         }
 
+        if (bmNativePlay.length) targetContainer.prepend(bmNativePlay);
         // Re-applying edited layout must not trigger another entrance animation.
         visibleButtons.forEach(function(btn){btn.css({opacity:'',animation:'','animation-delay':''})});
 
@@ -1546,7 +1549,7 @@
 
                 setTimeout(function () {
                     if (currentContainer) {
-                        currentContainer.find('.button--play, .button--edit-order, .button--folder').remove();
+                        currentContainer.find('.button--edit-order, .button--folder').remove();
                         currentContainer.data('buttons-processed', false);
 
                         var targetContainer = currentContainer.find('.full-start-new__buttons');
@@ -1840,7 +1843,7 @@
 
             setTimeout(function () {
                 if (currentContainer) {
-                    currentContainer.find('.button--play, .button--edit-order, .button--folder').remove();
+                    currentContainer.find('.button--edit-order, .button--folder').remove();
                     currentContainer.data('buttons-processed', false);
 
                     var targetContainer = currentContainer.find('.full-start-new__buttons');
@@ -1894,7 +1897,7 @@
 
         if(isFreshRender||!currentContainer||currentContainer[0]!==container[0]){allButtonsCache=[];allButtonsOriginal=[];}
         currentContainer = container;
-        container.find('.button--play, .button--edit-order, .button--folder').remove();
+        container.find('.button--edit-order, .button--folder').remove();
 
         var categories = groupBtnsByType(container);
         bmMigrateIds();
@@ -1933,6 +1936,8 @@
         applyBtnVisibility(filteredButtons);
         applyButtonDisplayModes(filteredButtons);
 
+        // Preserve native Lampa Watch button; Start.onGroupButtons needs its DOM node.
+        var bmNativePlay = targetContainer.children('.button--play').first().detach();
         targetContainer.children().detach();
 
         var visibleButtons = [];
@@ -2042,6 +2047,7 @@
             });
         }
 
+        if (bmNativePlay.length) targetContainer.prepend(bmNativePlay);
         var editButton = buildEditorBtn();
         targetContainer.append(editButton);
         visibleButtons.push(editButton);
