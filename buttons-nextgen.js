@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.7-nextgen
+ * Версия: 1.2.8-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -563,7 +563,17 @@
                 proxy.data('buttons-ng-id',getBtnIdentifier(original));
                 proxy.data('buttons-ng-source-ref',this);
                 proxy.on('hover:enter hover:long',function(e){
-                    var source=$(proxy.data('buttons-ng-source-ref'));
+                    var originalNode=proxy.data('buttons-ng-source-ref');
+                    var source=$(originalNode);
+                    // A provider enabled later may replace the entire native source
+                    // container. The old DOM node survives in jQuery but is detached.
+                    if(!originalNode||!container[0].contains(originalNode)){
+                        var stableId=proxy.data('buttons-ng-id');
+                        source=container.find('.buttons--container > .full-start__button').filter(function(){
+                            return getBtnIdentifier($(this))===stableId;
+                        }).first();
+                        if(source.length)proxy.data('buttons-ng-source-ref',source[0]);
+                    }
                     if(source.length&&source.closest('.buttons--container').length&&!source.hasClass('hide')){
                         source.trigger(e.type);
                     }
@@ -594,26 +604,76 @@
         }
         return groups;
     }
-    var bmSourceObserver=null,bmSourceTimer=null;
+    var bmSourceObserver=null,bmSourceTimer=null,bmObservedSource=null;
     function bmObserveSources(container){
         if(bmSourceObserver){bmSourceObserver.disconnect();bmSourceObserver=null}
         if(bmSourceTimer){clearTimeout(bmSourceTimer);bmSourceTimer=null}
-        var sources=container.find('.buttons--container').first();
-        if(!sources.length||typeof MutationObserver==='undefined')return;
+        bmObservedSource=container.find('.buttons--container').first()[0]||null;
+        var root=container[0],strip=container.find('.full-start-new__buttons').first()[0];
+        if(!root||!strip||typeof MutationObserver==='undefined')return;
+        // Observe the CARD, not just the current source container: when a
+        // provider is enabled after startup, it may replace that container.
+        // Such replacement disconnects an observer attached to the old node.
         bmSourceObserver=new MutationObserver(function(mutations){
-            if(!currentContainer||currentContainer[0]!==container[0])return;
-            var changed=mutations.some(function(m){
-                return m.type==='childList'||
-                    (m.type==='attributes'&&m.target.parentNode===sources[0]);
+            if(!currentContainer||currentContainer[0]!==root)return;
+            if(typeof document!=='undefined'&&!document.documentElement.contains(root))return;
+            var liveSource=container.find('.buttons--container').first()[0]||null;
+            var changed=liveSource!==bmObservedSource;
+            bmObservedSource=liveSource;
+            function isSourceContainerNode(node){
+                return node&&node.nodeType===1&&
+                    ((node.classList&&node.classList.contains('buttons--container'))||
+                     (node.querySelector&&node.querySelector('.buttons--container')));
+            }
+            if(!changed)mutations.forEach(function(m){
+                if(changed)return;
+                if(m.type==='attributes'){
+                    // Focus/hover style changes do not represent source updates.
+                    var el=m.target,parent=el.parentNode;
+                    if(parent&&parent.classList&&parent.classList.contains('buttons--container')&&
+                        el.classList&&el.classList.contains('full-start__button')){
+                        var wasHidden=/(^|\s)hide(\s|$)/.test(m.oldValue||'');
+                        if(wasHidden!==el.classList.contains('hide'))changed=true;
+                    }
+                    return;
+                }
+                if(m.type!=='childList')return;
+                var target=m.target;
+                if(target&&target.classList&&target.classList.contains('buttons--container')){
+                    changed=true;return;
+                }
+                if(target&&target.closest&&target.closest('.buttons--container')){
+                    changed=true;return;
+                }
+                var added=m.addedNodes||[],removed=m.removedNodes||[];
+                for(var i=0;i<added.length;i++){
+                    if(isSourceContainerNode(added[i])){changed=true;return}
+                    // A plugin may add its control directly to the visible strip.
+                    var node=added[i];
+                    if(target===strip&&node.nodeType===1&&node.classList&&
+                        node.classList.contains('full-start__button')&&
+                        !node.hasAttribute('data-buttons-ng-managed')&&
+                        !node.classList.contains('button--play')&&
+                        !node.classList.contains('button--edit-order')&&
+                        !node.classList.contains('button--folder')){
+                        changed=true;return;
+                    }
+                }
+                for(var j=0;j<removed.length;j++){
+                    if(isSourceContainerNode(removed[j])){changed=true;return}
+                }
             });
             if(!changed)return;
             if(bmSourceTimer)clearTimeout(bmSourceTimer);
             bmSourceTimer=setTimeout(function(){
                 bmSourceTimer=null;
-                if(currentContainer&&currentContainer[0]===container[0])reorderButtons(container,false);
+                if(currentContainer&&currentContainer[0]===root)reorderButtons(container,false);
             },180);
         });
-        bmSourceObserver.observe(sources[0],{childList:true,attributes:true,attributeFilter:['class'],subtree:true});
+        bmSourceObserver.observe(root,{
+            childList:true,subtree:true,attributes:true,
+            attributeFilter:['class'],attributeOldValue:true
+        });
     }
 
     function arrangeBtnsByOrder(buttons) {
@@ -883,6 +943,7 @@
         });
 
         currentButtons = filteredButtons;
+        filteredButtons.forEach(function(btn){btn.attr('data-buttons-ng-managed','1')});
         applyBtnVisibility(filteredButtons);
         applyButtonDisplayModes(filteredButtons);
 
@@ -1986,6 +2047,7 @@
         });
 
         currentButtons = filteredButtons;
+        filteredButtons.forEach(function(btn){btn.attr('data-buttons-ng-managed','1')});
         applyBtnVisibility(filteredButtons);
         applyButtonDisplayModes(filteredButtons);
 
