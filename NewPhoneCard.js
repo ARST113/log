@@ -563,11 +563,90 @@
         `);
     }
     
+    // ===== РАЗДЕЛЕНИЕ МОБИЛЬНОГО И ТВ/ПК ИНТЕРФЕЙСОВ =====
+    function isMobileCardScreen() {
+        // Lampa сама учитывает платформу и тип экрана: ПК, Tizen, webOS,
+        // Android TV/приставки всегда остаются в стандартном ТВ-интерфейсе.
+        if (Lampa.Platform && typeof Lampa.Platform.screen === 'function') {
+            return Lampa.Platform.screen('mobile');
+        }
+
+        // Резервный вариант для сборок без Platform.screen.
+        return window.innerWidth <= 768 && window.innerHeight > window.innerWidth;
+    }
+
+    // Поведение lampaplugins.github.io/store/logo.js для стандартной карточки.
+    // Не меняем full_start_new, стили, blur и положение элементов на ТВ/ПК.
+    function initClassicLogoLoader() {
+        // Если оригинальный logo.js уже подключён, не дублируем его обработчик.
+        if (window.logoplugin) return;
+        window.logoplugin = true;
+
+        let requestToken = 0;
+
+        Lampa.Listener.follow('full', function(e) {
+            if (!e || e.type !== 'complite') return;
+
+            // Любой следующий переход в карточку отменяет предыдущий запрос.
+            const token = ++requestToken;
+
+            if (Lampa.Storage.get('logo_glav') === '1') return;
+            if (!e.data || !e.data.movie || !e.data.movie.id) return;
+            if (!e.object || !e.object.activity || typeof e.object.activity.render !== 'function') return;
+
+            const movie = e.data.movie;
+            const type = movie.name ? 'tv' : 'movie';
+            const activity = e.object.activity;
+            const language = Lampa.Storage.get('language') || '';
+            const url = Lampa.TMDB.api(
+                type + '/' + movie.id + '/images?api_key=' + Lampa.TMDB.key() + '&language=' + language
+            );
+
+            function currentTitle() {
+                const render = activity.render();
+                const title = render && render.find('.full-start-new__title');
+                return title && title.length && document.documentElement.contains(title[0]) ? title : null;
+            }
+
+            $.get(url).done(function(response) {
+                if (token !== requestToken || !currentTitle()) return;
+                if (!response || !response.logos || !response.logos[0] || !response.logos[0].file_path) return;
+
+                const logoPath = response.logos[0].file_path;
+                const logoUrl = Lampa.TMDB.image('/t/p/w300' + logoPath.replace('.svg', '.png'));
+                const preload = new Image();
+
+                preload.onload = function() {
+                    if (token !== requestToken) return;
+
+                    const title = currentTitle();
+                    if (!title) return;
+
+                    // Точно такое размещение, как в оригинальном logo.js:
+                    // штатный блок заголовка, отступ сверху 5 px, высота до 125 px.
+                    $('<img>')
+                        .css({ 'margin-top': '5px', 'max-height': '125px' })
+                        .attr('src', logoUrl)
+                        .appendTo(title.empty());
+                };
+
+                // При ошибке загрузки оставляем обычное текстовое название.
+                preload.src = logoUrl;
+            });
+        });
+    }
+
     // ===== ИНИЦИАЛИЗАЦИЯ =====
     function init() {
         if (window.__combinedPluginInitialized) return;
         window.__combinedPluginInitialized = true;
-    
+
+        if (!isMobileCardScreen()) {
+            initClassicLogoLoader();
+            return;
+        }
+
+        // Мобильное оформление и его CSS никогда не включаются на ПК/ТВ.
         injectStyles();
         overrideTemplate();
         initBlurFix();
