@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.5-nextgen
+ * Версия: 1.2.6-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -2134,6 +2134,24 @@
         // so wrapping automatically moves subsequent buttons instead of covering them.
         // No hover positioning, absolute labels, or width animation (which would
         // repeatedly alter D-pad navigation geometry while moving focus).
+        // Mouse hover needs a stable selection despite flex-wrap reflow.
+        // Only genuine pointer movement switches the expanded control.
+        // Layout-triggered mouseenter/mouseleave won't cause focus oscillation.
+        var bmMouseX=null,bmMouseY=null;
+        if(typeof document!=='undefined')$(document).on('mousemove.buttonsNgPointer',function(e){
+            if(!window.innerWidth||window.innerWidth<1000)return;
+            if(bmMouseX===e.clientX&&bmMouseY===e.clientY)return;
+            bmMouseX=e.clientX;bmMouseY=e.clientY;
+            var target=$(e.target).closest('.full-start-new__buttons > .full-start__button.button-mode-1');
+            var expanded=$('.full-start-new__buttons .buttons-ng-hovered');
+            if(target.length&&expanded.length&&expanded[0]===target[0])return;
+            expanded.removeClass('buttons-ng-hovered');
+            $('.full-start-new__buttons.buttons-ng-mouse-active').removeClass('buttons-ng-mouse-active');
+            if(target.length&&!target.hasClass('hidden')){
+                target.addClass('buttons-ng-hovered');
+                target.parent().addClass('buttons-ng-mouse-active');
+            }
+        });
         var style = $('<style>' +
             '@keyframes button-fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }' +
             '.full-start-new__buttons .full-start__button { box-sizing:border-box; position:relative; flex-shrink:0; }' +
@@ -2187,8 +2205,9 @@
             '.full-start-new__buttons .full-start__button.button-mode-1 > span { display:none !important; }' +
             '@media screen and (min-width:1000px) {' +
             '.full-start-new__buttons .full-start__button.button-mode-1.focus, .full-start-new__buttons .full-start__button.button-mode-1:hover { flex-shrink:0; max-width:100%; }' +
-            '.full-start-new__buttons .full-start__button.button-mode-1.focus > span { display:inline-block !important; position:static !important; top:auto !important; bottom:auto !important; left:auto !important; right:auto !important; flex:0 1 auto; min-width:0; width:auto !important; max-width:100%; height:auto !important; padding:0 !important; margin:0 0 0 .4em !important; background:transparent !important; border:0 !important; color:inherit !important; border-radius:0 !important; white-space:normal !important; overflow-wrap:anywhere; overflow:visible !important; text-overflow:clip !important; opacity:1 !important; visibility:visible !important; transform:none !important; transition:opacity .16s ease; pointer-events:none; }' +
-            '.full-start-new__buttons .full-start__button.button-mode-1.focus .text-wrapper { display:inline-block !important; position:static !important; opacity:1 !important; visibility:visible !important; }' +
+            '.full-start-new__buttons .full-start__button.button-mode-1.focus > span, .full-start-new__buttons .full-start__button.button-mode-1.buttons-ng-hovered > span { display:inline-block !important; position:static !important; top:auto !important; bottom:auto !important; left:auto !important; right:auto !important; flex:0 1 auto; min-width:0; width:auto !important; max-width:100%; height:auto !important; padding:0 !important; margin:0 0 0 .4em !important; background:transparent !important; border:0 !important; color:inherit !important; border-radius:0 !important; white-space:normal !important; overflow-wrap:anywhere; overflow:visible !important; text-overflow:clip !important; opacity:1 !important; visibility:visible !important; transform:none !important; transition:opacity .16s ease; pointer-events:none; }' +
+            '.full-start-new__buttons .full-start__button.button-mode-1.focus .text-wrapper, .full-start-new__buttons .full-start__button.button-mode-1.buttons-ng-hovered .text-wrapper { display:inline-block !important; position:static !important; opacity:1 !important; visibility:visible !important; }' +
+            '.full-start-new__buttons.buttons-ng-mouse-active .full-start__button.button-mode-1.focus:not(.buttons-ng-hovered) > span { display:none !important; }' +
             '}' +
             '@media screen and (max-width:999px) {' +
             '.full-start-new__buttons .full-start__button.button-mode-1 > span, .full-start-new__buttons .full-start__button.button-mode-1 .text-wrapper { display:none !important; }' +
