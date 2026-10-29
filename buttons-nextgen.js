@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.1-nextgen
+ * Версия: 1.2.2-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -543,9 +543,34 @@
     }
 
 
+    // The native Watch menu takes source buttons from .buttons--container.
+    // Keep originals there; expose independent controls through forwarding proxies.
     function groupBtnsByType(container){
         var target=container.find('.full-start-new__buttons').first();
+        // Recreate proxies from live sources, never reuse stale cross-card references.
+        target.children('.buttons-ng-source-bridge').remove();
         var buttons=target.children('.full-start__button').not('.button--edit-order,.button--folder,.button--play');
+        var sources=container.find('.buttons--container').first();
+        if(sources.length){
+            sources.children('.full-start__button').not('.hide,.button--play').each(function(){
+                var original=$(this);
+                if(shouldSkipBtn(original))return;
+                // Lampac already exposes its Online button outside Watch's source menu.
+                if(original.hasClass('view--online')&&original.hasClass('lampac--button')&&
+                    target.children('.view--online.lampac--button').not('.buttons-ng-source-bridge').length)return;
+                var proxy=original.clone(false,false);
+                proxy.removeClass('focus button--priority').addClass('buttons-ng-source-bridge');
+                proxy.data('buttons-ng-id',getBtnIdentifier(original));
+                proxy.data('buttons-ng-source-ref',this);
+                proxy.on('hover:enter hover:long',function(e){
+                    var source=$(proxy.data('buttons-ng-source-ref'));
+                    if(source.length&&source.closest('.buttons--container').length&&!source.hasClass('hide')){
+                        source.trigger(e.type);
+                    }
+                });
+                buttons=buttons.add(proxy);
+            });
+        }
         var groups={online:[],torrent:[],trailer:[],shots:[],book:[],reaction:[],subscribe:[],other:[]},seen={};
         function add(el){
             var b=$(el);
@@ -563,9 +588,32 @@
         }
         buttons.each(function(){add(this)});
         if(currentContainer&&currentContainer[0]===container[0]){
-            allButtonsCache.forEach(function(b){if(b&&b[0]&&!seen[getBtnIdentifier(b)])add(b[0])});
+            allButtonsCache.forEach(function(b){
+                if(b&&b[0]&&!b.hasClass('buttons-ng-source-bridge')&&!seen[getBtnIdentifier(b)])add(b[0]);
+            });
         }
         return groups;
+    }
+    var bmSourceObserver=null,bmSourceTimer=null;
+    function bmObserveSources(container){
+        if(bmSourceObserver){bmSourceObserver.disconnect();bmSourceObserver=null}
+        if(bmSourceTimer){clearTimeout(bmSourceTimer);bmSourceTimer=null}
+        var sources=container.find('.buttons--container').first();
+        if(!sources.length||typeof MutationObserver==='undefined')return;
+        bmSourceObserver=new MutationObserver(function(mutations){
+            if(!currentContainer||currentContainer[0]!==container[0])return;
+            var changed=mutations.some(function(m){
+                return m.type==='childList'||
+                    (m.type==='attributes'&&m.target.parentNode===sources[0]);
+            });
+            if(!changed)return;
+            if(bmSourceTimer)clearTimeout(bmSourceTimer);
+            bmSourceTimer=setTimeout(function(){
+                bmSourceTimer=null;
+                if(currentContainer&&currentContainer[0]===container[0])reorderButtons(container,false);
+            },180);
+        });
+        bmSourceObserver.observe(sources[0],{childList:true,attributes:true,attributeFilter:['class'],subtree:true});
     }
 
     function arrangeBtnsByOrder(buttons) {
@@ -2150,6 +2198,7 @@
             bmActivate();
 
             var container = e.object.activity.render();
+            bmObserveSources(container);
             var targetContainer = container.find('.full-start-new__buttons');
             if (targetContainer.length) {
                 targetContainer.addClass('buttons-loading');
