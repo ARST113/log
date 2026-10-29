@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.6-nextgen
+ * Версия: 1.2.7-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -1009,7 +1009,12 @@
             });
         }
 
-        if (bmNativePlay.length) targetContainer.prepend(bmNativePlay);
+        if (bmNativePlay.length) {
+            // Keep the native Watch node for Lampa's groupButtons/source menus,
+            // but don't offer it as a separate, non-functional TV focus target.
+            bmNativePlay.removeClass('selector focus').addClass('buttons-ng-native-play');
+            targetContainer.prepend(bmNativePlay);
+        }
         // Re-applying edited layout must not trigger another entrance animation.
         visibleButtons.forEach(function(btn){btn.css({opacity:'',animation:'','animation-delay':''})});
 
@@ -2111,13 +2116,40 @@
     }
 
     function setupButtonNavigation(container) {
-        // Don't reset focus on every button animation or editor change.
-        if (Lampa.Controller && typeof Lampa.Controller.toggle === 'function' &&
-            (!Lampa.Controller.enabled || !Lampa.Controller.enabled() || Lampa.Controller.enabled().name !== 'full_start')) {
-            try {
-                Lampa.Controller.toggle('full_start');
-            } catch (e) { }
+        // Lampa builds Navigator's selector collection BEFORE this plugin's 400 ms
+        // rebuild. Simply toggling the already-active full_start does nothing:
+        // D-pad cannot reach Torrent/JacRed proxies without a new collection.
+        if (!container || !container.length || !Lampa.Controller ||
+            !Lampa.Controller.enabled || Lampa.Controller.enabled().name !== 'full_start') return;
+        var c = Lampa.Controller;
+        if (typeof c.collectionSet !== 'function' || typeof c.collectionFocus !== 'function') return;
+        var strip = container.find('.full-start-new__buttons').first();
+        if (!strip.length) return;
+        // Guard the native source menu and never allow 'Watch' to steal D-pad focus.
+        strip.children('.button--play').removeClass('selector focus').addClass('buttons-ng-native-play');
+        var active = (window.Navigator && window.Navigator._focus) || null;
+        var focused = strip.children('.full-start__button.focus').first();
+        var candidate = focused.length ? focused[0] : active;
+        if (candidate && !container[0].contains(candidate)) {
+            var previousId = $(candidate).data('buttons-ng-id');
+            candidate = null;
+            if (previousId) strip.children('.full-start__button').each(function(){
+                if (!candidate && $(this).data('buttons-ng-id') === previousId &&
+                    !$(this).hasClass('hidden') && !$(this).hasClass('buttons-ng-native-play')) candidate=this;
+            });
         }
+        if (!candidate || !container[0].contains(candidate) ||
+            $(candidate).hasClass('buttons-ng-native-play') ||
+            $(candidate).hasClass('hide') || $(candidate).hasClass('hidden'))
+            candidate = strip.children('.full-start__button.selector').not('.hide,.hidden').first()[0];
+        try {
+            c.collectionSet(container);
+            if (candidate) c.collectionFocus(candidate,container);
+            // The core Start component only binds hover:focus before dynamic buttons
+            // exist. Update its last pointer for return navigation with the remote.
+            var control=c.enabled().controller;
+            if (control && control.link && candidate) control.link.last=candidate;
+        } catch(e) { console.warn('Buttons NextGen: TV focus registration',e); }
     }
 
     function refreshController() {
@@ -2139,7 +2171,7 @@
         // Layout-triggered mouseenter/mouseleave won't cause focus oscillation.
         var bmMouseX=null,bmMouseY=null;
         if(typeof document!=='undefined')$(document).on('mousemove.buttonsNgPointer',function(e){
-            if(!window.innerWidth||window.innerWidth<1000)return;
+            if(!window.innerWidth||window.innerWidth<768)return;
             if(bmMouseX===e.clientX&&bmMouseY===e.clientY)return;
             bmMouseX=e.clientX;bmMouseY=e.clientY;
             var target=$(e.target).closest('.full-start-new__buttons > .full-start__button.button-mode-1');
@@ -2155,6 +2187,7 @@
         var style = $('<style>' +
             '@keyframes button-fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }' +
             '.full-start-new__buttons .full-start__button { box-sizing:border-box; position:relative; flex-shrink:0; }' +
+            '.full-start-new__buttons > .button--play.buttons-ng-native-play { display:none !important; }' +
             '.full-start__button.hidden { display: none !important; }' +
             '.button--folder { cursor: pointer; }' +
             '.full-start-new__buttons { ' +
@@ -2203,13 +2236,13 @@
             '/* Mode 1: normal flex reflow on TV/desktop; no overlaid label. */' +
             '.full-start-new__buttons .full-start__button.button-mode-1 { max-width:100%; min-width:0; box-sizing:border-box; }' +
             '.full-start-new__buttons .full-start__button.button-mode-1 > span { display:none !important; }' +
-            '@media screen and (min-width:1000px) {' +
+            '@media screen and (min-width:768px) {' +
             '.full-start-new__buttons .full-start__button.button-mode-1.focus, .full-start-new__buttons .full-start__button.button-mode-1:hover { flex-shrink:0; max-width:100%; }' +
             '.full-start-new__buttons .full-start__button.button-mode-1.focus > span, .full-start-new__buttons .full-start__button.button-mode-1.buttons-ng-hovered > span { display:inline-block !important; position:static !important; top:auto !important; bottom:auto !important; left:auto !important; right:auto !important; flex:0 1 auto; min-width:0; width:auto !important; max-width:100%; height:auto !important; padding:0 !important; margin:0 0 0 .4em !important; background:transparent !important; border:0 !important; color:inherit !important; border-radius:0 !important; white-space:normal !important; overflow-wrap:anywhere; overflow:visible !important; text-overflow:clip !important; opacity:1 !important; visibility:visible !important; transform:none !important; transition:opacity .16s ease; pointer-events:none; }' +
             '.full-start-new__buttons .full-start__button.button-mode-1.focus .text-wrapper, .full-start-new__buttons .full-start__button.button-mode-1.buttons-ng-hovered .text-wrapper { display:inline-block !important; position:static !important; opacity:1 !important; visibility:visible !important; }' +
-            '.full-start-new__buttons.buttons-ng-mouse-active .full-start__button.button-mode-1.focus:not(.buttons-ng-hovered) > span { display:none !important; }' +
+            '/* TV D-pad focus wins even if the browser previously reported a mouse movement. */' +
             '}' +
-            '@media screen and (max-width:999px) {' +
+            '@media screen and (max-width:767px) {' +
             '.full-start-new__buttons .full-start__button.button-mode-1 > span, .full-start-new__buttons .full-start__button.button-mode-1 .text-wrapper { display:none !important; }' +
             '}' +
             '' +
