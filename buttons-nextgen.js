@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.2-nextgen
+ * Версия: 1.2.3-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -281,7 +281,7 @@
 
     var DEFAULT_GROUPS = [
         { name: 'online', patterns: ['online', 'lampac', 'modss', 'showy'] },
-        { name: 'torrent', patterns: ['torrent'] },
+        { name: 'torrent', patterns: ['torrent', 'jacred'] },
         { name: 'trailer', patterns: ['trailer', 'rutube'] },
         { name: 'shots', patterns: ['shots'] },
         { name: 'book', patterns: ['book'] },
