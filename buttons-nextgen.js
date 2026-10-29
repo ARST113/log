@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.3-nextgen
+ * Версия: 1.2.5-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -2130,6 +2130,10 @@
         if(Lampa.Storage.listener&&Lampa.Storage.listener.follow)Lampa.Storage.listener.follow('change',function(e){if(e.name==='account'&&bmActivate()&&currentContainer)reorderButtons(currentContainer,false)});
         Lampa.Listener.follow('profile_select',function(){if(bmActivate()&&currentContainer)reorderButtons(currentContainer,false)});
         Lampa.Listener.follow('worker_storage',function(e){if(e&&e.name===bmCloudKey){bmCloudPull();setTimeout(bmOfferLocalCloud,150)}});
+        // Use real flex item width on TV/desktop. The label is INSIDE the button,
+        // so wrapping automatically moves subsequent buttons instead of covering them.
+        // No hover positioning, absolute labels, or width animation (which would
+        // repeatedly alter D-pad navigation geometry while moving focus).
         var style = $('<style>' +
             '@keyframes button-fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }' +
             '.full-start-new__buttons .full-start__button { box-sizing:border-box; position:relative; flex-shrink:0; }' +
@@ -2178,12 +2182,17 @@
             '.menu-edit-list__item.item-hidden .menu-edit-list__title { opacity: 0.6; }' +
             '.menu-edit-list__item.item-hidden .menu-edit-list__icon { opacity: 0.5; }' +
             '' +
-            '/* Режим 1: Стандартный (иконка, текст при наведении) */' +
-            '/* Tooltip is positioned outside the flex geometry: no hover feedback loop. */' +
-            '.full-start__button.button-mode-1 > span { position:absolute !important; top:calc(100% + .2em); left:0; width:max-content; max-width:70vw; box-sizing:border-box; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border-radius:.3em; padding:.2em .55em; background:rgba(20,20,24,.95); color:#fff; opacity:0 !important; visibility:hidden !important; pointer-events:none; z-index:40; transition:opacity .14s ease !important; }' +
-            '.full-start__button.button-mode-1:hover > span, .full-start__button.button-mode-1.focus > span { opacity:1 !important; visibility:visible !important; }' +
-            '.full-start__button.button-mode-1:nth-last-child(-n+3) > span { left:auto; right:0; }' +
-            '.full-start__button.button-mode-1 > svg { flex-shrink:0; }' +
+            '/* Mode 1: normal flex reflow on TV/desktop; no overlaid label. */' +
+            '.full-start-new__buttons .full-start__button.button-mode-1 { max-width:100%; min-width:0; box-sizing:border-box; }' +
+            '.full-start-new__buttons .full-start__button.button-mode-1 > span { display:none !important; }' +
+            '@media screen and (min-width:1000px) {' +
+            '.full-start-new__buttons .full-start__button.button-mode-1.focus, .full-start-new__buttons .full-start__button.button-mode-1:hover { flex-shrink:0; max-width:100%; }' +
+            '.full-start-new__buttons .full-start__button.button-mode-1.focus > span { display:inline-block !important; position:static !important; top:auto !important; bottom:auto !important; left:auto !important; right:auto !important; flex:0 1 auto; min-width:0; width:auto !important; max-width:100%; height:auto !important; padding:0 !important; margin:0 0 0 .4em !important; background:transparent !important; border:0 !important; color:inherit !important; border-radius:0 !important; white-space:normal !important; overflow-wrap:anywhere; overflow:visible !important; text-overflow:clip !important; opacity:1 !important; visibility:visible !important; transform:none !important; transition:opacity .16s ease; pointer-events:none; }' +
+            '.full-start-new__buttons .full-start__button.button-mode-1.focus .text-wrapper { display:inline-block !important; position:static !important; opacity:1 !important; visibility:visible !important; }' +
+            '}' +
+            '@media screen and (max-width:999px) {' +
+            '.full-start-new__buttons .full-start__button.button-mode-1 > span, .full-start-new__buttons .full-start__button.button-mode-1 .text-wrapper { display:none !important; }' +
+            '}' +
             '' +
             '/* Режим 2: Только иконка (текст всегда скрыт) */' +
             '.full-start__button.button-mode-2 > span { display: none !important; }' +
