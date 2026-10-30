@@ -3877,13 +3877,10 @@
     // Repeated Life Events updates must never clear the previous cards.
     var hasPrevious = softLoading();
     var heroExists = !!(ui.hero && ui.hero.parent().length);
-    if (heroExists && !ui.hero_preloading) {
-      if (!hasPrevious && !ui.list.children('.nova-skeleton').length) {
-        listHold().empty().append(skeleton(4));
-      }
-      if (!hasPrevious) refreshCollection();
+    if (heroExists && !ui.hero_preloading && hasPrevious) {
+      // Keep playable results during a source/voice switch.
       var keep = (lockActive() && seek(ui_lock)) || seek(ui_focus);
-      if (keep && !hasPrevious) focusNode(keep, true);
+      if (keep) focusNode(keep, true);
       return;
     }
 
@@ -3945,6 +3942,13 @@
     loading_timed_out = true;
     loadingStop();
     if (!root || !host || !ui.root || !ui.root.parent().length) return;
+
+    // Keep previously loaded playable cards when only the newly selected
+    // source is slow. Its completion can still replace the list later.
+    if (ui.list && ui.list.children('.nova-card').length) {
+      try { Lampa.Noty.show(text('nova_loading_timeout_text', 'nova_skin_loading_timeout_text')); } catch (e) {}
+      return;
+    }
 
     // Lampac's reset aborts the current Lampa.Reguest request. Other online
     // components are left untouched because their reset semantics may differ.
@@ -5118,7 +5122,7 @@
       start();
       fastBoot.status = 'ready';
       window.nova_skin_fast_ready = true;
-      window.__novaSkinFastBuild = '2026.10.30-timeout1';
+      window.__novaSkinFastBuild = '2026.10.30-timeout2';
       if (fastBoot.sharedSkinWasPresent) {
         try { console.warn('[Nova Skin Fast] Another Nova Skin instance was initialized before Fast. Disable the duplicate if menus conflict.'); } catch (err) {}
       }
