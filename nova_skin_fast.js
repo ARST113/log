@@ -33,6 +33,7 @@
   var LOGO_CACHE_KEY = 'nova_skin_logo_cache2';
   var LOGO_RETRY = 6 * 60 * 60 * 1000;
   var LEAVE_GRACE = 2500;
+  var SEARCH_TIMEOUT = 30000;
   var LOGO_WARM = {};
   var LOGO_BLIND = {};
 
@@ -172,6 +173,9 @@
     nova_skin_left: { ru: 'осталось', uk: 'залишилось', en: 'left' },
     nova_skin_loading_title: { ru: 'Ищем, где посмотреть', uk: 'Шукаємо, де подивитися', en: 'Looking for a source' },
     nova_skin_loading_start: { ru: 'Опрашиваем источники', uk: 'Опитуємо джерела', en: 'Checking sources' },
+    nova_skin_loading_remaining: { ru: 'осталось {sec} с', uk: 'залишилося {sec} с', en: '{sec}s left' },
+    nova_skin_loading_timeout_title: { ru: 'Время поиска истекло', uk: 'Час пошуку вичерпано', en: 'Search timed out' },
+    nova_skin_loading_timeout_text: { ru: 'Источник не ответил за 30 секунд. Попробуйте повторить поиск или выбрать другой источник.', uk: 'Джерело не відповіло за 30 секунд. Спробуйте ще раз або виберіть інше джерело.', en: 'The source did not respond within 30 seconds. Retry or choose another source.' },
     nova_skin_sec: { ru: ' с', uk: ' с', en: ' s' },
     nova_skin_episode: { ru: 'Серия', uk: 'Серія', en: 'Episode' },
     nova_skin_action: { ru: 'Действие', uk: 'Дія', en: 'Action' },
@@ -977,7 +981,7 @@
   // kept it alive while its network request was pending.
   function resetForNextMovie() {
     switchDone();
-    loadingStop();
+    loadingReset();
     try { if (ui.root) ui.root.remove(); } catch (e) {}
     try {
       if (root) {
@@ -1341,6 +1345,7 @@
 
   function switchStart(key) {
     if (!movie) return;
+    loadingReset();
     gentleMark(1200);
     pending = { id: movie.id, key: key || '', time: Date.now() };
     lockFocus(key);
@@ -3823,6 +3828,7 @@
 
   var loading_started = 0;
   var loading_timer = null;
+  var loading_timed_out = false;
 
   // Keep the previous visible result until the selected online source replies.
   // This is deliberately local to the UI: Lampac requests are unchanged.
@@ -3863,13 +3869,15 @@
 
   function loadingPanel() {
     uiFrame();
+    if (loading_timed_out) return;
+    if (!loading_started) loading_started = Date.now();
+    if (!loading_timer) loading_timer = setInterval(loadingText, 1000);
     note_sig = '';
 
     // Repeated Life Events updates must never clear the previous cards.
     var hasPrevious = softLoading();
     var heroExists = !!(ui.hero && ui.hero.parent().length);
     if (heroExists && !ui.hero_preloading) {
-      loadingStop();
       if (!hasPrevious && !ui.list.children('.nova-skeleton').length) {
         listHold().empty().append(skeleton(4));
       }
@@ -3891,7 +3899,6 @@
     }
 
     if (!ui.load) {
-      loading_started = Date.now();
       ui.load = $('<div class="nova-loading">' +
         '<div class="nova-loading__title"></div>' +
         '<div class="nova-loading__text"></div>' +
@@ -3906,22 +3913,52 @@
     }
     loadingText();
 
-    if (!loading_timer) loading_timer = setInterval(loadingText, 1000);
   }
 
   function loadingText() {
-    if (!ui.load || !ui.load.parent().length) return loadingStop();
-    var seconds = Math.max(0, Math.round((Date.now() - loading_started) / 1000));
+    if (!loading_started || !ui.root || !ui.root.parent().length) return loadingStop();
+    var elapsed = Date.now() - loading_started;
+    if (elapsed >= SEARCH_TIMEOUT) return loadingExpired();
+    // The loader may be hidden while source/voice changes; its watchdog must remain active.
+    if (!ui.load || !ui.load.parent().length) return;
+    var remain = Math.max(0, Math.ceil((SEARCH_TIMEOUT - elapsed) / 1000));
     var line = text('nova_loading_start', 'nova_skin_loading_start') +
-      ' \u00b7 ' + seconds + text('nova_sec', 'nova_skin_sec');
+      ' \u00b7 ' + text('nova_loading_remaining', 'nova_skin_loading_remaining').replace('{sec}', remain);
     ui.load.find('.nova-loading__text').text(line);
-    ui.load.find('.nova-loading__bar>div').css('width', Math.min(90, seconds * 7) + '%');
+    ui.load.find('.nova-loading__bar>div').css('width', Math.min(100, elapsed / SEARCH_TIMEOUT * 100) + '%');
   }
 
   function loadingStop() {
     clearInterval(loading_timer);
     loading_timer = null;
+    loading_started = 0;
     ui.load = null;
+  }
+
+  function loadingReset() {
+    loadingStop();
+    loading_timed_out = false;
+  }
+
+  function loadingExpired() {
+    if (loading_timed_out || !loading_started) return;
+    loading_timed_out = true;
+    loadingStop();
+    if (!root || !host || !ui.root || !ui.root.parent().length) return;
+
+    // Lampac's reset aborts the current Lampa.Reguest request. Other online
+    // components are left untouched because their reset semantics may differ.
+    var comp = componentNow();
+    if (comp && comp.nova_balancer_inplace && typeof comp.reset === 'function') {
+      try { comp.reset(); } catch (e) {}
+    }
+
+    var node = $('<div class="online-empty"></div>');
+    node.append($('<div class="online-empty__title"></div>')
+      .text(text('nova_loading_timeout_title', 'nova_skin_loading_timeout_title')));
+    node.append($('<div class="online-empty__time"></div>')
+      .text(text('nova_loading_timeout_text', 'nova_skin_loading_timeout_text')));
+    notePanel({ kind: 'note', node: node }, true);
   }
 
   function revealResult() {
@@ -3953,7 +3990,7 @@
     ].join('|');
   }
 
-  function notePanel(native) {
+  function notePanel(native, timeout) {
     var mark = noteStamp(native);
     var alive = ui.root && ui.root.parent().length && ui.list && ui.list.find('.nova-note').length;
 
@@ -3978,7 +4015,7 @@
       '<div class="nova-note__actions"></div></div></div>');
 
     var dead = currentSourceKey();
-    if (dead && movie) probeSave(movie.id, dead, 'empty', 0);
+    if (dead && movie && !timeout) probeSave(movie.id, dead, 'empty', 0);
 
     note.find('.nova-note__title').text(native.node.find('.online-empty__title').text().trim());
     note.find('.nova-note__text').text(native.node.find('.online-empty__time').text().trim());
@@ -4004,7 +4041,7 @@
     if (dead) hop.tried[dead] = true;
 
     var next = (groups.sort || []).length > 1 ? nextSource() : null;
-    var auto = !!next && autoSwitchOn();
+    var auto = !!next && !timeout && autoSwitchOn();
 
     if (next) {
       addAction(text('nova_try_source', 'nova_skin_try_source')
@@ -4020,8 +4057,9 @@
     }
 
     addAction(text('nova_retry', 'nova_skin_retry'), ICON.refresh, function () {
+      loadingReset();
       var comp = componentNow();
-      if (reloadable(comp)) {
+      if (reloadable(comp) && (!timeout || currentSourceKey())) {
         signature = '';
         listHold().empty().append(skeleton(4));
         keepAlive(function () {
@@ -4183,6 +4221,7 @@
       items = [];
       signature = '';
       if (native.kind === 'loading') {
+        if (loading_timed_out) { busy = false; return; }
         if (pendingLive() && ui.list && ui.list.find('.nova-skeleton').length) {
           busy = false;
           return;
@@ -4195,6 +4234,7 @@
 
     var list = collect();
     if (!list.length) {
+      if (loading_timed_out) return;
       if (blank()) {
         busy = true;
         root.addClass('nova-skin-scope nova-skin-chips');
@@ -4222,7 +4262,7 @@
 
     hopStop();
     hopReset();
-    loadingStop();
+    loadingReset();
     root.addClass('nova-skin-scope nova-skin-chips');
     uiFrame();
 
@@ -4469,7 +4509,7 @@
     probeStop();
     clearTimeout(timer);
     lockStopWatch();
-    loadingStop();
+    loadingReset();
     forget();
   }
 
@@ -5078,7 +5118,7 @@
       start();
       fastBoot.status = 'ready';
       window.nova_skin_fast_ready = true;
-      window.__novaSkinFastBuild = '2026.10.19-fast2';
+      window.__novaSkinFastBuild = '2026.10.30-timeout1';
       if (fastBoot.sharedSkinWasPresent) {
         try { console.warn('[Nova Skin Fast] Another Nova Skin instance was initialized before Fast. Disable the duplicate if menus conflict.'); } catch (err) {}
       }
