@@ -140,6 +140,9 @@ public class MainActivity extends Activity {
         section(page, "3. Диагностика");
         button(page, "Проверить локальный порт 5555", this::probePort);
         button(page, "Обновить сведения о прошивке", this::deviceReport);
+        button(page, "Root/Bootloader: проверить возможности (без изменений)", this::rootDiagnostics);
+        button(page, "Root: запросить su и проверить uid", this::confirmSuCheck);
+        button(page, "Запустить Magisk, если установлен", () -> launchPackage("com.topjohnwu.magisk"));
         button(page, "Root/SU: попытаться включить Developer Options + USB ADB", this::confirmRoot);
 
         section(page, "4. Журнал и результаты");
@@ -336,6 +339,66 @@ public class MainActivity extends Activity {
                 : "TCP 127.0.0.1:5555 закрыт или недоступен (" + error + ").";
             runOnUiThread(() -> append(result));
         }).start();
+    }
+
+    /**
+     * This is an advisory non-destructive probe. A property can be omitted or
+     * spoofed by OEM firmware and is NOT proof that flashing is safe.
+     */
+    private void rootDiagnostics() {
+        append("ROOT/BOOTLOADER: чтение сведений без изменения системы.");
+        append("CHIPSET: hardware=" + Build.HARDWARE + "; board=" + Build.BOARD
+            + "; ABIs=" + Arrays.toString(Build.SUPPORTED_ABIS));
+        append("KERNEL: " + shellLine("/system/bin/uname", "-r"));
+        append("SECURITY PATCH: " + Build.VERSION.SECURITY_PATCH);
+        append("ro.boot.verifiedbootstate=" + prop("ro.boot.verifiedbootstate")
+            + "; ro.boot.vbmeta.device_state=" + prop("ro.boot.vbmeta.device_state"));
+        append("ro.boot.flash.locked=" + prop("ro.boot.flash.locked")
+            + "; ro.oem_unlock_supported=" + prop("ro.oem_unlock_supported")
+            + "; ro.boot.veritymode=" + prop("ro.boot.veritymode"));
+        append("su (путь, наличие не гарантирует root): "
+            + shellLine("/system/bin/sh", "-c", "command -v su || echo not-found"));
+        try {
+            getPackageManager().getPackageInfo("com.topjohnwu.magisk", 0);
+            append("MAGISK: пакет обнаружен; проверка root требует su -c id.");
+        } catch (Exception ex) {
+            append("MAGISK: установленный пакет не обнаружен / скрыт.");
+        }
+        append("Для root нужны доступные привилегии su ИЛИ совместимый разблокированный bootloader/образ, либо проверенная уязвимость конкретной прошивки. Этот APK не разблокирует загрузчик.");
+    }
+
+    private String shellLine(String... cmd) {
+        Process p = null;
+        try {
+            p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+            BufferedReader reader = new BufferedReader(
+                new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8));
+            String first = reader.readLine();
+            if (!p.waitFor(2, TimeUnit.SECONDS)) {
+                p.destroy();
+                return "(timeout)";
+            }
+            return first == null ? "(пусто)" : first.trim();
+        } catch (Exception e) {
+            return "(недоступно: " + e.getClass().getSimpleName() + ")";
+        } finally {
+            if (p != null) p.destroy();
+        }
+    }
+
+    private void confirmSuCheck() {
+        new AlertDialog.Builder(this)
+            .setTitle("Проверка привилегий su")
+            .setMessage("Приложение выполнит только команду 'su -c id'. Если установлен менеджер root, он может запросить подтверждение. Разделы и настройки не изменяются.")
+            .setNegativeButton("Отмена", (d, w) -> {})
+            .setPositiveButton("Проверить", (d, w) -> {
+                new Thread(() -> {
+                    String result = shellLine("su", "-c", "id");
+                    runOnUiThread(() -> append(
+                        "ПРОВЕРКА SU: " + result + " | uid=0 означает root в рамках этого запуска."));
+                }).start();
+            })
+            .show();
     }
 
     private void confirmRoot() {
