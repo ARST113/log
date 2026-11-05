@@ -29,10 +29,10 @@
       parser_torrent_type: 'jackett'
     }
   }, {
-    base: 'Lampac.fun:9117',
+    base: 'https://lampac.art/jackett/',
     name: 'Lampac',
     settings: {
-      url: 'Lampac.fun:9117',
+      url: 'https://lampac.art/jackett/',
       key: '1',
       parser_torrent_type: 'jackett'
     }
@@ -104,6 +104,11 @@
 
   function changeParser() {
     var jackettUrlTwo = Lampa.Storage.get("lme_url_two");
+    // Перенос ранее сохранённого выбора на новый адрес сервера.
+    if (jackettUrlTwo === 'Lampac.fun:9117') {
+      jackettUrlTwo = 'https://lampac.art/jackett/';
+      Lampa.Storage.set("lme_url_two", jackettUrlTwo);
+    }
     var selectedParser = parsersInfo.find(function (parser) {
       return parser.base === jackettUrlTwo;
     });
