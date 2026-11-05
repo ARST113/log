@@ -10,6 +10,7 @@ Features:
 - Discover exported settings Activities by package; attempt only exported ones.
 - Probe whether TCP port 5555 is listening on localhost (not proof of ADB).
 - Copy a diagnostic report, including exact exceptions from denied launches.
+- Non-destructive root/bootloader feasibility report: Linux kernel version, build, Verified Boot and bootloader properties, Magisk presence, and optional su uid check.
 - Optional, explicitly confirmed root/SU attempt to set development_settings_enabled
   and adb_enabled, without forcing USB property changes or rebooting.
 - Focusable controls, dark high-contrast TV layout.
@@ -18,6 +19,8 @@ Features:
 or override OEM policy. Android may intentionally return 0 for
 Settings.Global.ADB_ENABLED and DEVELOPMENT_SETTINGS_ENABLED to third-party
 apps, so the app does not claim to know their true values.
+
+Root check is advisory, not an exploit. There is no general one-click root for locked Android 12 B866 firmware; do not flash another revision's boot image. Some documented B866 Android 12 downgrade paths require UART/test points and carry a substantial brick risk. The report helps determine the precise firmware before attempting a device-specific repair.
 
 The older "Developer Options Shortcut & Device Info" and "Settings App" APKs
 are not redistributed or decompiled into this project. This is an independent
