@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.8-nextgen
+ * Версия: 1.2.9-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -2177,6 +2177,53 @@
         return true;
     }
 
+    // Geometry-based SpatialNavigator may skip buttons on TV as focused labels
+    // grow in the flex row (and move subsequent controls to another row).
+    // Restrict deterministic left/right traversal to the visible card controls;
+    // all other Lampa navigation and vertical movement remain native.
+    function bmMoveCardButton(step){
+        if(!currentContainer||!currentContainer.length||!Lampa.Controller||
+           !Lampa.Controller.enabled||Lampa.Controller.enabled().name!=='full_start') return false;
+        var strip=currentContainer.find('.full-start-new__buttons').first();
+        if(!strip.length)return false;
+        var focus=window.Navigator&&window.Navigator._focus;
+        if(!focus||focus.parentNode!==strip[0])
+            focus=strip.children('.full-start__button.focus').first()[0];
+        if(!focus||focus.parentNode!==strip[0])return false;
+        var buttons=strip.children('.full-start__button.selector').filter(function(){
+            if(this.classList.contains('hidden')||this.classList.contains('hide')||
+               this.classList.contains('buttons-ng-native-play'))return false;
+            return this.getClientRects().length>0 &&
+                   window.getComputedStyle(this).visibility!=='hidden';
+        });
+        var index=buttons.index(focus);
+        if(index<0)return false;
+        var next=buttons[index+step];
+        if(!next)return false; // keep native boundary behavior
+        try {
+            Lampa.Controller.collectionFocus(next,currentContainer);
+            var ctrl=Lampa.Controller.enabled().controller;
+            if(ctrl&&ctrl.link)ctrl.link.last=next;
+            return true;
+        }catch(e){
+            console.warn('Buttons NextGen: card D-pad traversal',e);
+            return false;
+        }
+    }
+    function bmBindCardNavigation(controller){
+        if(!controller||controller.__buttonsNgNavWrap)return;
+        var oldRight=controller.right,oldLeft=controller.left;
+        controller.right=function(){
+            if(bmMoveCardButton(1))return;
+            if(typeof oldRight==='function')return oldRight.apply(this,arguments);
+        };
+        controller.left=function(){
+            if(bmMoveCardButton(-1))return;
+            if(typeof oldLeft==='function')return oldLeft.apply(this,arguments);
+        };
+        controller.__buttonsNgNavWrap=true;
+    }
+
     function setupButtonNavigation(container) {
         // Lampa builds Navigator's selector collection BEFORE this plugin's 400 ms
         // rebuild. Simply toggling the already-active full_start does nothing:
@@ -2207,6 +2254,7 @@
         try {
             c.collectionSet(container);
             if (candidate) c.collectionFocus(candidate,container);
+            bmBindCardNavigation(c.enabled().controller);
             // The core Start component only binds hover:focus before dynamic buttons
             // exist. Update its last pointer for return navigation with the remote.
             var control=c.enabled().controller;
