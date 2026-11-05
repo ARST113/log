@@ -3,7 +3,10 @@
 Open-source, TV-remote-friendly Android app for diagnosing access to
 Developer Options on ZTE ZXV10 B866 (MTS), Android 12, and similar devices.
 
-Features:
+Features (v0.3, ADB-first):
+- ADB-first controls: developer settings, device build screen, wireless debugging candidate, and permission-aware settings write.
+- ADB daemon properties, network IP discovery for pairing, device status report.
+- ADB permissions are never elevated automatically: non-root unlock is not guaranteed.
 - Android build/model/security information.
 - Launch standard Developer Options / Device Info / Settings intents.
 - Test known Android and Android TV settings components.

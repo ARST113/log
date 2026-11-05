@@ -29,6 +29,10 @@ import android.widget.Toast;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
+import java.net.InetAddress;
+import java.net.Inet4Address;
+import java.util.Enumeration;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
@@ -84,7 +88,22 @@ public class MainActivity extends Activity {
         TextView info = text("Диагностика режима разработчика: ZTE / Android TV\nУправление кнопками пульта. После проверки экрана нажми «Назад».", 16, 0xffb7cbdd, false);
         page.addView(info);
 
-        section(page, "1. Быстрые варианты");
+        section(page, "1. Сначала включаем ADB");
+        page.addView(text("Цель: открыть настройку отладки и включить её штатным способом. В случае системного запрета программа покажет причину. Получение root без su невозможно.", 16, 0xffb7cbdd, false));
+        button(page, "ADB 1: открыть параметры разработчика", () ->
+            launch(new LaunchTarget("Стандартный экран разработчика",
+                new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))));
+        button(page, "ADB 2: открыть сведения об устройстве (номер сборки)", () ->
+            launch(new LaunchTarget("Сведения об устройстве",
+                new Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))));
+        button(page, "ADB 3: открыть беспроводную отладку (Android 11+)", () ->
+            launch(explicit("Беспроводная отладка", "com.android.settings",
+                "com.android.settings.Settings$WirelessDebuggingActivity")));
+        button(page, "ADB 4: попытка через ранее предоставленные системные права", this::confirmPrivilegedAdb);
+        button(page, "ADB 5: попробовать через su/root", this::confirmRoot);
+        button(page, "ADB: диагностировать службу и сетевой адрес", this::adbDiagnostics);
+
+        section(page, "2. Другие варианты открытия настроек");
         attempts.add(new LaunchTarget("Стандартный Android — параметры разработчика",
             new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)));
         attempts.add(new LaunchTarget("Android — сведения об устройстве",
@@ -110,6 +129,12 @@ public class MainActivity extends Activity {
         attempts.add(explicit("Android TV — main settings",
             "com.android.tv.settings",
             "com.android.tv.settings.MainSettings"));
+        attempts.add(explicit("AOSP — Wireless Debugging",
+            "com.android.settings",
+            "com.android.settings.Settings$WirelessDebuggingActivity"));
+        attempts.add(explicit("Android TV — Wireless Debugging",
+            "com.android.tv.settings",
+            "com.android.tv.settings.device.development.WirelessDebuggingActivity"));
 
         button(page, "Автоподбор: открыть первый доступный экран", () -> {
             append("Начата проверка вариантов. Успешный запуск Activity не означает разрешение на ADB.");
@@ -129,7 +154,7 @@ public class MainActivity extends Activity {
             launchPackage("com.android.tv.settings");
         });
 
-        section(page, "2. Поиск скрытых экранов");
+        section(page, "3. Поиск скрытых экранов");
         TextView hint = text("Сканируются только известные пакеты системных настроек. Можно запускать найденные экспортированные Activity по отдельности; закрытые система не разрешит.", 15, 0xffb7cbdd, false);
         page.addView(hint);
         button(page, "Найти доступные Activity (аналог Activity Launcher)", this::scanActivities);
@@ -137,7 +162,7 @@ public class MainActivity extends Activity {
         foundActivities.setOrientation(LinearLayout.VERTICAL);
         page.addView(foundActivities);
 
-        section(page, "3. Диагностика");
+        section(page, "4. Диагностика");
         button(page, "Проверить локальный порт 5555", this::probePort);
         button(page, "Обновить сведения о прошивке", this::deviceReport);
         button(page, "Root/Bootloader: проверить возможности (без изменений)", this::rootDiagnostics);
@@ -145,7 +170,7 @@ public class MainActivity extends Activity {
         button(page, "Запустить Magisk, если установлен", () -> launchPackage("com.topjohnwu.magisk"));
         button(page, "Root/SU: попытаться включить Developer Options + USB ADB", this::confirmRoot);
 
-        section(page, "4. Журнал и результаты");
+        section(page, "5. Журнал и результаты");
         TextView warning = text(
             "Внимание: Android скрывает фактические значения adb_enabled и development_settings_enabled от обычных приложений. Открытый порт 5555 тоже не доказывает, что ADB авторизован. Утилита не снимает ограничения оператора.",
             15, 0xffffcf9a, false);
@@ -160,6 +185,7 @@ public class MainActivity extends Activity {
 
         append("Запуск приложения.");
         deviceReport();
+        adbDiagnostics();
     }
 
     private LaunchTarget explicit(String title, String pkg, String cls) {
@@ -241,6 +267,13 @@ public class MainActivity extends Activity {
         }
     }
 
+    private int adbActivityPriority(String name) {
+        if (name.contains("adb") || name.contains("development") || name.contains("debug")) return 0;
+        if (name.contains("usb") || name.contains("wireless")) return 1;
+        if (name.contains("about") || name.contains("deviceinfo")) return 2;
+        return 3;
+    }
+
     @SuppressWarnings("deprecation")
     private void scanActivities() {
         foundActivities.removeAllViews();
@@ -257,13 +290,19 @@ public class MainActivity extends Activity {
                 PackageInfo pi = pm.getPackageInfo(pkg, PackageManager.GET_ACTIVITIES);
                 int found = 0;
                 if (pi.activities != null) {
-                    Arrays.sort(pi.activities, (a, b) -> a.name.compareToIgnoreCase(b.name));
+                    Arrays.sort(pi.activities, (a, b) -> {
+                        String x = a.name.toLowerCase(Locale.ROOT);
+                        String y = b.name.toLowerCase(Locale.ROOT);
+                        int sx = adbActivityPriority(x), sy = adbActivityPriority(y);
+                        return sx != sy ? Integer.compare(sx, sy) : x.compareTo(y);
+                    });
                     for (ActivityInfo activity : pi.activities) {
                         String n = activity.name.toLowerCase(Locale.ROOT);
                         if (!activity.enabled || !activity.exported) continue;
                         if (!(n.contains("develop") || n.contains("debug")
                             || n.contains("deviceinfo") || n.contains("about")
-                            || n.contains("setting"))) continue;
+                            || n.contains("setting") || n.contains("adb")
+                            || n.contains("wireless") || n.contains("usb"))) continue;
                         if (found >= 25) break;
                         String name = activity.name;
                         String display = "Открыть: " + pkg + " / " + name.substring(name.lastIndexOf('.') + 1);
@@ -283,6 +322,70 @@ public class MainActivity extends Activity {
         if (total == 0) {
             foundActivities.addView(text("Доступных экспортированных экранов не найдено.", 16, WHITE, false));
         }
+    }
+
+    private void adbDiagnostics() {
+        append("ADB: Неразрушающая проверка. Статус службы и свойства не подтверждают USB-авторизацию.");
+        append("ADB init.svc.adbd=" + prop("init.svc.adbd")
+            + ", init.svc.usbd=" + prop("init.svc.usbd"));
+        append("ADB ro.adb.secure=" + prop("ro.adb.secure")
+            + ", sys.usb.state=" + prop("sys.usb.state"));
+        append("ADB persist.adb.tcp.port=" + prop("persist.adb.tcp.port")
+            + ", service.adb.tcp.port=" + prop("service.adb.tcp.port"));
+        append("ADB: Действительные значения adb_enabled и adb_wifi_enabled скрыты от сторонних приложений.");
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            if (interfaces != null) {
+                while (interfaces.hasMoreElements()) {
+                    NetworkInterface network = interfaces.nextElement();
+                    if (!network.isUp() || network.isLoopback()) continue;
+                    Enumeration<InetAddress> addresses = network.getInetAddresses();
+                    while (addresses.hasMoreElements()) {
+                        InetAddress address = addresses.nextElement();
+                        if (address instanceof Inet4Address && !address.isLoopbackAddress()) {
+                            append("IP приставки: " + network.getName() + " = " + address.getHostAddress());
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            append("Сетевые адреса недоступны: " + e);
+        }
+        append("Проверка с компьютера: adb devices (USB), или adb connect IP:ПОРТ при уже разрешённой сетевой отладке.");
+    }
+
+    private void confirmPrivilegedAdb() {
+        boolean allowed = checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS")
+            == PackageManager.PERMISSION_GRANTED;
+        if (!allowed) {
+            append("ADB: WRITE_SECURE_SETTINGS не предоставлено; обычное приложение не имеет права включать отладку напрямую.");
+            new AlertDialog.Builder(this)
+                .setTitle("Системных прав нет")
+                .setMessage("Android не предоставил WRITE_SECURE_SETTINGS. Этот метод без root или системной подписи недоступен. Попробуй открыть параметры разработчика или проверку su.")
+                .setPositiveButton("Понятно", (d, w) -> {})
+                .show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("ADB: системный метод")
+            .setMessage("Подтверждаешь изменение системных параметров development_settings_enabled и adb_enabled? Этот способ доступен только при уже предоставленных привилегиях.")
+            .setNegativeButton("Отмена", (d, w) -> {})
+            .setPositiveButton("Включить", (d, w) -> {
+                try {
+                    boolean dev = Settings.Global.putInt(getContentResolver(),
+                        Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 1);
+                    boolean adb = Settings.Global.putInt(getContentResolver(),
+                        Settings.Global.ADB_ENABLED, 1);
+                    append("ADB системный метод: запись Dev=" + dev + ", USB ADB=" + adb
+                        + ". Это не подтверждение активной ADB-сессии. Проверь подключение на компьютере.");
+                    adbDiagnostics();
+                } catch (SecurityException e) {
+                    append("ADB системный метод: запрещено прошивкой — " + e.toString());
+                } catch (Exception e) {
+                    append("ADB системный метод: ошибка — " + e.toString());
+                }
+            })
+            .show();
     }
 
     private void deviceReport() {
