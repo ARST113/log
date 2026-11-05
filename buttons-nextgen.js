@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.9-nextgen
+ * Версия: 1.2.10-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -2201,6 +2201,9 @@
         var next=buttons[index+step];
         if(!next)return false; // keep native boundary behavior
         try {
+            var hovered=strip.find('.buttons-ng-hovered');
+            strip.removeClass('buttons-ng-pointer-mode buttons-ng-mouse-active');
+            hovered.removeClass('buttons-ng-hovered');
             Lampa.Controller.collectionFocus(next,currentContainer);
             var ctrl=Lampa.Controller.enabled().controller;
             if(ctrl&&ctrl.link)ctrl.link.last=next;
@@ -2278,22 +2281,45 @@
         // repeatedly alter D-pad navigation geometry while moving focus).
         // Mouse hover needs a stable selection despite flex-wrap reflow.
         // Only genuine pointer movement switches the expanded control.
-        // Layout-triggered mouseenter/mouseleave won't cause focus oscillation.
+        // TV air mouse / PC pointer: mouseenter can re-fire without pointer movement
+        // when an expanding button wraps to the next flex row. It must NEVER
+        // switch disclosure to the item now underneath a stationary cursor.
+        // A real pointer movement is the only way to choose the hovered label.
         var bmMouseX=null,bmMouseY=null;
-        if(typeof document!=='undefined')$(document).on('mousemove.buttonsNgPointer',function(e){
-            if(!window.innerWidth||window.innerWidth<768)return;
-            if(bmMouseX===e.clientX&&bmMouseY===e.clientY)return;
-            bmMouseX=e.clientX;bmMouseY=e.clientY;
-            var target=$(e.target).closest('.full-start-new__buttons > .full-start__button.button-mode-1');
-            var expanded=$('.full-start-new__buttons .buttons-ng-hovered');
-            if(target.length&&expanded.length&&expanded[0]===target[0])return;
-            expanded.removeClass('buttons-ng-hovered');
-            $('.full-start-new__buttons.buttons-ng-mouse-active').removeClass('buttons-ng-mouse-active');
-            if(target.length&&!target.hasClass('hidden')){
-                target.addClass('buttons-ng-hovered');
-                target.parent().addClass('buttons-ng-mouse-active');
-            }
-        });
+        function bmPointerToDpad(){
+            $('.full-start-new__buttons.buttons-ng-pointer-mode')
+                .removeClass('buttons-ng-pointer-mode buttons-ng-mouse-active');
+            $('.full-start-new__buttons .buttons-ng-hovered')
+                .removeClass('buttons-ng-hovered');
+            bmMouseX=null;bmMouseY=null;
+        }
+        if(typeof document!=='undefined'){
+            $(document).on('keydown.buttonsNgPointer',function(e){
+                var code=e.which||e.keyCode;
+                if(code===37||code===38||code===39||code===40||code===13||
+                    e.key==='ArrowLeft'||e.key==='ArrowRight'||
+                    e.key==='ArrowUp'||e.key==='ArrowDown'||e.key==='Enter'){
+                    bmPointerToDpad();
+                }
+            });
+            $(document).on('mousemove.buttonsNgPointer',function(e){
+                if(!window.innerWidth||window.innerWidth<768)return;
+                if(bmMouseX===e.clientX&&bmMouseY===e.clientY)return;
+                bmMouseX=e.clientX;bmMouseY=e.clientY;
+                // Suppress focus-only disclosure in pointer mode even after a
+                // label moves away from the cursor or the pointer exits the bar.
+                $('.full-start-new__buttons').addClass('buttons-ng-pointer-mode');
+                var target=$(e.target).closest('.full-start-new__buttons > .full-start__button.button-mode-1');
+                var expanded=$('.full-start-new__buttons .buttons-ng-hovered');
+                if(target.length&&expanded.length&&expanded[0]===target[0])return;
+                expanded.removeClass('buttons-ng-hovered');
+                $('.full-start-new__buttons.buttons-ng-mouse-active').removeClass('buttons-ng-mouse-active');
+                if(target.length&&!target.hasClass('hidden')){
+                    target.addClass('buttons-ng-hovered');
+                    target.parent().addClass('buttons-ng-mouse-active');
+                }
+            });
+        }
         var style = $('<style>' +
             '@keyframes button-fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }' +
             '.full-start-new__buttons .full-start__button { box-sizing:border-box; position:relative; flex-shrink:0; }' +
@@ -2350,7 +2376,8 @@
             '.full-start-new__buttons .full-start__button.button-mode-1.focus, .full-start-new__buttons .full-start__button.button-mode-1:hover { flex-shrink:0; max-width:100%; }' +
             '.full-start-new__buttons .full-start__button.button-mode-1.focus > span, .full-start-new__buttons .full-start__button.button-mode-1.buttons-ng-hovered > span { display:inline-block !important; position:static !important; top:auto !important; bottom:auto !important; left:auto !important; right:auto !important; flex:0 1 auto; min-width:0; width:auto !important; max-width:100%; height:auto !important; padding:0 !important; margin:0 0 0 .4em !important; background:transparent !important; border:0 !important; color:inherit !important; border-radius:0 !important; white-space:normal !important; overflow-wrap:anywhere; overflow:visible !important; text-overflow:clip !important; opacity:1 !important; visibility:visible !important; transform:none !important; transition:opacity .16s ease; pointer-events:none; }' +
             '.full-start-new__buttons .full-start__button.button-mode-1.focus .text-wrapper, .full-start-new__buttons .full-start__button.button-mode-1.buttons-ng-hovered .text-wrapper { display:inline-block !important; position:static !important; opacity:1 !important; visibility:visible !important; }' +
-            '/* TV D-pad focus wins even if the browser previously reported a mouse movement. */' +
+            '/* A stationary TV air-mouse pointer must not re-expand a button via Lampa mouseenter/focus. */' +
+            '.full-start-new__buttons.buttons-ng-pointer-mode .full-start__button.button-mode-1.focus:not(.buttons-ng-hovered) > span, .full-start-new__buttons.buttons-ng-pointer-mode .full-start__button.button-mode-1.focus:not(.buttons-ng-hovered) .text-wrapper { display:none !important; }' +
             '}' +
             '@media screen and (max-width:767px) {' +
             '.full-start-new__buttons .full-start__button.button-mode-1 > span, .full-start-new__buttons .full-start__button.button-mode-1 .text-wrapper { display:none !important; }' +
