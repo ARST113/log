@@ -1,0 +1,29 @@
+name: ContinueWatching / Arst-player metadata tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ContinueWatching.js
+      - tests/continuewatch-arst-metadata.test.js
+      - .github/workflows/continuewatch-arst-metadata.yml
+  pull_request:
+    paths:
+      - ContinueWatching.js
+      - tests/continuewatch-arst-metadata.test.js
+  workflow_dispatch:
+
+jobs:
+  metadata-regression:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate plugin syntax
+        run: node --check ContinueWatching.js
+      - name: Test movie, series, anime and resume metadata
+        run: node --test tests/continuewatch-arst-metadata.test.js
