@@ -8,6 +8,10 @@ on:
       - ".github/workflows/mts-debug-suite.yml"
   workflow_dispatch:
 
+concurrency:
+  group: mts-debug-suite-publish
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
