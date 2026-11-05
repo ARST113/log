@@ -1115,6 +1115,7 @@
                     item: target.item,
                     playlist: resolved.playlist,
                     progress: target.progress,
+                    card: card,
                     mode: record.mode
                   });
                 case 4:
@@ -1157,6 +1158,126 @@
         index: index
       };
     }
+
+    // Arst / Just+ Player artwork and episode metadata.
+    // The Android Lampa host converts these familiar Lampa fields into its native playlist Bundle.
+    function resumeImageUrl(Lampa, value, size) {
+      var input = typeof value === 'string' ? value.trim() : '';
+      if (!input) return '';
+      if (/^https?:\/\//i.test(input)) return input;
+      if (/^\/\/[a-z0-9.-]+\//i.test(input)) return 'https:' + input;
+      if (/^\/[a-z0-9_-]+\.(?:jpe?g|png|webp)$/i.test(input)) {
+        try {
+          if (Lampa.Api && typeof Lampa.Api.img === 'function') {
+            var converted = Lampa.Api.img(input, size);
+            if (typeof converted === 'string' && /^https?:\/\//i.test(converted)) return converted;
+          }
+        } catch (error) {}
+        return 'https://image.tmdb.org/t/p/' + size + input;
+      }
+      return '';
+    }
+    function resumeEpisodeName(value) {
+      var name = typeof value === 'string' ? value.trim() : '';
+      if (!name || /\.(?:mkv|mp4|avi|m2ts|ts|mov|webm)(?:\?|$)/i.test(name)) return '';
+      if (/\b(?:2160p|1080p|720p|x264|x265|hevc|bdrip|webrip|web-dl)\b/i.test(name)) return '';
+      return name.replace(/^\d{1,3}\s*\/\s*/, '').trim();
+    }
+    function enrichResumePayload(Lampa, payload) {
+      var sourceItems = Array.isArray(payload && payload.playlist) ? payload.playlist : [];
+      var startIndex = sourceItems.indexOf(payload && payload.item);
+      if (startIndex < 0) return Promise.resolve(payload);
+      var card = payload.card || payload.item && payload.item.card || {};
+      var title = String(card.name || card.title || card.original_name || card.original_title || '').trim();
+      var series = card.type === 'tv' || card.media_type === 'tv' || sourceItems.some(function (item) {
+        return Number(item && item.season) > 0 && Number(item && item.episode) > 0;
+      });
+      var poster = resumeImageUrl(Lampa, card.poster_path, 'w500') ||
+        resumeImageUrl(Lampa, card.img, 'w500');
+      var backdrop = resumeImageUrl(Lampa, card.backdrop_path, 'w1280') ||
+        resumeImageUrl(Lampa, card.background_image, 'w1280');
+      var preferredLanguage = '';
+      try { preferredLanguage = String(Lampa.Storage.field('tmdb_lang') || Lampa.Storage.field('language') || 'ru').slice(0, 2); }
+      catch (error) { preferredLanguage = 'ru'; }
+      var logos = card.images && Array.isArray(card.images.logos) ? card.images.logos.slice() : [];
+      logos = logos.filter(function (logo) { return logo && (logo.file_path || logo.url) && (!logo.aspect_ratio || Number(logo.aspect_ratio) >= 1.5); });
+      logos.sort(function (a, b) {
+        function rank(x) { return (x.iso_639_1 === preferredLanguage ? 3 : x.iso_639_1 === 'en' ? 2 : !x.iso_639_1 ? 1 : 0) * 10000 + (Number(x.vote_average) || 0) * 10; }
+        return rank(b) - rank(a);
+      });
+      var logo = resumeImageUrl(Lampa, logos.length ? logos[0].file_path || logos[0].url : card.logo, 'w500');
+      var knownSeasons = [];
+      if (series) {
+        sourceItems.forEach(function (item) {
+          var season = Number(item && item.season);
+          if (Number.isInteger(season) && season >= 0 && knownSeasons.indexOf(season) < 0) knownSeasons.push(season);
+        });
+      }
+      var currentSeason = Number(sourceItems[startIndex] && sourceItems[startIndex].season) || 0;
+      knownSeasons.sort(function (a, b) { return Math.abs(a - currentSeason) - Math.abs(b - currentSeason); });
+      // Cap catalogue work for enormous anime/torrent playlists; current season has priority.
+      knownSeasons = knownSeasons.slice(0, 6);
+      var tmdbId = card.tmdb_id || ((card.source || 'tmdb') === 'tmdb' ? card.id : null);
+      var canFetch = series && knownSeasons.length && tmdbId && /^\d+$/.test(String(tmdbId)) &&
+        Lampa.Api && typeof Lampa.Api.seasons === 'function';
+      var episodesPromise = !canFetch ? Promise.resolve({}) : new Promise(function (resolve) {
+        var settled = false;
+        var timer;
+        function finish(value) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(value || {});
+        }
+        timer = setTimeout(function () { finish({}); }, 1800);
+        try {
+          Lampa.Api.seasons(Object.assign({}, card, { source: 'tmdb', id: Number(tmdbId) }), knownSeasons, finish);
+        } catch (error) { finish({}); }
+      });
+      return episodesPromise.then(function (seasons) {
+        var episodes = {};
+        Object.keys(seasons || {}).forEach(function (seasonKey) {
+          var season = seasons[seasonKey] || {};
+          var list = Array.isArray(season.episodes_original) ? season.episodes_original : season.episodes;
+          if (!Array.isArray(list)) return;
+          list.forEach(function (episode) {
+            var s = Number(episode && episode.season_number);
+            var e = Number(episode && episode.episode_number);
+            if (!Number.isInteger(s)) s = Number(seasonKey);
+            if (Number.isInteger(s) && Number.isInteger(e)) episodes[s + ':' + e] = episode;
+          });
+        });
+        var items = sourceItems.map(function (item) {
+          var copy = Object.assign({}, item);
+          var season = Number(item && item.season);
+          var episodeNumber = Number(item && item.episode);
+          var episode = episodes[season + ':' + episodeNumber] || null;
+          var explicitName = resumeEpisodeName(item.episode_title || item.episode_name || item.fname);
+          var catalogueName = resumeEpisodeName(episode && episode.name);
+          var itemName = resumeEpisodeName(item.title);
+          var name = catalogueName || explicitName || (itemName !== title ? itemName : '');
+          if (series && episodeNumber > 0) {
+            if (!name) name = 'Серия ' + episodeNumber;
+            copy.title = name;
+            copy.episode_title = name;
+          } else if (!series && title && sourceItems.length === 1) {
+            copy.title = title;
+          }
+          var episodeImage = episode && resumeImageUrl(Lampa, episode.still_path || episode.img, 'w500');
+          var directImage = resumeImageUrl(Lampa, item.thumbnail || item.img || item.poster, 'w500');
+          copy.thumbnail = episodeImage || directImage || (series ? backdrop || poster : poster || backdrop) || '';
+          if (title) copy.first_title = title;
+          if (logo) copy.logo = logo;
+          if (backdrop) copy.background = backdrop;
+          if (!copy.imdb_id && card.imdb_id) copy.imdb_id = String(card.imdb_id);
+          if (!copy.tmdb_id && tmdbId) copy.tmdb_id = String(tmdbId);
+          copy.card = card;
+          return copy;
+        });
+        return Object.assign({}, payload, { item: items[startIndex], playlist: items });
+      });
+    }
+
     function createPlayerLauncher(Lampa) {
       return {
         launch: function launch(payload) {
@@ -2295,6 +2416,12 @@
         globalObject: options.globalObject || (typeof window !== 'undefined' ? window : {})
       });
       var launcher = createPlayerLauncher(Lampa);
+      var originalLaunch = launcher.launch;
+      launcher.launch = function (payload) {
+        return enrichResumePayload(Lampa, payload).then(function (enriched) {
+          return originalLaunch(enriched);
+        });
+      };
       var adapterGlobal = options.onlineBridge ? {
         LampacOnlineResume: options.onlineBridge
       } : options.globalObject || (typeof window !== 'undefined' ? window : {});
@@ -2358,6 +2485,7 @@
     exports.createNativeOnline = createNativeOnline;
     exports.createOnlineAdapter = createOnlineAdapter;
     exports.createPlayerLauncher = createPlayerLauncher;
+    exports.enrichResumePayload = enrichResumePayload;
     exports.createResumeButton = createResumeButton;
     exports.createResumeOrchestrator = createResumeOrchestrator;
     exports.createTorrentAdapter = createTorrentAdapter;
