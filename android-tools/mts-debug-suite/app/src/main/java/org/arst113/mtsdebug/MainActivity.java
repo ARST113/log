@@ -93,12 +93,12 @@ public class MainActivity extends Activity {
         scroller.addView(page);
         setContentView(scroller);
 
-        TextView title=text("MTS ADB REA 0.6",25,WHITE,true);
+        TextView title=text("MTS ADB OEM 0.7",25,WHITE,true);
         page.addView(title);
         page.addView(text("Единая утилита: Developer Options, Device Info, Settings App. Все проверки доступны из одной кнопки.",17,0xffb7cbdd,false));
-        section(page,"АВТОМАТИЧЕСКИЙ ПОДБОР ADB");
-        button(page,"ЗАПУСТИТЬ АВТОПОДБОР ADB",this::startAutoAdb);
-        page.addView(text("Проверяет ADB, права, su, компоненты OEM и открывает доступный экран. После возврата из системных настроек проверка продолжится.",16,0xffffcf9a,false));
+        section(page,"АВТОМАТИЧЕСКИЙ OEM + ADB");
+        button(page,"АВТОПОДБОР + ВКЛЮЧИТЬ ADB ЧЕРЕЗ OEM",this::startAutoAdb);
+        page.addView(text("Пробует Binder-команду setAdbEnabled(true) из OEMServiceClient 1.2, собирает результат службы, затем проверяет adbd. Если Android запретит запрос, журнал покажет отказ.",16,0xffffcf9a,false));
         section(page,"Реверс-инжиниринг OEMServiceClient");
         page.addView(text("Без ADB можно экспортировать установленный APK OEMServiceClient на телефон или компьютер через Wi-Fi. REA сможет изучить код SET ADB TRUE после получения файла.",16,0xffb7cbdd,false));
         button(page,"ЭКСПОРТИРОВАТЬ OEMServiceClient APK ДЛЯ REA",()->
@@ -169,8 +169,12 @@ public class MainActivity extends Activity {
             autoTargets.addAll(r.targets);
             String adbStatus="running".equals(r.adbState) ? "Служба adbd запущена, требуется авторизация с компьютера." : "Служба adbd не запущена. Найдено "+r.targets.size()+" целевых экранов разработчика. Другие приложения запускаться не будут.";
             adviceView.setText(adbStatus);
-            AutoAdbAssistant.analyze(report.toString(),text->
-                runOnUiThread(()->adviceView.setText(text)));
+            if(BuildConfig.OPENROUTER_API_KEY==null || BuildConfig.OPENROUTER_API_KEY.isEmpty()) {
+                adviceView.setText(adbStatus + "\nВ журнале — реальный ответ OEM Binder. API OpenRouter не настроен.");
+            } else {
+                AutoAdbAssistant.analyze(report.toString(),text->
+                    runOnUiThread(()->adviceView.setText(text)));
+            }
             if("running".equals(r.adbState)){
                 append("adbd запущен. Проверить авторизацию на ПК: adb devices.");
                 autoRunning=false;

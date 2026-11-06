@@ -101,8 +101,15 @@ public final class AutoAdbAssistant {
                 }
             }catch(Exception e){add(log,"IP-адрес не определён: "+e.getClass().getSimpleName());}
             steps++;
+            add(log,"OEM Binder: вызов setAdbEnabled(true) по протоколу OEMServiceClient 1.2.");
+            String binderResult=OemBinderProbe.attemptEnable(activity);
+            add(log,"OEM Binder: "+binderResult);
+            steps++;
+            if(binderResult.startsWith("ДОСТУП ЗАПРЕЩЁН") || binderResult.startsWith("ПРОПУЩЕНО")
+                || binderResult.startsWith("TIMEOUT") || binderResult.startsWith("bindService=false")) denied++;
+            try { Thread.sleep(850); } catch(InterruptedException e) { Thread.currentThread().interrupt(); }
             String after=prop("init.svc.adbd");
-            add(log,"ADB ПОСЛЕ: adbd="+after);
+            add(log,"ADB ПОСЛЕ OEM BINDER: adbd="+after);
             steps++;
             // For Android 12 MTS firmware, the old broad package scan could match
             // KION's developer/debug Activity. Never launch third-party/launcher

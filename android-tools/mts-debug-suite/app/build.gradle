@@ -5,11 +5,11 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'org.arst113.mtsadb.rea06'
+        applicationId 'org.arst113.mtsadb.oem07'
         minSdk 23
         targetSdk 32
-        versionCode 7
-        versionName '0.6.0'
+        versionCode 8
+        versionName '0.7.0'
     }
 
     compileOptions {
