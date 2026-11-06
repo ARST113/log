@@ -1,0 +1,52 @@
+name: REA static analysis of Developer Options APK
+
+on:
+  push:
+    branches: [mts-debug-suite]
+    paths: [".github/workflows/rea-original-apk.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install official REA and its pinned JADX provider
+        run: |
+          npm install -g rea-agents@latest
+          mkdir -p "$HOME/.local/share/rea/android"
+          curl -fLsS --retry 3 -o "$HOME/.local/share/rea/android/jadx-headless-mcp-0.7.1-all.jar" "https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar"
+          echo "6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75  $HOME/.local/share/rea/android/jadx-headless-mcp-0.7.1-all.jar" | sha256sum -c -
+          curl -fLsS --retry 3 "https://raw.githubusercontent.com/ARST113/log/apk-downloads/a.apk" -o /tmp/original.apk
+          file /tmp/original.apk
+          echo "REA_JADX_MCP_JAR=$HOME/.local/share/rea/android/jadx-headless-mcp-0.7.1-all.jar" >> "$GITHUB_ENV"
+          echo "REA_JADX_HEAP_MIB=2048" >> "$GITHUB_ENV"
+      - name: Run REA static analysis on original APK
+        run: |
+          mkdir -p rea-evidence
+          rea --version > rea-evidence/version.txt 2>&1 || true
+          rea inspect-android-package /tmp/original.apk > rea-evidence/package.json 2>&1
+          rea search-android-classes /tmp/original.apk MainActivity > rea-evidence/classes.json 2>&1
+          rea inspect-android-class /tmp/original.apk options.developer.com.developeroptions.MainActivity > rea-evidence/main-activity.json 2>&1
+          rea trace-android-references /tmp/original.apk options.developer.com.developeroptions.MainActivity > rea-evidence/references.json 2>&1 || true
+          echo "=== REA report summary ==="
+          wc -c rea-evidence/*
+          grep -oiE 'com.android.settings[.a-zA-Z$]*|APPLICATION_DEVELOPMENT_SETTINGS|android.settings.[A-Z_]+' rea-evidence/main-activity.json | sort -u | head -50 || true
+      - name: Upload inspectable evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rea-original-developer-options-evidence
+          path: rea-evidence/
+          if-no-files-found: warn
