@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.16-nextgen
+ * Версия: 1.2.17-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -2477,6 +2477,8 @@
             '@keyframes button-fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }' +
             '.full-start-new__buttons .full-start__button { box-sizing:border-box; position:relative; flex-shrink:0; }' +
             '.full-start-new__buttons > .button--play.buttons-ng-native-play { display:none !important; }' +
+            /* Native Watch remains in DOM for source events; it is never a visible control. */
+            'body .full-start-new__buttons > .button--play { display:none !important; visibility:hidden !important; pointer-events:none !important; }' +
             '.full-start-new__buttons > .full-start__button.view--online.lampac--button:not(.buttons-ng-source-bridge) > svg { display:none !important; }' +
             '.full-start-new__buttons > .full-start__button.view--online.lampac--button:not(.buttons-ng-source-bridge)::before {content:"";display:block;flex:0 0 1.5em;width:1.5em;height:1.5em;min-width:1.5em;background:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20d%3D%22M20.331%2014.644l-13.794-13.831%2017.55%2010.075zM2.938%200c-0.813%200.425-1.356%201.2-1.356%202.206v27.581c0%201.006%200.544%201.781%201.356%202.206l16.038-16zM29.512%2014.1l-3.681-2.131-4.106%204.031%204.106%204.031%203.756-2.131c1.125-0.893%201.125-2.906-0.075-3.8zM6.538%2031.188l17.55-10.075-3.756-3.756z%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E") center/contain no-repeat;pointer-events:none;}' +
             '.full-start-new__buttons > .full-start__button.view--online.lampac--button:not(.buttons-ng-source-bridge).focus::before {filter:brightness(0);}' +
@@ -2537,6 +2539,15 @@
             '.full-start-new__buttons .full-start__button.button-mode-1.focus .text-wrapper, .full-start-new__buttons .full-start__button.button-mode-1.buttons-ng-hovered .text-wrapper { display:inline-block !important; position:static !important; opacity:1 !important; visibility:visible !important; }' +
             '/* A stationary TV air-mouse pointer must not re-expand a button via Lampa mouseenter/focus. */' +
             '.full-start-new__buttons.buttons-ng-pointer-mode .full-start__button.button-mode-1.focus:not(.buttons-ng-hovered) > span, .full-start-new__buttons.buttons-ng-pointer-mode .full-start__button.button-mode-1.focus:not(.buttons-ng-hovered) .text-wrapper { display:none !important; }' +
+            '}' +
+            // Keep every button at a fixed grid coordinate. Expanding only the
+            // focused cell cannot push later controls to a new row (TV/desktop).
+            // Phone keeps the original compact flex-wrap behavior.
+            '@media screen and (min-width:768px) {' +
+            'body .full-start-new__buttons {display:grid !important;grid-template-columns:repeat(auto-fill,minmax(7.5em,1fr)) !important;grid-auto-rows:max-content !important;align-items:start !important;justify-items:start !important;column-gap:.5em !important;row-gap:.5em !important;}' +
+            'body .full-start-new__buttons > .full-start__button.selector {width:3.5em !important;max-width:100% !important;height:2.8em !important;min-height:2.8em !important;box-sizing:border-box !important;overflow:hidden !important;flex-shrink:0 !important;}' +
+            'body .full-start-new__buttons > .full-start__button.button-mode-1.focus,body .full-start-new__buttons > .full-start__button.button-mode-1.buttons-ng-hovered,body .full-start-new__buttons > .full-start__button.button-mode-3 {width:100% !important;}' +
+            'body .full-start-new__buttons > .full-start__button.button-mode-1.focus > span,body .full-start-new__buttons > .full-start__button.button-mode-1.buttons-ng-hovered > span,body .full-start-new__buttons > .full-start__button.button-mode-3 > span {white-space:nowrap !important;overflow:hidden !important;text-overflow:ellipsis !important;flex-shrink:1 !important;}' +
             '}' +
             '@media screen and (max-width:767px) {' +
             '/* Keep phone layout untouched even after changing viewport orientation. */' +
