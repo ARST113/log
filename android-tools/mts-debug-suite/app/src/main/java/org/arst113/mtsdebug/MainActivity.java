@@ -10,12 +10,14 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
+import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.Gravity;
@@ -83,92 +85,50 @@ public class MainActivity extends Activity {
         scroller.addView(page);
         setContentView(scroller);
 
-        TextView title = text("MTS DEBUG TOOLBOX 0.1", 25, WHITE, true);
+        TextView title = text("MTS ADB TOOLBOX 0.4", 25, WHITE, true);
         page.addView(title);
-        TextView info = text("Диагностика режима разработчика: ZTE / Android TV\nУправление кнопками пульта. После проверки экрана нажми «Назад».", 16, 0xffb7cbdd, false);
+        TextView info = text("Приоритет: настоящие приложения из 4PDA и OEM-компонент.\nСтрелки пульта — выбор, OK — запуск.", 16, 0xffb7cbdd, false);
         page.addView(info);
 
-        section(page, "1. Сначала включаем ADB");
-        page.addView(text("Цель: открыть настройку отладки и включить её штатным способом. В случае системного запрета программа покажет причину. Получение root без su невозможно.", 16, 0xffb7cbdd, false));
-        button(page, "ADB 1: открыть параметры разработчика", () ->
-            launch(new LaunchTarget("Стандартный экран разработчика",
+        section(page, "1. Приложения из инструкций 4PDA");
+        page.addView(text("Запуск ОРИГИНАЛЬНЫХ приложений, если они установлены на приставке. Эта утилита не содержит их APK внутри.", 16, 0xffb7cbdd, false));
+        button(page, "1. Developer Options Shortcut & Device Info 1.058", () ->
+            openDeveloperOptionsTool());
+        button(page, "2. Settings App 1.4 (экран APPS / App development)", () ->
+            openOriginalApp("settings app",
+                "Settings App 1.4 не установлено или не видно. Оригинальный APK опубликован в теме SDMC DV8235 на 4PDA, сообщение №1765.",
+                "https://4pda.to/forum/index.php?showtopic=1054076&st=1760"));
+        section(page, "2. Способ из 4PDA: OEMServiceClient");
+        page.addView(text("На SDMC DV8235: системные приложения → OEMServiceClient → Открыть → SET ADB TRUE. На ZTE B866 компонент может отсутствовать. Метод не запускается автоматически.", 15, 0xffffd09e, false));
+        button(page, "Найти и открыть OEMServiceClient", this::openOemServiceClient);
+
+        section(page, "3. Проверка результата");
+        button(page, "Проверить ADB и показать IP приставки", this::adbDiagnostics);
+        button(page, "Скопировать журнал для диагностики", this::copyReport);
+
+        section(page, "4. Дополнительные инструменты");
+        LinearLayout extras = new LinearLayout(this);
+        extras.setOrientation(LinearLayout.VERTICAL);
+        extras.setVisibility(View.GONE);
+        button(page, "Показать / скрыть технические варианты", () -> {
+            extras.setVisibility(extras.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+        });
+        button(extras, "Открыть стандартные настройки разработчика", () ->
+            launch(new LaunchTarget("Обычный экран Android Developer Options",
                 new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))));
-        button(page, "ADB 2: открыть сведения об устройстве (номер сборки)", () ->
-            launch(new LaunchTarget("Сведения об устройстве",
-                new Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))));
-        button(page, "ADB 3: открыть беспроводную отладку (Android 11+)", () ->
-            launch(explicit("Беспроводная отладка", "com.android.settings",
-                "com.android.settings.Settings$WirelessDebuggingActivity")));
-        button(page, "ADB 4: попытка через ранее предоставленные системные права", this::confirmPrivilegedAdb);
-        button(page, "ADB 5: попробовать через su/root", this::confirmRoot);
-        button(page, "ADB: диагностировать службу и сетевой адрес", this::adbDiagnostics);
-
-        section(page, "2. Другие варианты открытия настроек");
-        attempts.add(new LaunchTarget("Стандартный Android — параметры разработчика",
-            new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)));
-        attempts.add(new LaunchTarget("Android — сведения об устройстве",
-            new Intent(Settings.ACTION_DEVICE_INFO_SETTINGS)));
-        attempts.add(new LaunchTarget("Android — основные настройки",
-            new Intent(Settings.ACTION_SETTINGS)));
-        attempts.add(new LaunchTarget("Android — настройки приложений",
-            new Intent(Settings.ACTION_APPLICATION_SETTINGS)));
-
-        // Known AOSP / Android TV component names. OEM builds may omit or block them.
-        attempts.add(explicit("AOSP — DevelopmentSettingsDashboardActivity",
-            "com.android.settings",
-            "com.android.settings.Settings$DevelopmentSettingsDashboardActivity"));
-        attempts.add(explicit("AOSP — DevelopmentSettingsActivity",
-            "com.android.settings",
-            "com.android.settings.Settings$DevelopmentSettingsActivity"));
-        attempts.add(explicit("AOSP — legacy DevelopmentSettings",
-            "com.android.settings",
-            "com.android.settings.DevelopmentSettings"));
-        attempts.add(explicit("Android TV — development screen",
-            "com.android.tv.settings",
-            "com.android.tv.settings.device.development.DevelopmentSettingsActivity"));
-        attempts.add(explicit("Android TV — main settings",
-            "com.android.tv.settings",
-            "com.android.tv.settings.MainSettings"));
-        attempts.add(explicit("AOSP — Wireless Debugging",
-            "com.android.settings",
-            "com.android.settings.Settings$WirelessDebuggingActivity"));
-        attempts.add(explicit("Android TV — Wireless Debugging",
-            "com.android.tv.settings",
-            "com.android.tv.settings.device.development.WirelessDebuggingActivity"));
-
-        button(page, "Автоподбор: открыть первый доступный экран", () -> {
-            append("Начата проверка вариантов. Успешный запуск Activity не означает разрешение на ADB.");
-            for (LaunchTarget target : attempts) {
-                if (launch(target)) return;
-            }
-            append("Ни один из известных экранов не открылся.");
-        });
-
-        for (LaunchTarget target : attempts) {
-            button(page, target.name, () -> launch(target));
-        }
-        button(page, "Запустить системное приложение Settings", () -> {
-            launchPackage("com.android.settings");
-        });
-        button(page, "Запустить приложение Android TV Settings", () -> {
-            launchPackage("com.android.tv.settings");
-        });
-
-        section(page, "3. Поиск скрытых экранов");
-        TextView hint = text("Сканируются только известные пакеты системных настроек. Можно запускать найденные экспортированные Activity по отдельности; закрытые система не разрешит.", 15, 0xffb7cbdd, false);
-        page.addView(hint);
-        button(page, "Найти доступные Activity (аналог Activity Launcher)", this::scanActivities);
+        button(extras, "Открыть Android TV Settings", () -> launchPackage("com.android.tv.settings"));
+        button(extras, "Найти экспортированные системные Activity", this::scanActivities);
         foundActivities = new LinearLayout(this);
         foundActivities.setOrientation(LinearLayout.VERTICAL);
-        page.addView(foundActivities);
-
-        section(page, "4. Диагностика");
-        button(page, "Проверить локальный порт 5555", this::probePort);
-        button(page, "Обновить сведения о прошивке", this::deviceReport);
-        button(page, "Root/Bootloader: проверить возможности (без изменений)", this::rootDiagnostics);
-        button(page, "Root: запросить su и проверить uid", this::confirmSuCheck);
-        button(page, "Запустить Magisk, если установлен", () -> launchPackage("com.topjohnwu.magisk"));
-        button(page, "Root/SU: попытаться включить Developer Options + USB ADB", this::confirmRoot);
+        extras.addView(foundActivities);
+        button(extras, "Проверить порт 5555", this::probePort);
+        button(extras, "Root и загрузчик: только диагностика", this::rootDiagnostics);
+        button(extras, "Проверить наличие su", this::confirmSuCheck);
+        button(extras, "Попытаться включить ADB через существующие системные права",
+            this::confirmPrivilegedAdb);
+        button(extras, "Попытаться включить ADB через существующий root",
+            this::confirmRoot);
+        page.addView(extras);
 
         section(page, "5. Журнал и результаты");
         TextView warning = text(
@@ -186,6 +146,111 @@ public class MainActivity extends Activity {
         append("Запуск приложения.");
         deviceReport();
         adbDiagnostics();
+    }
+
+    private void openDeveloperOptionsTool() {
+        String pkg = "options.developer.com.developeroptions";
+        try {
+            getPackageManager().getApplicationInfo(pkg, 0);
+            append("Найден оригинальный Developer Options Shortcut: " + pkg);
+            launchPackage(pkg);
+        } catch (PackageManager.NameNotFoundException e) {
+            openOriginalApp("developer options shortcut",
+                "Оригинальный Developer Options Shortcut & Device Info 1.058 не обнаружен. Его APK уже есть в ARST113/log (a.apk).",
+                "https://cdn.jsdelivr.net/gh/ARST113/log@apk-downloads/a.apk");
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private void openOriginalApp(String searchLabel, String missingMessage, String source) {
+        PackageManager pm = getPackageManager();
+        String exact = searchLabel.toLowerCase(Locale.ROOT);
+        String selected = null;
+        int best = Integer.MAX_VALUE;
+        try {
+            for (ApplicationInfo info : pm.getInstalledApplications(0)) {
+                String label = String.valueOf(pm.getApplicationLabel(info)).toLowerCase(Locale.ROOT).trim();
+                String packageName = info.packageName.toLowerCase(Locale.ROOT);
+                int rank = label.equals(exact) ? 0
+                    : label.startsWith(exact) ? 1
+                    : label.contains(exact) ? 2
+                    : packageName.contains(exact.replace(" ", "")) ? 3 : 100;
+                if (rank < best) { selected = info.packageName; best = rank; }
+            }
+        } catch (Exception e) {
+            append("Не удалось проверить установленные приложения: " + e.toString());
+        }
+        if (selected != null && best < 100) {
+            append("Найдено приложение " + selected + " (совпадение=" + best + ")");
+            launchPackage(selected);
+        } else {
+            append(missingMessage);
+            new AlertDialog.Builder(this)
+                .setTitle("Программа не найдена")
+                .setMessage(missingMessage + "\n\nОткрыть страницу с оригинальной программой?")
+                .setNegativeButton("Закрыть", (d, w) -> {})
+                .setPositiveButton("Открыть", (d, w) -> openUrl(source))
+                .show();
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private void openOemServiceClient() {
+        PackageManager pm = getPackageManager();
+        ArrayList<ApplicationInfo> found = new ArrayList<>();
+        try {
+            for (ApplicationInfo info : pm.getInstalledApplications(0)) {
+                String label = String.valueOf(pm.getApplicationLabel(info)).toLowerCase(Locale.ROOT);
+                String pkg = info.packageName.toLowerCase(Locale.ROOT);
+                if (label.contains("oemserviceclient") || pkg.contains("oemserviceclient")) {
+                    found.add(info);
+                }
+            }
+        } catch (Exception e) {
+            append("OEMServiceClient: ошибка перечня пакетов — " + e);
+        }
+        if (found.isEmpty()) {
+            append("OEMServiceClient отсутствует или не обнаружен в этой прошивке.");
+            new AlertDialog.Builder(this).setTitle("OEMServiceClient не обнаружен")
+                .setMessage("Метод SET ADB TRUE описан для SDMC DV8235. На текущей приставке компонент не найден. Проверь системные приложения вручную: Настройки → Приложения → Показать системные приложения.")
+                .setPositiveButton("Понятно", (d, w) -> {})
+                .show();
+            return;
+        }
+        for (ApplicationInfo info : found) {
+            String pkg = info.packageName;
+            append("OEMServiceClient найден: " + pkg + " (uid=" + info.uid + ")");
+            Intent main = pm.getLaunchIntentForPackage(pkg);
+            if (main != null) {
+                launch(new LaunchTarget("OEMServiceClient " + pkg, main));
+                return;
+            }
+            try {
+                PackageInfo pi = pm.getPackageInfo(pkg, PackageManager.GET_ACTIVITIES);
+                if (pi.activities != null) {
+                    for (ActivityInfo activity : pi.activities) {
+                        if (activity.exported && activity.enabled) {
+                            if (launch(explicit("OEMServiceClient: " + activity.name, pkg, activity.name))) {
+                                append("В интерфейсе OEMServiceClient найди кнопку SET ADB TRUE.");
+                                return;
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ex) { append("OEMServiceClient: " + ex); }
+            Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + pkg));
+            if (launch(new LaunchTarget("Сведения о системном OEMServiceClient", details))) {
+                append("В сведениях о приложении попробуй кнопку «Открыть» → SET ADB TRUE.");
+                return;
+            }
+        }
+        append("OEMServiceClient обнаружен, но прошивка заблокировала все доступные способы открытия.");
+    }
+
+    private void openUrl(String url) {
+        try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }
+        catch (Exception e) { append("Не удалось открыть страницу: " + e); }
     }
 
     private LaunchTarget explicit(String title, String pkg, String cls) {

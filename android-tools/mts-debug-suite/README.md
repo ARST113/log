@@ -3,7 +3,13 @@
 Open-source, TV-remote-friendly Android app for diagnosing access to
 Developer Options on ZTE ZXV10 B866 (MTS), Android 12, and similar devices.
 
-Features (v0.3, ADB-first):
+Features (v0.4, original-apps-first):
+- Prioritizes launching real installed 4PDA apps: Developer Options Shortcut & Device Info 1.058 and Settings App 1.4. These third-party apps are NOT embedded or redistributed, and must be installed separately.
+- Finds possible OEMServiceClient system package and tries exported launchers, with safe fallback to Android app details; SET ADB TRUE remains a manual on-screen step and is documented for SDMC DV8235, NOT confirmed on ZTE B866.
+- Hides generic Android intent exploration under an expandable 'Additional Tools' section.
+- No claim of one-click ADB unlock, no root exploit, no privileged settings changes without user consent.
+
+Previous features:
 - ADB-first controls: developer settings, device build screen, wireless debugging candidate, and permission-aware settings write.
 - ADB daemon properties, network IP discovery for pairing, device status report.
 - ADB permissions are never elevated automatically: non-root unlock is not guaranteed.
