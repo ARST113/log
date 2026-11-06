@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.11-nextgen
+ * Версия: 1.2.12-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -2410,6 +2410,8 @@
             '.full-start-new__buttons.buttons-ng-pointer-mode .full-start__button.button-mode-1.focus:not(.buttons-ng-hovered) > span, .full-start-new__buttons.buttons-ng-pointer-mode .full-start__button.button-mode-1.focus:not(.buttons-ng-hovered) .text-wrapper { display:none !important; }' +
             '}' +
             '@media screen and (max-width:767px) {' +
+            '/* Keep phone layout untouched even after changing viewport orientation. */' +
+            '.full-start-new__buttons { min-height:0 !important; }' +
             '.full-start-new__buttons .full-start__button.button-mode-1 > span, .full-start-new__buttons .full-start__button.button-mode-1 .text-wrapper { display:none !important; }' +
             '}' +
             '' +
