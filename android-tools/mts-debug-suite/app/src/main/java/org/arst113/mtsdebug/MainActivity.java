@@ -55,6 +55,7 @@ public class MainActivity extends Activity {
     private LinearLayout foundActivities;
     private final List<LaunchTarget> attempts = new ArrayList<>();
     private TextView adviceView;
+    private TextView exportStatus;
     private LinearLayout extraOptions;
     private final ArrayList<AutoAdbAssistant.Target> autoTargets=new ArrayList<>();
     private boolean autoRunning=false,autoHandoff=false;
@@ -92,12 +93,24 @@ public class MainActivity extends Activity {
         scroller.addView(page);
         setContentView(scroller);
 
-        TextView title=text("MTS ADB AUTO 0.5.1",25,WHITE,true);
+        TextView title=text("MTS ADB REA 0.6",25,WHITE,true);
         page.addView(title);
         page.addView(text("Единая утилита: Developer Options, Device Info, Settings App. Все проверки доступны из одной кнопки.",17,0xffb7cbdd,false));
         section(page,"АВТОМАТИЧЕСКИЙ ПОДБОР ADB");
         button(page,"ЗАПУСТИТЬ АВТОПОДБОР ADB",this::startAutoAdb);
         page.addView(text("Проверяет ADB, права, su, компоненты OEM и открывает доступный экран. После возврата из системных настроек проверка продолжится.",16,0xffffcf9a,false));
+        section(page,"Реверс-инжиниринг OEMServiceClient");
+        page.addView(text("Без ADB можно экспортировать установленный APK OEMServiceClient на телефон или компьютер через Wi-Fi. REA сможет изучить код SET ADB TRUE после получения файла.",16,0xffb7cbdd,false));
+        button(page,"ЭКСПОРТИРОВАТЬ OEMServiceClient APK ДЛЯ REA",()->
+            LocalApkExporter.start(this,"com.dcw.oemserviceclient",result->{
+                if(exportStatus!=null)exportStatus.setText(result);
+                append("ЭКСПОРТ: "+result);
+            }));
+        exportStatus=text("Экспорт не запускался.",17,0xffd0e7f5,false);
+        exportStatus.setTextIsSelectable(true);
+        exportStatus.setPadding(dp(8),dp(12),dp(8),dp(12));
+        exportStatus.setBackgroundColor(0xff223447);
+        page.addView(exportStatus);
         section(page,"Результат анализа");
         adviceView=text("Анализ будет показан после нажатия главной кнопки.",16,0xffcfe7fa,false);
         adviceView.setPadding(dp(8),dp(10),dp(8),dp(10));
@@ -135,7 +148,7 @@ public class MainActivity extends Activity {
             reportView.setText(report.toString());
             adviceView.setText("Восстановлен последний журнал. Проверь строки АDB ПОСЛЕ и выбранные компоненты ниже.");
         }
-        append("MTS ADB Auto 0.5.1 запущен. Нажми главную кнопку для нового автоподбора.");
+        append("MTS ADB REA 0.6 запущен. Для изучения OEMServiceClient нажми кнопку экспорта.");
     }
 
     private void startAutoAdb() {

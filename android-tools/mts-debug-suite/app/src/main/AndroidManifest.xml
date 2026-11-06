@@ -20,7 +20,7 @@
     <application
         android:allowBackup="false"
         android:icon="@android:drawable/ic_menu_manage"
-        android:label="MTS ADB Auto 0.5.1"
+        android:label="MTS ADB REA 0.6"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity
             android:name=".MainActivity"

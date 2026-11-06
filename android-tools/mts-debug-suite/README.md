@@ -24,3 +24,9 @@ Separate package org.arst113.mtsadb.fix051 avoids signing conflict with older bu
 - The first target is com.android.settings.DevelopmentSettings, which was found in strings from the original Developer Options Shortcut 1.058 APK.
 - All diagnostics are persisted in SharedPreferences so the report survives low-memory activity recreation.
 - Shows local ADB status immediately before a system settings handoff. OpenRouter still requires a separately configured GitHub Actions secret.
+
+## v0.6.0 — offline OEM APK exporter for REA
+
+The new prominent button reads the installed system app `com.dcw.oemserviceclient` via `ApplicationInfo.publicSourceDir` and starts a short-lived HTTP server on the TV (`port 8765`). The phone/PC on the same Wi-Fi can download the APK with a one-time randomized URL. The server stops after one download or 5 minutes. This does not enable ADB, does not request root, and does not send anything to OpenRouter. Package access may be denied by OEM SELinux rules. Once the APK is on a PC, use REA + JADX to inspect `SET ADB TRUE` and understand why the service does not activate `adbd` on the operator firmware.
+
+This version has package name `org.arst113.mtsadb.rea06` so it can be installed beside 0.5.x. Old v0.5.x releases remain available.
