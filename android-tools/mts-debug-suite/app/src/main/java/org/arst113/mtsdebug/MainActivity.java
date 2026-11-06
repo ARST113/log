@@ -54,6 +54,13 @@ public class MainActivity extends Activity {
     private TextView reportView;
     private LinearLayout foundActivities;
     private final List<LaunchTarget> attempts = new ArrayList<>();
+    private TextView adviceView;
+    private LinearLayout extraOptions;
+    private final ArrayList<AutoAdbAssistant.Target> autoTargets=new ArrayList<>();
+    private boolean autoRunning=false,autoHandoff=false;
+    private long lastAutoLaunch=0;
+    private int nextAuto=0;
+
 
     private static final int BG = 0xff101820;
     private static final int PANEL = 0xff233447;
@@ -85,172 +92,102 @@ public class MainActivity extends Activity {
         scroller.addView(page);
         setContentView(scroller);
 
-        TextView title = text("MTS ADB TOOLBOX 0.4", 25, WHITE, true);
+        TextView title=text("MTS ADB AUTO 0.5",25,WHITE,true);
         page.addView(title);
-        TextView info = text("Приоритет: настоящие приложения из 4PDA и OEM-компонент.\nСтрелки пульта — выбор, OK — запуск.", 16, 0xffb7cbdd, false);
-        page.addView(info);
-
-        section(page, "1. Приложения из инструкций 4PDA");
-        page.addView(text("Запуск ОРИГИНАЛЬНЫХ приложений, если они установлены на приставке. Эта утилита не содержит их APK внутри.", 16, 0xffb7cbdd, false));
-        button(page, "1. Developer Options Shortcut & Device Info 1.058", () ->
-            openDeveloperOptionsTool());
-        button(page, "2. Settings App 1.4 (экран APPS / App development)", () ->
-            openOriginalApp("settings app",
-                "Settings App 1.4 не установлено или не видно. Оригинальный APK опубликован в теме SDMC DV8235 на 4PDA, сообщение №1765.",
-                "https://4pda.to/forum/index.php?showtopic=1054076&st=1760"));
-        section(page, "2. Способ из 4PDA: OEMServiceClient");
-        page.addView(text("На SDMC DV8235: системные приложения → OEMServiceClient → Открыть → SET ADB TRUE. На ZTE B866 компонент может отсутствовать. Метод не запускается автоматически.", 15, 0xffffd09e, false));
-        button(page, "Найти и открыть OEMServiceClient", this::openOemServiceClient);
-
-        section(page, "3. Проверка результата");
-        button(page, "Проверить ADB и показать IP приставки", this::adbDiagnostics);
-        button(page, "Скопировать журнал для диагностики", this::copyReport);
-
-        section(page, "4. Дополнительные инструменты");
-        LinearLayout extras = new LinearLayout(this);
-        extras.setOrientation(LinearLayout.VERTICAL);
-        extras.setVisibility(View.GONE);
-        button(page, "Показать / скрыть технические варианты", () -> {
-            extras.setVisibility(extras.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
-        });
-        button(extras, "Открыть стандартные настройки разработчика", () ->
-            launch(new LaunchTarget("Обычный экран Android Developer Options",
-                new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))));
-        button(extras, "Открыть Android TV Settings", () -> launchPackage("com.android.tv.settings"));
-        button(extras, "Найти экспортированные системные Activity", this::scanActivities);
-        foundActivities = new LinearLayout(this);
-        foundActivities.setOrientation(LinearLayout.VERTICAL);
-        extras.addView(foundActivities);
-        button(extras, "Проверить порт 5555", this::probePort);
-        button(extras, "Root и загрузчик: только диагностика", this::rootDiagnostics);
-        button(extras, "Проверить наличие su", this::confirmSuCheck);
-        button(extras, "Попытаться включить ADB через существующие системные права",
-            this::confirmPrivilegedAdb);
-        button(extras, "Попытаться включить ADB через существующий root",
-            this::confirmRoot);
-        page.addView(extras);
-
-        section(page, "5. Журнал и результаты");
-        TextView warning = text(
-            "Внимание: Android скрывает фактические значения adb_enabled и development_settings_enabled от обычных приложений. Открытый порт 5555 тоже не доказывает, что ADB авторизован. Утилита не снимает ограничения оператора.",
-            15, 0xffffcf9a, false);
-        page.addView(warning);
-        button(page, "Скопировать отчёт", this::copyReport);
-        button(page, "Поделиться отчётом", this::shareReport);
-        reportView = text("", 14, 0xffcde5f6, false);
+        page.addView(text("Единая утилита: Developer Options, Device Info, Settings App. Все проверки доступны из одной кнопки.",17,0xffb7cbdd,false));
+        section(page,"АВТОМАТИЧЕСКИЙ ПОДБОР ADB");
+        button(page,"ЗАПУСТИТЬ АВТОПОДБОР ADB",this::startAutoAdb);
+        page.addView(text("Проверяет ADB, права, su, компоненты OEM и открывает доступный экран. После возврата из системных настроек проверка продолжится.",16,0xffffcf9a,false));
+        section(page,"Результат анализа");
+        adviceView=text("Анализ будет показан после нажатия главной кнопки.",16,0xffcfe7fa,false);
+        adviceView.setPadding(dp(8),dp(10),dp(8),dp(10));
+        adviceView.setBackgroundColor(0xff192b3b);
+        page.addView(adviceView);
+        section(page,"Журнал и статистика");
+        button(page,"Скопировать отчёт",this::copyReport);
+        button(page,"Поделиться отчётом",this::shareReport);
+        button(page,"Дополнительные функции (показать / скрыть)",()->
+            extraOptions.setVisibility(extraOptions.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE));
+        extraOptions=new LinearLayout(this);
+        extraOptions.setOrientation(LinearLayout.VERTICAL);
+        extraOptions.setVisibility(View.GONE);
+        button(extraOptions,"Developer Options — настройки разработчика",()->
+            launch(new LaunchTarget("Developer Options",new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))));
+        button(extraOptions,"Device Info — сведения об устройстве",this::deviceReport);
+        button(extraOptions,"Settings App — настройки приложений",()->
+            launch(new LaunchTarget("Settings App / Applications",new Intent(Settings.ACTION_APPLICATION_SETTINGS))));
+        button(extraOptions,"Settings App — настройки сети",()->
+            launch(new LaunchTarget("Settings App / Wireless",new Intent(Settings.ACTION_WIRELESS_SETTINGS))));
+        button(extraOptions,"Settings App — сведения о системе",()->
+            launch(new LaunchTarget("Settings App / Device",new Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))));
+        button(extraOptions,"OEMServiceClient — поиск",this::openOemServiceClient);
+        button(extraOptions,"Root и загрузчик — диагностика",this::rootDiagnostics);
+        button(extraOptions,"ADB: служба и адрес",this::adbDiagnostics);
+        page.addView(extraOptions);
+        reportView=text("",15,0xffcde5f6,false);
         reportView.setTextIsSelectable(true);
-        reportView.setPadding(dp(8), dp(10), dp(8), dp(10));
+        reportView.setPadding(dp(8),dp(10),dp(8),dp(10));
         reportView.setBackgroundColor(0xff192532);
         page.addView(reportView);
-
-        append("Запуск приложения.");
-        deviceReport();
-        adbDiagnostics();
+        append("MTS ADB Auto 0.5. Нажми главную кнопку.");
     }
 
-    private void openDeveloperOptionsTool() {
-        String pkg = "options.developer.com.developeroptions";
-        try {
-            getPackageManager().getApplicationInfo(pkg, 0);
-            append("Найден оригинальный Developer Options Shortcut: " + pkg);
-            launchPackage(pkg);
-        } catch (PackageManager.NameNotFoundException e) {
-            openOriginalApp("developer options shortcut",
-                "Оригинальный Developer Options Shortcut & Device Info 1.058 не обнаружен. Его APK уже есть в ARST113/log (a.apk).",
-                "https://cdn.jsdelivr.net/gh/ARST113/log@apk-downloads/a.apk");
-        }
-    }
-
-    @SuppressWarnings("deprecation")
-    private void openOriginalApp(String searchLabel, String missingMessage, String source) {
-        PackageManager pm = getPackageManager();
-        String exact = searchLabel.toLowerCase(Locale.ROOT);
-        String selected = null;
-        int best = Integer.MAX_VALUE;
-        try {
-            for (ApplicationInfo info : pm.getInstalledApplications(0)) {
-                String label = String.valueOf(pm.getApplicationLabel(info)).toLowerCase(Locale.ROOT).trim();
-                String packageName = info.packageName.toLowerCase(Locale.ROOT);
-                int rank = label.equals(exact) ? 0
-                    : label.startsWith(exact) ? 1
-                    : label.contains(exact) ? 2
-                    : packageName.contains(exact.replace(" ", "")) ? 3 : 100;
-                if (rank < best) { selected = info.packageName; best = rank; }
-            }
-        } catch (Exception e) {
-            append("Не удалось проверить установленные приложения: " + e.toString());
-        }
-        if (selected != null && best < 100) {
-            append("Найдено приложение " + selected + " (совпадение=" + best + ")");
-            launchPackage(selected);
-        } else {
-            append(missingMessage);
-            new AlertDialog.Builder(this)
-                .setTitle("Программа не найдена")
-                .setMessage(missingMessage + "\n\nОткрыть страницу с оригинальной программой?")
-                .setNegativeButton("Закрыть", (d, w) -> {})
-                .setPositiveButton("Открыть", (d, w) -> openUrl(source))
-                .show();
-        }
-    }
-
-    @SuppressWarnings("deprecation")
-    private void openOemServiceClient() {
-        PackageManager pm = getPackageManager();
-        ArrayList<ApplicationInfo> found = new ArrayList<>();
-        try {
-            for (ApplicationInfo info : pm.getInstalledApplications(0)) {
-                String label = String.valueOf(pm.getApplicationLabel(info)).toLowerCase(Locale.ROOT);
-                String pkg = info.packageName.toLowerCase(Locale.ROOT);
-                if (label.contains("oemserviceclient") || pkg.contains("oemserviceclient")) {
-                    found.add(info);
-                }
-            }
-        } catch (Exception e) {
-            append("OEMServiceClient: ошибка перечня пакетов — " + e);
-        }
-        if (found.isEmpty()) {
-            append("OEMServiceClient отсутствует или не обнаружен в этой прошивке.");
-            new AlertDialog.Builder(this).setTitle("OEMServiceClient не обнаружен")
-                .setMessage("Метод SET ADB TRUE описан для SDMC DV8235. На текущей приставке компонент не найден. Проверь системные приложения вручную: Настройки → Приложения → Показать системные приложения.")
-                .setPositiveButton("Понятно", (d, w) -> {})
-                .show();
-            return;
-        }
-        for (ApplicationInfo info : found) {
-            String pkg = info.packageName;
-            append("OEMServiceClient найден: " + pkg + " (uid=" + info.uid + ")");
-            Intent main = pm.getLaunchIntentForPackage(pkg);
-            if (main != null) {
-                launch(new LaunchTarget("OEMServiceClient " + pkg, main));
+    private void startAutoAdb() {
+        if(autoRunning){append("Проверка уже выполняется.");return;}
+        autoRunning=true;
+        autoHandoff=false;
+        nextAuto=0;
+        autoTargets.clear();
+        report.setLength(0);
+        reportView.setText("");
+        adviceView.setText("Проверяю локальные способы...");
+        append("Начат автоподбор ADB.");
+        AutoAdbAssistant.check(this,r->{
+            append(r.log);
+            append("ИТОГ: проверок "+r.checks+", запретов "+r.denials
+                +", системных экранов "+r.targets.size()+", adbd="+r.adbState);
+            autoTargets.addAll(r.targets);
+            AutoAdbAssistant.analyze(report.toString(),text->
+                runOnUiThread(()->adviceView.setText(text)));
+            if("running".equals(r.adbState)){
+                append("adbd запущен. Проверить авторизацию на ПК: adb devices.");
+                autoRunning=false;
                 return;
             }
-            try {
-                PackageInfo pi = pm.getPackageInfo(pkg, PackageManager.GET_ACTIVITIES);
-                if (pi.activities != null) {
-                    for (ActivityInfo activity : pi.activities) {
-                        if (activity.exported && activity.enabled) {
-                            if (launch(explicit("OEMServiceClient: " + activity.name, pkg, activity.name))) {
-                                append("В интерфейсе OEMServiceClient найди кнопку SET ADB TRUE.");
-                                return;
-                            }
-                        }
-                    }
-                }
-            } catch (Exception ex) { append("OEMServiceClient: " + ex); }
-            Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.parse("package:" + pkg));
-            if (launch(new LaunchTarget("Сведения о системном OEMServiceClient", details))) {
-                append("В сведениях о приложении попробуй кнопку «Открыть» → SET ADB TRUE.");
+            openNextAuto();
+        });
+    }
+
+    private void openNextAuto(){
+        while(nextAuto<autoTargets.size()){
+            AutoAdbAssistant.Target t=autoTargets.get(nextAuto++);
+            if(launch(new LaunchTarget(t.label,t.intent))){
+                autoHandoff=true;
+                lastAutoLaunch=android.os.SystemClock.elapsedRealtime();
+                append("Открыт кандидат "+nextAuto+"/"+autoTargets.size()+": "+t.label
+                    +". Если отладка разрешена, включи её и вернись кнопкой «Назад».");
                 return;
             }
         }
-        append("OEMServiceClient обнаружен, но прошивка заблокировала все доступные способы открытия.");
+        append("Варианты открытия исчерпаны. Системный запрет ADB может оставаться.");
+        autoRunning=false;
+        autoHandoff=false;
     }
 
-    private void openUrl(String url) {
-        try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }
-        catch (Exception e) { append("Не удалось открыть страницу: " + e); }
+    @Override protected void onResume(){
+        super.onResume();
+        if(!autoHandoff||!autoRunning)return;
+        if(android.os.SystemClock.elapsedRealtime()-lastAutoLaunch<900)return;
+        autoHandoff=false;
+        new android.os.Handler(getMainLooper()).postDelayed(()->{
+            if(!autoRunning)return;
+            String state=AutoAdbAssistant.prop("init.svc.adbd");
+            append("Возврат из настроек: adbd="+state);
+            if("running".equals(state)){
+                append("adbd теперь запущен. Проверь ADB-авторизацию на компьютере.");
+                autoRunning=false;
+            }else openNextAuto();
+        },350);
     }
 
     private LaunchTarget explicit(String title, String pkg, String cls) {

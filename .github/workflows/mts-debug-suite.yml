@@ -39,6 +39,8 @@ jobs:
           "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
       - name: Build APK
         working-directory: android-tools/mts-debug-suite
+        env:
+          MTS_OPENROUTER_API_KEY: ${{ secrets.MTS_OPENROUTER_API_KEY }}
         run: gradle --no-daemon assembleDebug
       - name: Save downloadable APK
         run: |
