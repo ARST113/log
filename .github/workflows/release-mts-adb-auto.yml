@@ -1,0 +1,63 @@
+name: Publish MTS ADB Auto 0.5.0 prerelease
+
+on:
+  push:
+    branches:
+      - mts-debug-suite
+    paths:
+      - ".github/workflows/release-mts-adb-auto.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prerelease:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout published APK
+        uses: actions/checkout@v4
+
+      - name: Verify APK integrity
+        run: |
+          test -s m.apk
+          test -s m.apk.sha256
+          sha256sum -c m.apk.sha256
+          cp m.apk MTS-ADB-Auto-v0.5.0.apk
+          sha256sum MTS-ADB-Auto-v0.5.0.apk > MTS-ADB-Auto-v0.5.0.apk.sha256
+          file MTS-ADB-Auto-v0.5.0.apk
+
+      - name: Write release notes
+        run: |
+          cat > RELEASE_NOTES.md <<'EOF'
+          ## MTS ADB Auto 0.5.0 — test prerelease
+          
+          Android TV tool for diagnostic checks and attempts to access ADB on operator-locked set-top boxes.
+          
+          - Single prominent auto-detection button
+          - Checks `adbd` service status, permissions, `su`, and TCP port 5555
+          - Searches exported OEM / developer settings screens and records attempts
+          - Includes Android Developer Options, Device Info and Settings App shortcuts in one APK
+          - Diagnostic report and available OpenRouter integration
+          
+          **Important:** This build does not contain an activated OpenRouter API key. Enabling ADB on an operator-locked firmware is not guaranteed, and is not yet verified on the target device. This is a development debug APK, signed by the CI debug key. ADB running does not prove that an external computer has been authorized.
+          
+          The APK is published as a GitHub Release asset so browsers should download it with the correct .apk filename.
+          EOF
+
+      - name: Create prerelease with APK attachment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view mts-adb-auto-v0.5.0 >/dev/null 2>&1; then
+            echo "Release already exists; leaving previously published assets unchanged."
+            exit 0
+          fi
+          gh release create mts-adb-auto-v0.5.0 \
+            MTS-ADB-Auto-v0.5.0.apk \
+            MTS-ADB-Auto-v0.5.0.apk.sha256 \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "MTS ADB Auto 0.5.0 — prerelease" \
+            --notes-file RELEASE_NOTES.md \
+            --prerelease
