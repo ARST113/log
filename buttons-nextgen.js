@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.13-nextgen
+ * Версия: 1.2.16-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -545,9 +545,17 @@
     // Keep originals there; expose independent controls through forwarding proxies.
     function groupBtnsByType(container){
         var target=container.find('.full-start-new__buttons').first();
-        // Recreate proxies from live sources, never reuse stale cross-card references.
-        target.children('.buttons-ng-source-bridge').remove();
-        var buttons=target.children('.full-start__button').not('.button--edit-order,.button--folder,.button--play');
+        // Keep the DOM identity of an active source proxy while its provider
+        // refreshes. Replacing a focused Torrent/JacRed proxy invalidates
+        // Navigator._focus and Start.last, making Lampa jump to Online.
+        var reusable={};
+        target.children('.buttons-ng-source-bridge').each(function(){
+            var btn=$(this);
+            var key=btn.data('buttons-ng-source-id')||getBtnIdentifier(btn);
+            (reusable[key]||(reusable[key]=[])).push(btn);
+        });
+        var buttons=target.children('.full-start__button')
+            .not('.button--edit-order,.button--folder,.button--play,.buttons-ng-source-bridge');
         var sources=container.find('.buttons--container').first();
         if(sources.length){
             sources.children('.full-start__button').not('.hide,.button--play').each(function(){
@@ -556,11 +564,18 @@
                 // Lampac already exposes its Online button outside Watch's source menu.
                 if(original.hasClass('view--online')&&original.hasClass('lampac--button')&&
                     target.children('.view--online.lampac--button').not('.buttons-ng-source-bridge').length)return;
-                var proxy=original.clone(false,false);
-                proxy.removeClass('focus button--priority').addClass('buttons-ng-source-bridge');
-                proxy.data('buttons-ng-id',getBtnIdentifier(original));
+                var sourceId=getBtnIdentifier(original);
+                var pool=reusable[sourceId];
+                var proxy=pool&&pool.length?pool.shift():null;
+                var fresh=!proxy;
+                if(fresh){
+                    proxy=original.clone(false,false);
+                    proxy.removeClass('focus button--priority').addClass('buttons-ng-source-bridge');
+                    proxy.data('buttons-ng-id',sourceId);
+                }
+                proxy.data('buttons-ng-source-id',sourceId);
                 proxy.data('buttons-ng-source-ref',this);
-                proxy.on('hover:enter hover:long',function(e){
+                if(fresh)proxy.on('hover:enter hover:long',function(e){
                     var originalNode=proxy.data('buttons-ng-source-ref');
                     var source=$(originalNode);
                     // A provider enabled later may replace the entire native source
@@ -579,6 +594,10 @@
                 buttons=buttons.add(proxy);
             });
         }
+        // Discard only proxies whose source genuinely disappeared.
+        Object.keys(reusable).forEach(function(key){
+            reusable[key].forEach(function(stale){stale.remove()});
+        });
         var groups={online:[],torrent:[],trailer:[],shots:[],book:[],reaction:[],subscribe:[],other:[]},seen={};
         function add(el){
             var b=$(el);
@@ -2007,8 +2026,15 @@
         var targetContainer = container.find('.full-start-new__buttons');
         if (!targetContainer.length) return false;
 
-        if(isFreshRender||!currentContainer||currentContainer[0]!==container[0]){allButtonsCache=[];allButtonsOriginal=[];}
+        if(isFreshRender||!currentContainer||currentContainer[0]!==container[0]){
+            allButtonsCache=[];allButtonsOriginal=[];
+            // A different card must not inherit the previous card's focus.
+            if(bmFocusCard!==container[0]){bmFocusCard=null;bmFocusId=null}
+        }
         currentContainer = container;
+        var oldFocus=(window.Navigator&&window.Navigator._focus)||null;
+        if(oldFocus&&container[0].contains(oldFocus))
+            bmRememberCardFocus(oldFocus);
         container.find('.button--edit-order, .button--folder').remove();
 
         var categories = groupBtnsByType(container);
@@ -2168,6 +2194,13 @@
         if(isFreshRender)animateBtnFadeIn(visibleButtons);
         else visibleButtons.forEach(function(b){b.css({opacity:'',animation:'','animation-delay':''})});
 
+        // Dynamic buttons are added after Start binds hover events. Track
+        // clicks and focus for future return from Torrent/JacRed, without
+        // caching detached nodes as the last target.
+        targetContainer.off('hover:enter.buttonsNgFocus hover:focus.buttonsNgFocus');
+        targetContainer.on('hover:enter.buttonsNgFocus hover:focus.buttonsNgFocus',
+            '> .full-start__button.selector',function(){bmRememberCardFocus(this)});
+
         // Stabilize the card height while button labels expand/reflow under
         // the pointer. Preserve enough space for two rows on crowded TV strips.
         var frameHeight=0,rowsHeight=0,visible=targetContainer.children('.full-start__button.selector')
@@ -2187,6 +2220,64 @@
         }, 100);
 
         return true;
+    }
+
+    // The native Start controller remembers a DOM NODE in link.last. Dynamic
+    // providers replace Torrent/JacRed source proxies; a stale node makes
+    // Lampa.collectionFocus silently fall back to the first Online control.
+    // Store a semantic ID scoped to the current card, not the disposable node.
+    var bmFocusCard=null,bmFocusId=null,bmFocusRestoring=false;
+    function bmRememberCardFocus(node){
+        if(bmFocusRestoring||!currentContainer||!currentContainer.length||!node)return;
+        var strip=currentContainer.find('.full-start-new__buttons')[0];
+        if(!strip||node.parentNode!==strip||!node.classList.contains('selector'))return;
+        bmFocusCard=currentContainer[0];
+        bmFocusId=getBtnIdentifier($(node));
+    }
+    function bmFindCardFocus(container,id){
+        if(!container||!container.length||!id)return null;
+        var strip=container.find('.full-start-new__buttons').first();
+        var candidate=null;
+        strip.children('.full-start__button.selector').each(function(){
+            if(candidate)return;
+            var b=$(this);
+            if(getBtnIdentifier(b)===id&&!b.hasClass('hidden')&&!b.hasClass('hide')&&
+               !b.hasClass('buttons-ng-native-play')&&this.getClientRects().length)
+                candidate=this;
+        });
+        return candidate;
+    }
+    function bmHasLiveNavigationCollection(container){
+        if(!container||!container.length||!window.Navigator||
+           !window.Navigator._collection)return false;
+        var expected=container[0].querySelectorAll('.selector');
+        var actual=window.Navigator._collection;
+        if(expected.length!==actual.length)return false;
+        for(var i=0;i<expected.length;i++){
+            if(expected[i]!==actual[i])return false;
+        }
+        return true;
+    }
+    function bmRestoreCardFocus(container,id){
+        if(!container||!container.length||!id||!Lampa.Controller||
+           Lampa.Controller.enabled().name!=='full_start')return false;
+        var selected=bmFindCardFocus(container,id);
+        if(!selected)return false;
+        var active=Lampa.Controller.enabled().controller;
+        try{
+            bmFocusRestoring=true;
+            // Repeatedly rebuilding an unchanged collection clears .focus and
+            // makes the selected button visually blink on every provider refresh.
+            if(!bmHasLiveNavigationCollection(container))
+                Lampa.Controller.collectionSet(container);
+            if(!window.Navigator||window.Navigator._focus!==selected||
+               !selected.classList.contains('focus'))
+                Lampa.Controller.collectionFocus(selected,container);
+            if(active&&active.link)active.link.last=selected;
+            bmFocusCard=container[0];bmFocusId=id;
+            return true;
+        }catch(e){console.warn('Buttons NextGen: restore source focus',e);return false}
+        finally{bmFocusRestoring=false}
     }
 
     // Geometry-based SpatialNavigator may skip buttons on TV as focused labels
@@ -2219,6 +2310,7 @@
             // A subsequent mouse move begins a fresh pointer session.
             if(typeof window.__buttonsNgPointerReset==='function')window.__buttonsNgPointerReset();
             Lampa.Controller.collectionFocus(next,currentContainer);
+            bmRememberCardFocus(next);
             var ctrl=Lampa.Controller.enabled().controller;
             if(ctrl&&ctrl.link)ctrl.link.last=next;
             return true;
@@ -2229,7 +2321,7 @@
     }
     function bmBindCardNavigation(controller){
         if(!controller||controller.__buttonsNgNavWrap)return;
-        var oldRight=controller.right,oldLeft=controller.left;
+        var oldRight=controller.right,oldLeft=controller.left,oldToggle=controller.toggle;
         controller.right=function(){
             if(bmMoveCardButton(1))return;
             if(typeof oldRight==='function')return oldRight.apply(this,arguments);
@@ -2237,6 +2329,32 @@
         controller.left=function(){
             if(bmMoveCardButton(-1))return;
             if(typeof oldLeft==='function')return oldLeft.apply(this,arguments);
+        };
+        controller.toggle=function(){
+            var container=currentContainer;
+            var root=container&&container[0];
+            var lastId=root&&bmFocusCard===root?bmFocusId:null;
+            // Preserve the source before core groupButtons refreshes its DOM.
+            if(!lastId&&this.link&&this.link.last)
+                lastId=getBtnIdentifier($(this.link.last));
+            bmFocusRestoring=true;
+            var result;
+            try{if(typeof oldToggle==='function')result=oldToggle.apply(this,arguments)}
+            finally{bmFocusRestoring=false}
+            if(lastId&&container&&currentContainer&&currentContainer[0]===root){
+                bmRestoreCardFocus(container,lastId);
+                // Providers may finish re-creating controls in a later task.
+                setTimeout(function(){
+                    if(currentContainer&&currentContainer[0]===root&&
+                       Lampa.Controller.enabled().name==='full_start'&&
+                       bmFocusCard===root&&bmFocusId===lastId){
+                        var live=bmFindCardFocus(container,lastId);
+                        if(live&&window.Navigator&&window.Navigator._focus!==live)
+                            bmRestoreCardFocus(container,lastId);
+                    }
+                },100);
+            }
+            return result;
         };
         controller.__buttonsNgNavWrap=true;
     }
@@ -2255,7 +2373,11 @@
         strip.children('.button--play').removeClass('selector focus').addClass('buttons-ng-native-play');
         var active = (window.Navigator && window.Navigator._focus) || null;
         var focused = strip.children('.full-start__button.focus').first();
-        var candidate = focused.length ? focused[0] : active;
+        var desiredId=bmFocusCard===container[0]?bmFocusId:null;
+        // A regenerated proxy must win over an incidental Online.focus left
+        // behind by a native collection reset.
+        var candidate=desiredId?bmFindCardFocus(container,desiredId):null;
+        if(!candidate)candidate=focused.length?focused[0]:active;
         if (candidate && !container[0].contains(candidate)) {
             var previousId = $(candidate).data('buttons-ng-id');
             candidate = null;
@@ -2269,9 +2391,12 @@
             $(candidate).hasClass('hide') || $(candidate).hasClass('hidden'))
             candidate = strip.children('.full-start__button.selector').not('.hide,.hidden').first()[0];
         try {
-            c.collectionSet(container);
-            if (candidate) c.collectionFocus(candidate,container);
+            if(!bmHasLiveNavigationCollection(container))c.collectionSet(container);
+            if(candidate&&(!window.Navigator||window.Navigator._focus!==candidate||
+               !candidate.classList.contains('focus')))
+                c.collectionFocus(candidate,container);
             bmBindCardNavigation(c.enabled().controller);
+            if(candidate)bmRememberCardFocus(candidate);
             // The core Start component only binds hover:focus before dynamic buttons
             // exist. Update its last pointer for return navigation with the remote.
             var control=c.enabled().controller;
