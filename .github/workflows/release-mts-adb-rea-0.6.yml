@@ -1,0 +1,37 @@
+name: Publish MTS ADB REA 0.6.0 prerelease
+
+on:
+  push:
+    branches: [mts-debug-suite]
+    paths: [".github/workflows/release-mts-adb-rea-0.6.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prerelease:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and prepare APK
+        run: |
+          test -s m.apk
+          sha256sum -c m.apk.sha256
+          cp m.apk MTS-ADB-REA-v0.6.0.apk
+          sha256sum MTS-ADB-REA-v0.6.0.apk > MTS-ADB-REA-v0.6.0.apk.sha256
+      - name: Publish GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view mts-adb-rea-v0.6.0 >/dev/null 2>&1; then
+            echo "Release already exists"
+            exit 0
+          fi
+          gh release create mts-adb-rea-v0.6.0 \
+            MTS-ADB-REA-v0.6.0.apk MTS-ADB-REA-v0.6.0.apk.sha256 \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "MTS ADB REA 0.6.0 — OEM APK extraction" \
+            --notes "Prerelease for SDMC DV8235 Android 12. Adds a non-root local-network exporter for the installed com.dcw.oemserviceclient APK. The resulting file can be analyzed by REA/JADX to study the SET ADB TRUE implementation. No APK is uploaded to the Internet automatically. The export URL is only active on the same Wi-Fi for five minutes and serves one download. Previous ADB diagnostic features remain; an OpenRouter key is not active in this build. This application does not guarantee ADB activation." \
+            --prerelease
