@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.12-nextgen
+ * Версия: 1.2.13-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -138,8 +138,6 @@
             return -1;
         };
     }
-
-    var LAMPAC_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path d="M20.331 14.644l-13.794-13.831 17.55 10.075zM2.938 0c-0.813 0.425-1.356 1.2-1.356 2.206v27.581c0 1.006 0.544 1.781 1.356 2.206l16.038-16zM29.512 14.1l-3.681-2.131-4.106 4.031 4.106 4.031 3.756-2.131c1.125-0.893 1.125-2.906-0.075-3.8zM6.538 31.188l17.55-10.075-3.756-3.756z" fill="currentColor"></path></svg>';
 
     var EXCLUDED_CLASSES = ['button--play', 'button--edit-order', 'button--folder'];
 
@@ -590,10 +588,10 @@
             if(i>1)b.data('buttons-ng-id',key);
             seen[key]=b;
             var type=detectBtnCategory(b);
-            if(type==='online'&&b.hasClass('lampac--button')&&!b.hasClass('modss--button')&&!b.hasClass('showy--button')){
-                var svg=b.find('svg').first();
-                if(svg.length&&!svg.hasClass('modss-online-icon'))svg.replaceWith(LAMPAC_ICON);
-            }
+            // The Lampac Online control keeps its own event handlers and SVG.
+            // Its original SVG is hidden by a CSS rule and the permanent
+            // Google Play icon is drawn by ::before without rewriting DOM.
+            // This avoids the Lampac/editor icon replacement race.
             (groups[type]||groups.other).push(b);
         }
         buttons.each(function(){add(this)});
@@ -2354,6 +2352,12 @@
             '@keyframes button-fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }' +
             '.full-start-new__buttons .full-start__button { box-sizing:border-box; position:relative; flex-shrink:0; }' +
             '.full-start-new__buttons > .button--play.buttons-ng-native-play { display:none !important; }' +
+            '.full-start-new__buttons > .full-start__button.view--online.lampac--button:not(.buttons-ng-source-bridge) > svg { display:none !important; }' +
+            '.full-start-new__buttons > .full-start__button.view--online.lampac--button:not(.buttons-ng-source-bridge)::before {content:"";display:block;flex:0 0 1.5em;width:1.5em;height:1.5em;min-width:1.5em;background:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20d%3D%22M20.331%2014.644l-13.794-13.831%2017.55%2010.075zM2.938%200c-0.813%200.425-1.356%201.2-1.356%202.206v27.581c0%201.006%200.544%201.781%201.356%202.206l16.038-16zM29.512%2014.1l-3.681-2.131-4.106%204.031%204.106%204.031%203.756-2.131c1.125-0.893%201.125-2.906-0.075-3.8zM6.538%2031.188l17.55-10.075-3.756-3.756z%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E") center/contain no-repeat;pointer-events:none;}' +
+            '.full-start-new__buttons > .full-start__button.view--online.lampac--button:not(.buttons-ng-source-bridge).focus::before {filter:brightness(0);}' +
+            '@supports (-webkit-mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20d%3D%22M20.331%2014.644l-13.794-13.831%2017.55%2010.075zM2.938%200c-0.813%200.425-1.356%201.2-1.356%202.206v27.581c0%201.006%200.544%201.781%201.356%202.206l16.038-16zM29.512%2014.1l-3.681-2.131-4.106%204.031%204.106%204.031%203.756-2.131c1.125-0.893%201.125-2.906-0.075-3.8zM6.538%2031.188l17.55-10.075-3.756-3.756z%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E")) {' +
+            '.full-start-new__buttons > .full-start__button.view--online.lampac--button:not(.buttons-ng-source-bridge)::before {background-image:none;background-color:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20d%3D%22M20.331%2014.644l-13.794-13.831%2017.55%2010.075zM2.938%200c-0.813%200.425-1.356%201.2-1.356%202.206v27.581c0%201.006%200.544%201.781%201.356%202.206l16.038-16zM29.512%2014.1l-3.681-2.131-4.106%204.031%204.106%204.031%203.756-2.131c1.125-0.893%201.125-2.906-0.075-3.8zM6.538%2031.188l17.55-10.075-3.756-3.756z%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20d%3D%22M20.331%2014.644l-13.794-13.831%2017.55%2010.075zM2.938%200c-0.813%200.425-1.356%201.2-1.356%202.206v27.581c0%201.006%200.544%201.781%201.356%202.206l16.038-16zM29.512%2014.1l-3.681-2.131-4.106%204.031%204.106%204.031%203.756-2.131c1.125-0.893%201.125-2.906-0.075-3.8zM6.538%2031.188l17.55-10.075-3.756-3.756z%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E") center/contain no-repeat;filter:none!important;}' +
+            '}' +
             '.full-start__button.hidden { display: none !important; }' +
             '.button--folder { cursor: pointer; }' +
             '.full-start-new__buttons { ' +
