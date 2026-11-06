@@ -92,7 +92,7 @@ public class MainActivity extends Activity {
         scroller.addView(page);
         setContentView(scroller);
 
-        TextView title=text("MTS ADB AUTO 0.5",25,WHITE,true);
+        TextView title=text("MTS ADB AUTO 0.5.1",25,WHITE,true);
         page.addView(title);
         page.addView(text("Единая утилита: Developer Options, Device Info, Settings App. Все проверки доступны из одной кнопки.",17,0xffb7cbdd,false));
         section(page,"АВТОМАТИЧЕСКИЙ ПОДБОР ADB");
@@ -129,7 +129,13 @@ public class MainActivity extends Activity {
         reportView.setPadding(dp(8),dp(10),dp(8),dp(10));
         reportView.setBackgroundColor(0xff192532);
         page.addView(reportView);
-        append("MTS ADB Auto 0.5. Нажми главную кнопку.");
+        String prior=getSharedPreferences("adb_diagnostics",MODE_PRIVATE).getString("log","");
+        if(!prior.isEmpty()){
+            report.append(prior);
+            reportView.setText(report.toString());
+            adviceView.setText("Восстановлен последний журнал. Проверь строки АDB ПОСЛЕ и выбранные компоненты ниже.");
+        }
+        append("MTS ADB Auto 0.5.1 запущен. Нажми главную кнопку для нового автоподбора.");
     }
 
     private void startAutoAdb() {
@@ -141,12 +147,15 @@ public class MainActivity extends Activity {
         report.setLength(0);
         reportView.setText("");
         adviceView.setText("Проверяю локальные способы...");
+        getSharedPreferences("adb_diagnostics",MODE_PRIVATE).edit().putString("log","").apply();
         append("Начат автоподбор ADB.");
         AutoAdbAssistant.check(this,r->{
             append(r.log);
             append("ИТОГ: проверок "+r.checks+", запретов "+r.denials
                 +", системных экранов "+r.targets.size()+", adbd="+r.adbState);
             autoTargets.addAll(r.targets);
+            String adbStatus="running".equals(r.adbState) ? "Служба adbd запущена, требуется авторизация с компьютера." : "Служба adbd не запущена. Найдено "+r.targets.size()+" целевых экранов разработчика. Другие приложения запускаться не будут.";
+            adviceView.setText(adbStatus);
             AutoAdbAssistant.analyze(report.toString(),text->
                 runOnUiThread(()->adviceView.setText(text)));
             if("running".equals(r.adbState)){
@@ -154,7 +163,7 @@ public class MainActivity extends Activity {
                 autoRunning=false;
                 return;
             }
-            openNextAuto();
+            new android.os.Handler(getMainLooper()).postDelayed(this::openNextAuto,1100);
         });
     }
 
@@ -166,6 +175,8 @@ public class MainActivity extends Activity {
                 lastAutoLaunch=android.os.SystemClock.elapsedRealtime();
                 append("Открыт кандидат "+nextAuto+"/"+autoTargets.size()+": "+t.label
                     +". Если отладка разрешена, включи её и вернись кнопкой «Назад».");
+                getSharedPreferences("adb_diagnostics",MODE_PRIVATE).edit()
+                    .putString("last_target",t.label).apply();
                 return;
             }
         }
@@ -188,7 +199,7 @@ public class MainActivity extends Activity {
                 append("adbd теперь запущен. Проверь ADB-авторизацию на компьютере.");
                 autoRunning=false;
             }else openNextAuto();
-        },350);
+        },delay);
     }
 
     @SuppressWarnings("deprecation")
@@ -608,7 +619,10 @@ public class MainActivity extends Activity {
     private void append(String line) {
         String time = new SimpleDateFormat("HH:mm:ss", Locale.ROOT).format(new Date());
         report.append("[").append(time).append("] ").append(line).append("\n");
+        if (report.length()>18000) report.delete(0, report.length()-16000);
         if (reportView != null) reportView.setText(report.toString());
+        getSharedPreferences("adb_diagnostics",MODE_PRIVATE).edit()
+            .putString("log",report.toString()).apply();
     }
 
     private int dp(int value) {

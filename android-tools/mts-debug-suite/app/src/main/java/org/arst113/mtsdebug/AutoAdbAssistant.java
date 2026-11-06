@@ -104,35 +104,57 @@ public final class AutoAdbAssistant {
             String after=prop("init.svc.adbd");
             add(log,"ADB ПОСЛЕ: adbd="+after);
             steps++;
+            // For Android 12 MTS firmware, the old broad package scan could match
+            // KION's developer/debug Activity. Never launch third-party/launcher
+            // packages, and never use ACTION_SETTINGS as an automatic fallback.
             Set<String> foundKeys=new HashSet<>();
             int possible=0;
+            ArrayList<Target> systemTargets=new ArrayList<>();
             try{
                 for(PackageInfo pkg:activity.getPackageManager().getInstalledPackages(
                         PackageManager.GET_ACTIVITIES)){
                     String p=pkg.packageName.toLowerCase(Locale.ROOT);
-                    if(!(p.contains("settings")||p.contains("oem")||p.contains("zte")||p.contains("mts")))continue;
+                    boolean settingsPackage=p.equals("com.android.settings")
+                        ||p.equals("com.android.tv.settings")
+                        ||p.startsWith("com.zte.") && p.contains("setting");
+                    boolean oemServicePackage=p.contains("oemserviceclient");
+                    if(!settingsPackage&&!oemServicePackage)continue;
+                    if(pkg.applicationInfo==null || (pkg.applicationInfo.flags &
+                        android.content.pm.ApplicationInfo.FLAG_SYSTEM)==0)continue;
                     if(pkg.activities==null)continue;
                     for(ActivityInfo info:pkg.activities){
                         if(!info.enabled||!info.exported)continue;
                         String n=info.name.toLowerCase(Locale.ROOT);
-                        if(!(n.contains("develop")||n.contains("debug")||n.contains("adb")
-                                ||n.contains("oemservice")||n.contains("deviceinfo")))continue;
+                        boolean devActivity=n.contains("development")
+                            ||n.contains("developer")||n.contains("wirelessdebug")
+                            ||n.contains("usbdebug")||n.contains("adb");
+                        boolean serviceActivity=oemServicePackage && n.contains("oemservice");
+                        if(!devActivity&&!serviceActivity)continue;
                         if(!foundKeys.add(p+"/"+n))continue;
                         possible++;
-                        candidates.add(new Target(pkg.packageName+"/"+info.name,
+                        systemTargets.add(new Target(pkg.packageName+"/"+info.name,
                             new Intent().setComponent(new ComponentName(pkg.packageName,info.name))));
                     }
                 }
             }catch(Exception e){add(log,"Поиск OEM: "+e.getClass().getSimpleName());}
-            candidates.sort(Comparator.comparingInt(t->rank(t.label)));
-            if(candidates.size()>9)candidates.subList(9,candidates.size()).clear();
-            add(log,"OEM-сканирование: потенциальных экспортированных Activity="+possible);
-            candidates.add(new Target("Developer Options Shortcut: системный переход",
-                new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)));
-            candidates.add(new Target("Settings App: сведения об устройстве",
-                new Intent(Settings.ACTION_DEVICE_INFO_SETTINGS)));
-            candidates.add(new Target("Settings App: общие настройки",
-                new Intent(Settings.ACTION_SETTINGS)));
+            systemTargets.sort(Comparator.comparingInt(t->rank(t.label)));
+            add(log,"OEM-сканирование: найдено ЦЕЛЕВЫХ экспортированных Activity="+possible);
+            // Original Developer Options Shortcut 1.058 uses this AOSP class
+            // and ACTION_APPLICATION_DEVELOPMENT_SETTINGS; these take priority.
+            candidates.add(new Target("Developer Options 1.058: com.android.settings.DevelopmentSettings",
+                new Intent().setComponent(new ComponentName(
+                    "com.android.settings","com.android.settings.DevelopmentSettings"))));
+            for(Target t:systemTargets){
+                if(candidates.size()>=9)break;
+                if(!t.label.equalsIgnoreCase("com.android.settings/com.android.settings.DevelopmentSettings"))
+                    candidates.add(t);
+            }
+            candidates.add(new Target("Developer Options: системный Intent в com.android.settings",
+                new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                    .setPackage("com.android.settings")));
+            candidates.add(new Target("Android TV: Developer Options в com.android.tv.settings",
+                new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                    .setPackage("com.android.tv.settings")));
             steps+=1+candidates.size();
             add(log,"АВТОПОДБОР: проверено "+steps+", отказов "+denied+", переходов "+candidates.size());
             Result result=new Result(log.toString(),after,steps,denied,candidates);
