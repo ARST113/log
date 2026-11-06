@@ -1,0 +1,30 @@
+name: Inspect original Developer Options APK
+
+on:
+  push:
+    branches: [mts-debug-suite]
+    paths: [".github/workflows/inspect-original-apk.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Obtain original user-provided APK
+        run: |
+          curl -fsSL --retry 3 "https://raw.githubusercontent.com/ARST113/log/apk-downloads/a.apk" -o /tmp/shortcut.apk
+          ls -lh /tmp/shortcut.apk
+          file /tmp/shortcut.apk
+      - name: Read package metadata and entry points
+        run: |
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort | tail -n 1)"
+          echo "=== BADGING ==="
+          "$AAPT" dump badging /tmp/shortcut.apk | grep -E '^(package:|launchable-activity:|sdkVersion:|targetSdkVersion:)' || true
+          echo "=== MANIFEST RELEVANT ACTIVITY/INTENT NAMES ==="
+          "$AAPT" dump xmltree /tmp/shortcut.apk AndroidManifest.xml | grep -iE -C 2 'developer|development|adb|settings|activity|provider|permission|exported' | head -n 240 || true
+      - name: Scan DEX for developer settings references
+        run: |
+          unzip -p /tmp/shortcut.apk classes.dex | strings -a | grep -iE '(development_settings|developer_options|android.settings|adb_enabled|settings$development|setprop|systemprop|wireless_debug)' | sort -u | head -n 100 || true
