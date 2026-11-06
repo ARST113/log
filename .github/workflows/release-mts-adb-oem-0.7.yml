@@ -1,0 +1,38 @@
+name: Publish MTS ADB OEM 0.7.0 prerelease
+
+on:
+  push:
+    branches: [mts-debug-suite]
+    paths: [".github/workflows/release-mts-adb-oem-0.7.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prerelease:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify compiled APK
+        run: |
+          test -s m.apk
+          sha256sum -c m.apk.sha256
+          cp m.apk MTS-ADB-OEM-v0.7.0.apk
+          sha256sum MTS-ADB-OEM-v0.7.0.apk > MTS-ADB-OEM-v0.7.0.apk.sha256
+      - name: Create prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view mts-adb-oem-v0.7.0 >/dev/null 2>&1; then
+            echo "Release exists"
+            exit 0
+          fi
+          gh release create mts-adb-oem-v0.7.0 \
+            MTS-ADB-OEM-v0.7.0.apk \
+            MTS-ADB-OEM-v0.7.0.apk.sha256 \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "MTS ADB OEM 0.7.0 — Binder 39 diagnostic" \
+            --notes "Experimental APK for SDMC DV8235 Android 12. Reverse engineered original OEMServiceClient 1.2: SET ADB TRUE calls Binder service ru.smart_itech.oem_api.IOemService in package ru.smart_itech.oem using transaction 39. This APK attempts the same method from an ordinary Android application, captures bind/transact access-denied errors, and checks init.svc.adbd afterward. The original OEM APK declares android.uid.system, so it may have privileges unavailable to this third-party app. No root or exploit is included; ADB activation is unconfirmed. Static source analysis: android-tools/mts-debug-suite/REVERSE_ENGINEERING_DV8235.md. OpenRouter key not activated in this release." \
+            --prerelease
