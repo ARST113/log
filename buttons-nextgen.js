@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.10-nextgen
+ * Версия: 1.2.11-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -2170,6 +2170,20 @@
         if(isFreshRender)animateBtnFadeIn(visibleButtons);
         else visibleButtons.forEach(function(b){b.css({opacity:'',animation:'','animation-delay':''})});
 
+        // Stabilize the card height while button labels expand/reflow under
+        // the pointer. Preserve enough space for two rows on crowded TV strips.
+        var frameHeight=0,rowsHeight=0,visible=targetContainer.children('.full-start__button.selector')
+            .not('.hide,.hidden,.buttons-ng-native-play');
+        if(window.innerWidth>=768&&visible.length>=8&&targetContainer[0]){
+            var first=visible[0],rect=first.getBoundingClientRect();
+            var cs=window.getComputedStyle(targetContainer[0]);
+            var gap=parseFloat(cs.rowGap||cs.gap)||0;
+            var actualH=targetContainer[0].getBoundingClientRect().height;
+            rowsHeight=Math.ceil(rect.height*2+gap);
+            frameHeight=Math.max(actualH,rowsHeight);
+            if(frameHeight)targetContainer.css('min-height',frameHeight+'px');
+        }else targetContainer.css('min-height','');
+
         setTimeout(function () {
             setupButtonNavigation(container);
         }, 100);
@@ -2204,6 +2218,8 @@
             var hovered=strip.find('.buttons-ng-hovered');
             strip.removeClass('buttons-ng-pointer-mode buttons-ng-mouse-active');
             hovered.removeClass('buttons-ng-hovered');
+            // A subsequent mouse move begins a fresh pointer session.
+            if(typeof window.__buttonsNgPointerReset==='function')window.__buttonsNgPointerReset();
             Lampa.Controller.collectionFocus(next,currentContainer);
             var ctrl=Lampa.Controller.enabled().controller;
             if(ctrl&&ctrl.link)ctrl.link.last=next;
@@ -2285,14 +2301,15 @@
         // when an expanding button wraps to the next flex row. It must NEVER
         // switch disclosure to the item now underneath a stationary cursor.
         // A real pointer movement is the only way to choose the hovered label.
-        var bmMouseX=null,bmMouseY=null;
+        var bmMouseX=null,bmMouseY=null,bmMouseAnchor=null;
         function bmPointerToDpad(){
             $('.full-start-new__buttons.buttons-ng-pointer-mode')
                 .removeClass('buttons-ng-pointer-mode buttons-ng-mouse-active');
             $('.full-start-new__buttons .buttons-ng-hovered')
                 .removeClass('buttons-ng-hovered');
-            bmMouseX=null;bmMouseY=null;
+            bmMouseX=null;bmMouseY=null;bmMouseAnchor=null;
         }
+        window.__buttonsNgPointerReset=bmPointerToDpad;
         if(typeof document!=='undefined'){
             $(document).on('keydown.buttonsNgPointer',function(e){
                 var code=e.which||e.keyCode;
@@ -2311,10 +2328,23 @@
                 $('.full-start-new__buttons').addClass('buttons-ng-pointer-mode');
                 var target=$(e.target).closest('.full-start-new__buttons > .full-start__button.button-mode-1');
                 var expanded=$('.full-start-new__buttons .buttons-ng-hovered');
+                // Lock to the button's ORIGINAL pointer hitbox before it grows.
+                // Reflow may move the target or a neighbor underneath the cursor;
+                // tiny (<24 px) trackpad movements must not change ownership.
+                if(expanded.length&&bmMouseAnchor&&expanded[0]===bmMouseAnchor.node){
+                    var a=bmMouseAnchor,dx=e.clientX-a.x,dy=e.clientY-a.y;
+                    var nearAnchor=e.clientX>=a.left-12&&e.clientX<=a.right+12&&
+                                   e.clientY>=a.top-12&&e.clientY<=a.bottom+12;
+                    if(nearAnchor||dx*dx+dy*dy<576)return;
+                }
                 if(target.length&&expanded.length&&expanded[0]===target[0])return;
                 expanded.removeClass('buttons-ng-hovered');
                 $('.full-start-new__buttons.buttons-ng-mouse-active').removeClass('buttons-ng-mouse-active');
+                bmMouseAnchor=null;
                 if(target.length&&!target.hasClass('hidden')){
+                    var rect=target[0].getBoundingClientRect();
+                    bmMouseAnchor={node:target[0],x:e.clientX,y:e.clientY,
+                        left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom};
                     target.addClass('buttons-ng-hovered');
                     target.parent().addClass('buttons-ng-mouse-active');
                 }
