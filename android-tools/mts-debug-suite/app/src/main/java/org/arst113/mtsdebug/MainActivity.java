@@ -177,8 +177,9 @@ public class MainActivity extends Activity {
     @Override protected void onResume(){
         super.onResume();
         if(!autoHandoff||!autoRunning)return;
-        if(android.os.SystemClock.elapsedRealtime()-lastAutoLaunch<900)return;
+        long elapsed=android.os.SystemClock.elapsedRealtime()-lastAutoLaunch;
         autoHandoff=false;
+        long delay=elapsed<900 ? 1000-elapsed : 350;
         new android.os.Handler(getMainLooper()).postDelayed(()->{
             if(!autoRunning)return;
             String state=AutoAdbAssistant.prop("init.svc.adbd");

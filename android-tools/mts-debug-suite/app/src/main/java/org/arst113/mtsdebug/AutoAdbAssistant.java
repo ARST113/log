@@ -18,6 +18,10 @@ import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URL;
+import java.net.NetworkInterface;
+import java.net.InetAddress;
+import java.net.Inet4Address;
+import java.util.Enumeration;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -81,6 +85,21 @@ public final class AutoAdbAssistant {
                 socket.connect(new InetSocketAddress("127.0.0.1",5555),550);
                 add(log,"TCP 5555: порт открыт (это не доказывает ADB)");
             }catch(Exception e){add(log,"TCP 5555: порт закрыт");}
+            steps++;
+            try {
+                Enumeration<NetworkInterface> nets=NetworkInterface.getNetworkInterfaces();
+                while(nets!=null&&nets.hasMoreElements()){
+                    NetworkInterface net=nets.nextElement();
+                    if(!net.isUp()||net.isLoopback())continue;
+                    Enumeration<InetAddress> addresses=net.getInetAddresses();
+                    while(addresses.hasMoreElements()){
+                        InetAddress address=addresses.nextElement();
+                        if(address instanceof Inet4Address&&!address.isLoopbackAddress()){
+                            add(log,"IP приставки: "+net.getName()+"="+address.getHostAddress());
+                        }
+                    }
+                }
+            }catch(Exception e){add(log,"IP-адрес не определён: "+e.getClass().getSimpleName());}
             steps++;
             String after=prop("init.svc.adbd");
             add(log,"ADB ПОСЛЕ: adbd="+after);
