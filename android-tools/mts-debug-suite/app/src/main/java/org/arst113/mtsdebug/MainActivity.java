@@ -190,6 +190,40 @@ public class MainActivity extends Activity {
         },350);
     }
 
+    @SuppressWarnings("deprecation")
+    private void openOemServiceClient() {
+        PackageManager pm=getPackageManager();
+        int found=0;
+        try {
+            for(PackageInfo pkg:pm.getInstalledPackages(PackageManager.GET_ACTIVITIES)){
+                String label="";
+                try{
+                    android.content.pm.ApplicationInfo ai=pm.getApplicationInfo(pkg.packageName,0);
+                    label=String.valueOf(pm.getApplicationLabel(ai));
+                }catch(Exception ignored){}
+                String identity=(pkg.packageName+" "+label).toLowerCase(Locale.ROOT);
+                if(!identity.contains("oemserviceclient"))continue;
+                found++;
+                append("OEMServiceClient найден: "+pkg.packageName);
+                Intent launcher=pm.getLaunchIntentForPackage(pkg.packageName);
+                if(launcher!=null&&launch(new LaunchTarget("OEMServiceClient",launcher)))return;
+                if(pkg.activities!=null){
+                    for(ActivityInfo activity:pkg.activities){
+                        if(!activity.enabled||!activity.exported)continue;
+                        if(launch(explicit("OEMServiceClient: "+activity.name,
+                                    pkg.packageName,activity.name)))return;
+                    }
+                }
+                Intent details=new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.parse("package:"+pkg.packageName));
+                if(launch(new LaunchTarget("Карточка OEMServiceClient",details)))return;
+            }
+        }catch(Exception e){
+            append("OEMServiceClient: ошибка поиска "+e.getClass().getSimpleName());
+        }
+        append("OEMServiceClient не найден или заблокирован прошивкой; совпадений="+found);
+    }
+
     private LaunchTarget explicit(String title, String pkg, String cls) {
         Intent intent = new Intent();
         intent.setComponent(new ComponentName(pkg, cls));
