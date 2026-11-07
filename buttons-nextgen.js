@@ -1,6 +1,6 @@
 /**
  * Плагин управления кнопками Lampa
- * Версия: 1.2.19-nextgen
+ * Версия: 1.2.20-nextgen
  * Автор: @Cheeze_l
  * 
  * Описание:
@@ -541,6 +541,40 @@
     }
 
 
+    // JacRed has its own Lampa component. A detached native source makes a
+    // forwarding proxy appear clickable while doing nothing on some TVs.
+    // Launch directly from the visible card control when the component exists.
+    var bmJacredActivatedAt=0;
+    function bmLaunchJacredCinema(proxy){
+        if(!proxy||!proxy.hasClass||!proxy.hasClass('jacred-ng-card-button')||
+           !Lampa.Activity||typeof Lampa.Activity.active!=='function'||
+           typeof Lampa.Activity.push!=='function'||!Lampa.Component||
+           typeof Lampa.Component.get!=='function')return false;
+        var component=null;
+        try{component=Lampa.Component.get('jacred_cinema_v2')}catch(e){return false}
+        if(!component)return false;
+        var now=Date.now();
+        // Suppress a second OK event EVEN AFTER Activity.push has switched
+        // the active screen away from 'full'. Otherwise fallback forwarding
+        // would open the same JacRed component twice on Tizen/WebView.
+        if(bmJacredActivatedAt&&now-bmJacredActivatedAt<650)return true;
+        var activity=Lampa.Activity.active();
+        if(!activity||activity.component!=='full'||!activity.card)return false;
+        bmJacredActivatedAt=now;
+        try{
+            var card=activity.card;
+            Lampa.Activity.push({
+                title:'JacRed · '+String(card.title||card.name||'Поиск'),
+                component:'jacred_cinema_v2',movie:card,page:1
+            });
+            return true;
+        }catch(e){
+            bmJacredActivatedAt=0;
+            console.warn('Buttons NextGen: JacRed direct launch',e);
+            return false;
+        }
+    }
+
     // The native Watch menu takes source buttons from .buttons--container.
     // Keep originals there; expose independent controls through forwarding proxies.
     function groupBtnsByType(container){
@@ -576,6 +610,7 @@
                 proxy.data('buttons-ng-source-id',sourceId);
                 proxy.data('buttons-ng-source-ref',this);
                 if(fresh)proxy.on('hover:enter hover:long',function(e){
+                    if(e.type==='hover:enter'&&bmLaunchJacredCinema(proxy))return;
                     var originalNode=proxy.data('buttons-ng-source-ref');
                     var source=$(originalNode);
                     // A provider enabled later may replace the entire native source
@@ -591,6 +626,15 @@
                         source.trigger(e.type);
                     }
                 });
+                // TV WebViews can invoke click() for OK instead of hover:enter.
+                // Do not change Torrent/Trailer semantics; JacRed only.
+                if(fresh&&proxy.hasClass('jacred-ng-card-button'))
+                    proxy.on('click.buttonsNgJacred',function(e){
+                        if(bmLaunchJacredCinema(proxy)){
+                            if(e.preventDefault)e.preventDefault();
+                            if(e.stopPropagation)e.stopPropagation();
+                        }
+                    });
                 buttons=buttons.add(proxy);
             });
         }
