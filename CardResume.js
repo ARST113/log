@@ -1166,9 +1166,11 @@
            item.lampac_resume && item.lampac_resume.mode === 'torrent') &&
           item.by_title !== true) return null;
       var media = String(card.media_type || card.type || '').toLowerCase();
-      var tv = media === 'tv' || media === 'series' || media === 'serial' ||
-        (!media && !!(card.original_name || card.name || card.number_of_seasons || card.first_air_date));
-      if (media === 'movie' || media === 'film') tv = false;
+      // TMDB/Lampa uses card.type for the genre ('Scripted'), not just 'movie'/'tv'.
+      // Prefer explicit media_type; otherwise TV-specific fields prove series identity.
+      var explicitMovie = media === 'movie' || media === 'film';
+      var tv = !explicitMovie && (media === 'tv' || media === 'series' || media === 'serial' ||
+        !!(card.original_name || card.number_of_seasons || card.first_air_date || card.name && !card.release_date));
       var metaCard = card;
       if (tv && !card.original_name)
         metaCard = Object.assign({}, card, {original_name: card.name || card.original_title || '__tv__'});
