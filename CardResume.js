@@ -1996,11 +1996,47 @@
               return new Promise(function (resolve, reject) {
                 var listener = Lampa.Player && Lampa.Player.listener;
                 if (!listener || typeof listener.follow !== 'function') return reject(new Error('resume-pidtor-player-unavailable'));
-                var settled = false, timer = null;
+                var settled = false, timer = null, errorObserver = null;
                 function cleanup() {
                   if (timer) clearTimeout(timer);
+                  if (errorObserver) { errorObserver.disconnect(); errorObserver = null; }
                   listener.remove('start', onStarted);
                   listener.remove('external', onStarted);
+                }
+                // PidTor reports catalogue/source failures via Noty, not its public resume() return.
+                // Observe only newly written notifications during this launch. Existing notifications
+                // are ignored; unrelated app components and Noty.show are left untouched.
+                function watchPidTorFailure() {
+                  if (typeof MutationObserver !== 'function' || typeof document === 'undefined' || !document.body) return;
+                  var errorText = /Подходящих вариантов не найдено|Фильм недоступен|Нет доступного качества|PidTor временно недоступен|Подходящих файлов не найдено|Следующий сезон недоступен|Серия недоступна/i;
+                  errorObserver = new MutationObserver(function (records) {
+                    if (settled) return;
+                    for (var i = 0; i < records.length; i++) {
+                      var change = records[i], candidates = [];
+                      if (change.type === 'characterData') {
+                        var parent = change.target.parentElement;
+                        if (parent && parent.closest) {
+                          var note = parent.closest('.noty');
+                          if (note) candidates.push(note);
+                        }
+                      } else {
+                        Array.prototype.forEach.call(change.addedNodes || [], function (node) {
+                          var el = node.nodeType === 1 ? node : node.parentElement;
+                          if (!el) return;
+                          if (el.matches && el.matches('.noty')) candidates.push(el);
+                          if (el.closest && el.closest('.noty')) candidates.push(el.closest('.noty'));
+                          if (el.querySelectorAll) Array.prototype.push.apply(candidates, el.querySelectorAll('.noty'));
+                        });
+                      }
+                      for (var j = 0; j < candidates.length; j++) {
+                        if (errorText.test(String(candidates[j].textContent || ''))) {
+                          fail('resume-pidtor-unavailable');
+                          return;
+                        }
+                      }
+                    }
+                  });
+                  errorObserver.observe(document.body, {childList: true, characterData: true, subtree: true});
                 }
                 function fail(error) {
                   if (settled) return;
@@ -2016,6 +2052,7 @@
                 listener.follow('start', onStarted);
                 listener.follow('external', onStarted);
                 timer = setTimeout(function () { fail('resume-pidtor-timeout'); }, 90000);
+                watchPidTorFailure();
                 try {
                   Promise.resolve(api.resume(card, params)).then(function (launched) {
                     if (launched !== true) fail('resume-pidtor-launch');
