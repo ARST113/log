@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const {test} = require('node:test');
 const source = fs.readFileSync(require('node:path').join(__dirname, '..', 'CardResume.js'), 'utf8');
-const injected = source.replace('    return exports;', '    exports.cardResumeSeekPercent = cardResumeSeekPercent; exports.cardResumeLink = cardResumeLink; exports.createCapture = createCapture; exports.createOnlineAdapter = createOnlineAdapter; exports.createRecipeStore = createRecipeStore; return exports;');
+const injected = source.replace('    return exports;', '    exports.cardResumeLinkNativeOnlineTimeline = cardResumeLinkNativeOnlineTimeline; exports.cardResumeSeekPercent = cardResumeSeekPercent; exports.cardResumeLink = cardResumeLink; exports.createCapture = createCapture; exports.createOnlineAdapter = createOnlineAdapter; exports.createRecipeStore = createRecipeStore; return exports;');
 function api(){return vm.runInNewContext(injected, {console, setTimeout, clearTimeout, setInterval, clearInterval});}
 function bus(){
   const listeners = new Map();
@@ -95,4 +95,49 @@ test('CardResume movie at 90% keeps exact seek position by lowering only startup
     'do not seek into the last 15 seconds when there is no meaningful playback time');
   assert.equal(cardResumeSeekPercent(progress,series),90,
     'series completion >=90% must still advance to the next episode');
+});
+
+test('PidTor NextGen transport torrent_hash still links TV identity to per-episode TimeCode',()=>{
+  const A=api();
+  const updates=[];
+  const Lampa={Timeline:{
+    link:(card,season,episode)=>({card:'tv_'+card.id,season,episode}),
+    view:(hash,meta)=>({hash, handler:(percent,time,duration)=>{
+      updates.push({hash,percent,time,duration,...meta});
+    }})
+  }};
+  const e={pidtor_nextgen:true,isonline:true,torrent_hash:'transport-stream-hash',
+    card:series,season:1,episode:2,timeline:{hash:'title-hash',time:1866,duration:3697,percent:50,continued:false}};
+  assert.equal(A.cardResumeLinkNativeOnlineTimeline(Lampa,e),true);
+  assert.equal(e.timeline.card,'tv_141');
+  assert.equal(e.timeline.season,1);
+  assert.equal(e.timeline.episode,2);
+  assert.equal(e.timeline.time,1866);
+  e.timeline.handler(50,1866,3697);
+  assert.equal(updates.length,1);
+  assert.deepEqual({...updates[0]},{hash:'title-hash',percent:50,time:1866,duration:3697,card:'tv_141',season:1,episode:2});
+  const torrent={...e,pidtor_nextgen:false};
+  assert.equal(A.cardResumeLink(Lampa,series,torrent),null);
+});
+test('CardResume preserves PidTor timeline on Player.create and does not alter torrent path handlers',()=>{
+  const {createCapture}=api();
+  const p=bus(),pl=bus(),t=bus(),common=bus();
+  const writes=[];
+  const Lampa={Player:{listener:p},PlayerPlaylist:{listener:pl},Timeline:{listener:t,
+    link:(card,s,e)=>({card:'tv_'+card.id,season:s,episode:e}),
+    view:(hash,meta)=>({hash,handler:(percent,time,duration)=>writes.push({hash,...meta,percent,time,duration})})},
+    Listener:common,Storage:{field:()=>null},Api:{}};
+  const capture=createCapture(Lampa,{upsert(){}},{globalObject:{addEventListener(){},removeEventListener(){}}});
+  capture.start();
+  const data={pidtor_nextgen:true,isonline:true,torrent_hash:'transport-hash',
+    card:series,season:1,episode:1,timeline:{hash:'title-hash-1',percent:49,time:1801,duration:3697,handler:()=>{throw Error('obsolete handler called')}}};
+  p.emit('create',{data});
+  assert.equal(data.timeline.card,'tv_141');
+  data.timeline.handler(50,1866,3697);
+  assert.equal(writes[0].episode,1);
+  assert.equal(writes[0].time,1866);
+  const plain={...data,pidtor_nextgen:false,timeline:{hash:'raw-file',handler:()=>{}}};
+  p.emit('create',{data:plain});
+  assert.equal(plain.timeline.card,undefined);
+  capture.stop();
 });
