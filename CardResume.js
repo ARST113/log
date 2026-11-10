@@ -729,6 +729,16 @@
       }
       function onCreate(event) {
         var data = event && event.data;
+        // Native online adapters start the player themselves and bypass normalizePlaylist().
+        // Fix Zetflix's extensionless HLS master (including quality variants) before Player.play
+        // chooses a quality URL and the HTML5 video tries to decode the manifest as MP4.
+        var fixed = cardResumeZetflixHls(data);
+        if (fixed !== data && data) {
+          data.url = fixed.url;
+          if (fixed.url_orig) data.url_orig = fixed.url_orig;
+          if (fixed.quality) data.quality = fixed.quality;
+          data.hls_type = fixed.hls_type;
+        }
         cardResumeDirectMetadata(Lampa, data);
         session = stagePlayback(data);
         if (session) {
