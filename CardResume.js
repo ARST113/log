@@ -1194,6 +1194,33 @@
       return movie && p.percent >= 90 && p.time > 10 && p.duration > p.time + 15 ? 89 : p.percent;
     }
 
+
+    // Zetflix's /lite/zetflix/stream returns HLS without .m3u8 in the URL.
+    // Lampa selects Hls.js by the URL and may replace data.url from quality[k].
+    function cardResumeZetflixHls(item) {
+      if (!item || typeof item.url !== 'string') return item;
+      function fix(url) {
+        if (typeof url !== 'string' || !/\/lite\/zetflix\/stream(?:\?|$)/i.test(url)) return url;
+        if (/[?&]\.m3u8(?:[&=]|$)/i.test(url)) return url;
+        return url + (url.indexOf('?') >= 0 ? '&.m3u8' : '?.m3u8');
+      }
+      var url = fix(item.url);
+      if (url === item.url) return item;
+      var repaired = Object.assign({}, item, {url: url, hls_type: 'hlsjs'});
+      if (typeof repaired.url_orig === 'string') repaired.url_orig = fix(repaired.url_orig);
+      if (repaired.quality && typeof repaired.quality === 'object' && !Array.isArray(repaired.quality)) {
+        var qualities = {};
+        Object.keys(repaired.quality).forEach(function (key) {
+          var q = repaired.quality[key];
+          qualities[key] = typeof q === 'string' ? fix(q) :
+            q && typeof q === 'object' && typeof q.url === 'string' ?
+              Object.assign({}, q, {url: fix(q.url)}) : q;
+        });
+        repaired.quality = qualities;
+      }
+      return repaired;
+    }
+
     function normalizePlaylist(playlist, selected, progress, Lampa) {
       if (!Array.isArray(playlist)) throw new Error('resume-playlist');
       var index = playlist.indexOf(selected);
@@ -1218,7 +1245,7 @@
             percent: Number.isFinite(Number(progress && progress.percent)) ? cardResumeSeekPercent(progress, item.card || selected && selected.card) : copy.timeline.percent
           });
         }
-        return copy;
+        return cardResumeZetflixHls(copy);
       });
       return {
         item: normalized[index],
