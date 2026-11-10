@@ -1182,6 +1182,18 @@
       if (!item.tmdb_id && tmdb) item.tmdb_id = String(tmdb);
     }
 
+
+    // Lampa core resumes only when timeline.percent < 90. A deliberate movie resume with
+    // a valid saved time must seek even when marked >=90% watched. The temporary
+    // startup percentage is recalculated from actual playback after seeking.
+    function cardResumeSeekPercent(progress, card) {
+      var p = sanitizeProgress(progress);
+      var media = String(card && (card.media_type || card.type) || '').toLowerCase();
+      var movie = media === 'movie' || media === 'film' ||
+        (!media && card && !card.original_name && !card.name && !card.first_air_date && !!card.release_date);
+      return movie && p.percent >= 90 && p.time > 10 && p.duration > p.time + 15 ? 89 : p.percent;
+    }
+
     function normalizePlaylist(playlist, selected, progress, Lampa) {
       if (!Array.isArray(playlist)) throw new Error('resume-playlist');
       var index = playlist.indexOf(selected);
@@ -1203,7 +1215,7 @@
           copy.timeline = _objectSpread2(_objectSpread2({}, copy.timeline), {}, {
             time: Number(progress && progress.time) || 0,
             duration: Number(progress && progress.duration) > 0 ? Number(progress.duration) : copy.timeline.duration,
-            percent: Number.isFinite(Number(progress && progress.percent)) ? Number(progress.percent) : copy.timeline.percent
+            percent: Number.isFinite(Number(progress && progress.percent)) ? cardResumeSeekPercent(progress, item.card || selected && selected.card) : copy.timeline.percent
           });
         }
         return copy;
@@ -1730,7 +1742,7 @@
             } : {
               time: Math.max(0, number$1(record.progress && record.progress.time)),
               duration: Math.max(0, number$1(record.progress && record.progress.duration)),
-              percent: Math.max(0, Math.min(100, number$1(record.progress && record.progress.percent)))
+              percent: cardResumeSeekPercent(record.progress, card)
             };
             var interval;
             var timeout;
@@ -1986,7 +1998,7 @@
                 timeline_hash: text$3(episode.timeline_hash),
                 time: progress.time,
                 duration: progress.duration,
-                percent: progress.percent
+                percent: cardResumeSeekPercent(progress, card)
               };
               if (isSeries(card) && params.season > 0 && params.episode > 0 && episodeCompleted(progress)) {
                 params.pidtor_resume_next = true;
