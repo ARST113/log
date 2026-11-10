@@ -740,6 +740,7 @@
           data.hls_type = fixed.hls_type;
         }
         cardResumeDirectMetadata(Lampa, data);
+        cardResumeLinkNativeOnlineTimeline(Lampa, data);
         session = stagePlayback(data);
         if (session) {
           session.launchedHash = timelineHash$1(session.item);
@@ -1159,7 +1160,10 @@
     function cardResumeLink(Lampa, card, item) {
       if (!Lampa || !Lampa.Timeline || typeof Lampa.Timeline.link !== 'function' || !card || !card.id) return null;
       item = item || {};
-      if ((item.torrent_hash || item.lampac_resume && item.lampac_resume.mode === 'torrent') &&
+      // PidTor NextGen carries torrent_hash for its transport, but its timeline.hash is a
+      // title/episode hash. Treat it as online; only native path-based torrent hashes are unlinked.
+      if ((item.torrent_hash && item.pidtor_nextgen !== true ||
+           item.lampac_resume && item.lampac_resume.mode === 'torrent') &&
           item.by_title !== true) return null;
       var media = String(card.media_type || card.type || '').toLowerCase();
       var tv = media === 'tv' || media === 'series' || media === 'serial' ||
@@ -1172,6 +1176,27 @@
       var season = Number(item.season), episode = Number(item.episode);
       if (tv && (!Number.isInteger(season) || !Number.isInteger(episode) || season < 0 || episode < 1)) return null;
       try { return Lampa.Timeline.link(metaCard, season, episode) || null; } catch (e) { return null; }
+    }
+
+
+    // PidTor constructs its Timeline.view(hash) without Timeline.link(card, season, episode),
+    // so its handler writes title-only file_view entries. TimeCode cannot reliably identify
+    // and sync those episodes. Replace the handler BEFORE Lampa.Player.start / saveTimeView.
+    function cardResumeLinkNativeOnlineTimeline(Lampa, data) {
+      if (!data || !data.timeline || !data.timeline.hash || data.pidtor_nextgen !== true ||
+          data.isonline !== true || !data.card || !Lampa.Timeline ||
+          typeof Lampa.Timeline.view !== 'function') return false;
+      var meta = cardResumeLink(Lampa, data.card, data);
+      if (!meta || !meta.card) return false;
+      try {
+        var nativeView = Lampa.Timeline.view(data.timeline.hash, meta);
+        if (!nativeView || typeof nativeView.handler !== 'function') return false;
+        // Preserve source progress and flags. Only the handler/identity are replaced.
+        data.timeline = Object.assign({}, nativeView, data.timeline, meta, {
+          hash: data.timeline.hash, handler: nativeView.handler
+        });
+        return true;
+      } catch (e) { return false; }
     }
 
     // PidTor launches directly; metadata enrichment in normal resume launcher is bypassed.
