@@ -1,0 +1,27 @@
+name: CardResume regression tests
+on:
+  push:
+    branches: [main]
+    paths:
+      - CardResume.js
+      - tests/CardResume.*.test.js
+      - .github/workflows/cardresume.yml
+  pull_request:
+    paths:
+      - CardResume.js
+      - tests/CardResume.*.test.js
+  workflow_dispatch:
+jobs:
+  cardresume:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax
+        run: node --check CardResume.js
+      - name: All CardResume regression tests
+        run: node --test tests/CardResume.*.test.js
