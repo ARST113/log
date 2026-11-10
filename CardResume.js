@@ -965,10 +965,37 @@
       return result;
     }
     function createRecipeStore(Lampa) {
-      var value = mergeHistory(Lampa.Storage.get(SYNC_KEY, emptyHistory()), Lampa.Storage.get(CACHE_KEY, emptyHistory()));
+      function activeOwner() {
+        // Never expose one Lampac account's resume history while its identity is
+        // unresolved, or while the sync runtime still belongs to another account.
+        var sync = typeof window !== 'undefined' && window.LampacSync;
+        if (!sync) return null; // Standalone Lampa without Lampac Sync.
+        if (typeof sync.ready !== 'function' || !sync.ready()) return '';
+        var uid = typeof sync.uid === 'function' ? String(sync.uid() || '') : '';
+        var profile = typeof sync.profile === 'function' ? String(sync.profile() || '') : '';
+        var owner = String(Lampa.Storage.get('lampac_sync_owner_v1', '') || '');
+        var parts = owner.split('|');
+        return uid && parts.length >= 3 && parts[1] === uid && parts.slice(2).join('|') === profile ? owner : '';
+      }
       var syncOwner = Lampa.Storage.get('lampac_sync_owner_v1', '');
+      var value = activeOwner() === '' ? emptyHistory() :
+        mergeHistory(Lampa.Storage.get(SYNC_KEY, emptyHistory()), Lampa.Storage.get(CACHE_KEY, emptyHistory()));
       var listeners = [];
+      function checkOwner() {
+        var owner = activeOwner();
+        if (owner === '') {
+          value = emptyHistory();
+          return false;
+        }
+        if (owner && owner !== syncOwner) {
+          syncOwner = owner;
+          value = mergeHistory(Lampa.Storage.get(SYNC_KEY, emptyHistory()),
+                               Lampa.Storage.get(CACHE_KEY, emptyHistory()));
+        }
+        return true;
+      }
       function persist(next) {
+        if (!checkOwner()) return;
         var clean = sanitizeHistory(next);
         var syncBefore = JSON.stringify(Lampa.Storage.get(SYNC_KEY, emptyHistory()));
         value = clean;
@@ -979,6 +1006,7 @@
         });
       }
       function find(card) {
+        if (!checkOwner()) return null;
         var identity = cardIdentity(card);
         var direct = value.cards[identity.key];
         if (direct) return direct;
@@ -989,6 +1017,7 @@
         }) || null;
       }
       function upsert(card, input) {
+        if (!checkOwner()) return null;
         var record = sanitizeModeRecord(input);
         var identity = cardIdentity(card);
         if (!record || !identity.key) return null;
@@ -1014,6 +1043,7 @@
         return next.cards[identity.key];
       }
       function mergeSynced() {
+        if (!checkOwner()) return;
         var owner = Lampa.Storage.get('lampac_sync_owner_v1', '');
         if (owner && owner !== syncOwner) {
           syncOwner = owner;
@@ -1022,7 +1052,7 @@
       }
       return {
         read: function read() {
-          return value;
+          return checkOwner() ? value : emptyHistory();
         },
         find: find,
         upsert: upsert,
