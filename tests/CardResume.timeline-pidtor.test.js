@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const {test} = require('node:test');
 const source = fs.readFileSync(require('node:path').join(__dirname, '..', 'CardResume.js'), 'utf8');
-const injected = source.replace('    return exports;', '    exports.cardResumeLink = cardResumeLink; exports.createCapture = createCapture; exports.createOnlineAdapter = createOnlineAdapter; exports.createRecipeStore = createRecipeStore; return exports;');
+const injected = source.replace('    return exports;', '    exports.cardResumeSeekPercent = cardResumeSeekPercent; exports.cardResumeLink = cardResumeLink; exports.createCapture = createCapture; exports.createOnlineAdapter = createOnlineAdapter; exports.createRecipeStore = createRecipeStore; return exports;');
 function api(){return vm.runInNewContext(injected, {console, setTimeout, clearTimeout, setInterval, clearInterval});}
 function bus(){
   const listeners = new Map();
@@ -82,4 +82,17 @@ test('PidTor track changes with a new stream hash update the saved semantic choi
   assert.equal(last.online.pidtor_subtitle_key,'s3');
   assert.equal(data.episode_title,'Серия 2');
   capture.stop();
+});
+test('CardResume movie at 90% keeps exact seek position by lowering only startup percent',()=>{
+  const {cardResumeSeekPercent}=api();
+  const film={id:88,source:'tmdb',media_type:'movie',title:'Synthetic Movie'};
+  const progress={time:5896,duration:6491,percent:90};
+  assert.equal(cardResumeSeekPercent(progress,film),89);
+  assert.equal(progress.percent,90,'history must not be mutated');
+  assert.equal(progress.time,5896,'exact time must be kept');
+  assert.equal(cardResumeSeekPercent({time:100,duration:1000,percent:10},film),10);
+  assert.equal(cardResumeSeekPercent({time:6488,duration:6491,percent:99.95},film),99.95,
+    'do not seek into the last 15 seconds when there is no meaningful playback time');
+  assert.equal(cardResumeSeekPercent(progress,series),90,
+    'series completion >=90% must still advance to the next episode');
 });
