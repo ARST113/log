@@ -9,7 +9,7 @@ const src=fs.readFileSync(path.join(__dirname,'..','CardResume.js'),'utf8');
 const marker='    return exports;';
 assert.equal(src.split(marker).length,2,'single export insertion point');
 const api=vm.runInNewContext(src.replace(marker,
-  '    exports.cardResumeZetflixHls=cardResumeZetflixHls; exports.normalizePlaylist=normalizePlaylist;\n'+marker),
+  '    exports.cardResumeZetflixHls=cardResumeZetflixHls; exports.normalizePlaylist=normalizePlaylist; exports.createCapture=createCapture;\n'+marker),
   {setTimeout,clearTimeout,setInterval,clearInterval,console});
 
 const endpoint='https://lampac.art/lite/zetflix/stream?q=1080&s=1&e=3';
@@ -63,4 +63,28 @@ test('Native CardResume playlist normalizes HLS on every episode and keeps ID/ti
   assert.equal(r.playlist.every(x=>x.url.includes('.m3u8')),true);
   assert.equal(r.playlist.every(x=>x.quality['1080p'].includes('.m3u8')),true);
   assert.equal(playlist.every(x=>!x.url.includes('.m3u8')),true);
+});
+
+test('Native online Player.create fixes Zetflix HLS before core selects stream quality',()=>{
+  function emitter(){
+    const map={};
+    return {follow(k,cb){(map[k]||(map[k]=[])).push(cb)},
+      remove(k,cb){map[k]=(map[k]||[]).filter(x=>x!==cb)},
+      emit(k,data){(map[k]||[]).forEach(cb=>cb(data))}};
+  }
+  const p=emitter(),pl=emitter(),timeline=emitter(),listener=emitter();
+  const Lampa={Player:{listener:p},PlayerPlaylist:{listener:pl},
+    Timeline:{listener:timeline},Listener:listener,Storage:{field:()=>null}};
+  const store={upsert(){}};
+  const capture=api.createCapture(Lampa,store,{globalObject:{addEventListener(){},removeEventListener(){}}});
+  capture.start();
+  const launch=item(3);
+  launch.isonline=true;
+  launch.lampac_resume={mode:'online',online:{component:'lampac',balanser:'zetflix'}};
+  p.emit('create',{data:launch});
+  assert.equal(launch.url.endsWith('&.m3u8'),true);
+  assert.equal(launch.quality['1080p'].endsWith('&.m3u8'),true);
+  assert.equal(launch.quality['720p'].url.endsWith('&.m3u8'),true);
+  assert.equal(launch.hls_type,'hlsjs');
+  capture.stop();
 });
