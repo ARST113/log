@@ -1465,11 +1465,10 @@
   function sourceRank(item) {
     var key = item.source || item.title;
     var state = sourceState(key);
+    if (liveOnly() && String(key).toLowerCase() === 'kinobase') return 3;
+    if (typeof item.ghost === 'boolean') return item.ghost ? 3 : 0;
     if (state === 'ok') return 0;
-    if (liveOnly()) return 3;
     if (state === 'empty') return 3;
-    if (item.ghost) return 3;
-    if (lifeKnown()) return 0;
     if (knownQuality(key)) return 1;
     return 2;
   }
@@ -1583,8 +1582,9 @@
   }
 
   function probeAllowed() {
-    // Check the actual per-title endpoint even when the host has a ghost flag.
-    if (liveOnly()) return probeHook() !== 'disabled';
+    // Lampac Online already checks the current title via lifeevents and
+    // prefetches its confirmed sources. Do not issue duplicate Nova requests.
+    if (lifeKnown()) return false;
     return probeMode() === 'legacy' && probeOn();
   }
 
@@ -1836,7 +1836,6 @@
       if (best) rememberQuality(key, best);
       probeSave(movie.id, key, 'ok', found);
       probeMark(key, 'ok');
-      probeHopFromDeadSource();
       if (autoSwitchOn() && ui.list && ui.list.find('.nova-note').length && !ui_open) {
         setTimeout(function () {
           if (!inSkin() || !ui.list || !ui.list.find('.nova-note').length) return;
@@ -1848,7 +1847,6 @@
     }
     probeSave(movie.id, key, 'empty', 0);
     probeMark(key, 'empty');
-    probeHopFromDeadSource();
   }
 
   function probeRun() {
@@ -1869,7 +1867,6 @@
       if (liveOnly() && key.toLowerCase() === 'kinobase') {
         probeSave(movie.id, key, 'empty', 0);
         probeMark(key, 'empty');
-        probeHopFromDeadSource();
         return;
       }
       if (known[key]) return probeMark(key, known[key].s);
@@ -1947,13 +1944,13 @@
   }
 
   function probeSchedule() {
-    if (liveOnly() && currentSourceKey().toLowerCase() === 'kinobase') probeHopFromDeadSource();
+    // Legacy fallback: at most one check per open movie, no periodic polling.
     if (!probeAllowed() || !movie || probe_busy || probe_timer) return;
-    var stamp = movieIdentity(movie) + ':' + Math.floor(Date.now() / 45000);
+    var stamp = movieIdentity(movie);
     if (probe_done_for === stamp) return;
     probe_timer = setTimeout(function () {
       probe_timer = null;
-      if (!inSkin() || !movie || probe_busy) return;
+      if (!inSkin() || !movie || probe_busy || movieIdentity(movie) !== stamp) return;
       if (probeRun()) probe_done_for = stamp;
     }, PROBE_DELAY);
   }
@@ -2367,11 +2364,17 @@
 
   function play(item) {
     if (!item) return;
+    // While the balancer is changing, the old list may remain visible.
+    // Never launch a video from that stale list.
+    if (pendingLive() || loading_started) {
+      try { Lampa.Noty.show('Источник ещё загружается'); } catch (e) {}
+      return;
+    }
     try { item.origin.trigger('hover:enter'); } catch (e) {}
   }
 
   function longPress(item) {
-    if (!item) return;
+    if (!item || pendingLive() || loading_started) return;
     try { item.origin.trigger('hover:long'); } catch (e) {}
   }
 
@@ -3233,8 +3236,8 @@
       if (seat) ui_focus = seat;
     }
 
-    if (opening && key === 'source') probeRun();
-    else probeStop();
+    // The source menu only displays the already collected results.
+    if (opening && key === 'source') probeSchedule();
 
     lockFocus(ui_focus, opening ? 0 : 900);
 
@@ -3294,8 +3297,7 @@
     switchStart('source');
     inplaceStart();
     hopReset();
-    probeStop();
-    probe_done_for = '';
+    // Switching source must reuse the entry-time results.
     hop.tried[item.source || item.title] = true;
     keepAlive(function () {
       host_filter.onSelect('sort', item);
@@ -3391,11 +3393,13 @@
   }
 
   function sourceActive(item, key, state, graded) {
-    if (liveOnly()) return state === 'ok';
+    if (liveOnly() && String(key).toLowerCase() === 'kinobase') return false;
+    // A modern Lampac source already comes with a server verified status.
+    // Do not allow Nova's previous false-negative probe cache to override it.
+    if (typeof item.ghost === 'boolean') return !item.ghost;
     if (state === 'empty') return false;
     if (item.selected || state === 'ok') return true;
     if (knownQuality(key)) return true;
-    if (item.ghost) return false;
     if (!graded) return true;
     return !!splitSourceName(item.title).badge;
   }
@@ -5392,7 +5396,7 @@
       start();
       fastBoot.status = 'ready';
       window.nova_skin_fast_ready = true;
-      window.__novaSkinFastBuild = '2026.11.16-liveonly3';
+      window.__novaSkinFastBuild = '2026.11.16-lifeevents-once1';
       if (fastBoot.sharedSkinWasPresent) {
         try { console.warn('[Nova Skin Fast] Another Nova Skin instance was initialized before Fast. Disable the duplicate if menus conflict.'); } catch (err) {}
       }
