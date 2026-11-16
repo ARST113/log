@@ -1797,6 +1797,22 @@
     }
   }
 
+  function probeHopFromDeadSource() {
+    if (!liveOnly() || !autoSwitchOn() || !movie || ui_open) return;
+    var dead = currentSourceKey();
+    if (!dead || sourceState(dead) !== 'empty') return;
+    setTimeout(function () {
+      if (!movie || !inSkin() || ui_open) return;
+      if (currentSourceKey() !== dead || sourceState(dead) !== 'empty') return;
+      // Never change sources underneath a running video player.
+      if (document.querySelector('.player')) return;
+      hopReset();
+      hop.tried[dead] = true;
+      var ready = nextSource();
+      if (ready) chooseSource(ready);
+    }, 0);
+  }
+
   function probeAnswer(key, answer) {
     if (!probe_busy || !movie) return;
     var body = typeof answer === 'string' ? answer : '';
@@ -1817,6 +1833,7 @@
       if (best) rememberQuality(key, best);
       probeSave(movie.id, key, 'ok', found);
       probeMark(key, 'ok');
+      probeHopFromDeadSource();
       if (autoSwitchOn() && ui.list && ui.list.find('.nova-note').length && !ui_open) {
         setTimeout(function () {
           if (!inSkin() || !ui.list || !ui.list.find('.nova-note').length) return;
@@ -1828,6 +1845,7 @@
     }
     probeSave(movie.id, key, 'empty', 0);
     probeMark(key, 'empty');
+    probeHopFromDeadSource();
   }
 
   function probeRun() {
@@ -1853,6 +1871,7 @@
     queue = queue.slice(0, PROBE_LIMIT);
     if (!queue.length) {
       probe_busy = false;
+      probeHopFromDeadSource();
       return true;
     }
     queue.forEach(function (entry) {
