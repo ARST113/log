@@ -1454,6 +1454,9 @@
   }
 
   function sourceState(key) {
+    // Quarantine: Kinobase MP4 failed in the actual Lampa player (MediaError 4)
+    // even when its initial bytes were valid. Do not advertise it as live.
+    if (liveOnly() && String(key).toLowerCase() === 'kinobase') return 'empty';
     if (!movie) return '';
     var list = probeCache(movie.id).list || {};
     return list[key] ? list[key].s : '';
@@ -1863,6 +1866,12 @@
     list.forEach(function (item) {
       var key = item.source || item.title;
       if (!key) return;
+      if (liveOnly() && key.toLowerCase() === 'kinobase') {
+        probeSave(movie.id, key, 'empty', 0);
+        probeMark(key, 'empty');
+        probeHopFromDeadSource();
+        return;
+      }
       if (known[key]) return probeMark(key, known[key].s);
       if (!probeUrlFor(key)) return;
       queue.push({ item: item, key: key, rank: sourceRank(item) });
@@ -1938,6 +1947,7 @@
   }
 
   function probeSchedule() {
+    if (liveOnly() && currentSourceKey().toLowerCase() === 'kinobase') probeHopFromDeadSource();
     if (!probeAllowed() || !movie || probe_busy || probe_timer) return;
     var stamp = movieIdentity(movie) + ':' + Math.floor(Date.now() / 45000);
     if (probe_done_for === stamp) return;
@@ -3404,7 +3414,7 @@
     var hidden = [];
     sort.forEach(function (item) {
       var key = item.source || item.title;
-      var state = probe[key] ? probe[key].s : '';
+      var state = liveOnly() && key.toLowerCase() === 'kinobase' ? 'empty' : (probe[key] ? probe[key].s : '');
       if (sourceActive(item, key, state, graded)) visible.push(item);
       else hidden.push(item);
     });
@@ -3415,7 +3425,7 @@
     visible.forEach(function (item, order) {
       var key = item.source || item.title;
       var parts = splitSourceName(item.title);
-      var state = probe[key] ? probe[key].s : '';
+      var state = liveOnly() && key.toLowerCase() === 'kinobase' ? 'empty' : (probe[key] ? probe[key].s : '');
       var box = chip(focusKey(item), parts.name, {
         badge: knownQuality(key) || parts.badge,
         active: !!item.selected,
