@@ -1408,10 +1408,10 @@
   var probe_epoch = 0;
 
   var probe_queue = {};
-  var PROBE_TIMEOUT = 5000;
-  var PROBE_PARALLEL = 4;
-  var PROBE_LIMIT = 16;
-  var PROBE_BUDGET = 21000;
+  var PROBE_TIMEOUT = 17000;
+  var PROBE_PARALLEL = 3;
+  var PROBE_LIMIT = 24;
+  var PROBE_BUDGET = 80000;
   var PROBE_DELAY = 200;
 
   function componentNow() {
@@ -1587,7 +1587,84 @@
 
   function probeUrlFor(key) {
     if (!probe_url || !key) return '';
-    return probe_url.replace(/(\/lite\/)[^\/?&]+/, '$1' + encodeURIComponent(key));
+    var prefix = probe_url.split('?')[0];
+    var base = prefix.replace(/(\/lite\/)[^\/?&]+/, '$1' + encodeURIComponent(key));
+    if (base === prefix) return '';
+    var allowed = /^(title|original_title|year|serial|kinopoisk_id|imdb_id|tmdb_id|original_language|account_email|uid|nws_id|token|cub_id)$/;
+    var args = [], used = {};
+    function add(k, val) {
+      if (used[k] || val == null || val === '') return;
+      used[k] = true;
+      args.push(k + '=' + encodeURIComponent(String(val)));
+    }
+    (probe_url.split('?')[1] || '').split('&').forEach(function (pair) {
+      var eq = pair.indexOf('=');
+      if (eq < 0) return;
+      var k = pair.slice(0, eq);
+      if (!allowed.test(k)) return;
+      try { add(k, decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, ' '))); } catch (e) {}
+    });
+    if (movie) {
+      add('title', movie.title || movie.name || movie.original_title || movie.original_name);
+      add('original_title', movie.original_title || movie.original_name);
+      add('year', String(movie.release_date || movie.first_air_date || '').slice(0, 4));
+    }
+    add('rjson', 'true');
+    try { add('account_email', Lampa.Storage.get('account_email', '')); } catch (e) {}
+    return base + '?' + args.join('&');
+  }
+
+  function probeParse(answer) {
+    if (answer && typeof answer === 'object') return answer;
+    if (typeof answer !== 'string' || !answer) return null;
+    try { return JSON.parse(answer); } catch (e) { return null; }
+  }
+
+  function probeItems(answer) {
+    var o = probeParse(answer);
+    if (!o || o.accsdb || o.rch || o.blocked || o.error) return [];
+    if (Array.isArray(o.data)) return o.data;
+    if (o.data && o.data.method) return [o.data];
+    return [o];
+  }
+
+  function probePlayable(answer) {
+    var count = 0;
+    probeItems(answer).forEach(function (item) {
+      if (!item || item.method !== 'play' || typeof item.url !== 'string') return;
+      if (/^(https?:\/\/|\/)/i.test(item.url)) count++;
+    });
+    return count;
+  }
+
+  function probeNextUrl(answer) {
+    var items = probeItems(answer);
+    var target = '';
+    for (var i = 0; i < items.length; i++) {
+      if (items[i] && (items[i].method === 'call' || items[i].method === 'link') &&
+          typeof items[i].url === 'string') {
+        target = items[i].url;
+        break;
+      }
+    }
+    if (!target) return '';
+    var match = String(probe_url || '').match(/^https?:\/\/[^/]+/i);
+    if (!match) return '';
+    var origin = match[0];
+    if (target.indexOf('/lite/') === 0) target = origin + target;
+    if (target.indexOf(origin + '/lite/') !== 0) return '';
+
+    // Catalog links omit accsdb identity; carry it through each resolution hop.
+    ['account_email', 'uid', 'nws_id', 'token'].forEach(function (name) {
+      if (new RegExp('[?&]' + name + '=').test(target)) return;
+      var m = new RegExp('[?&]' + name + '=([^&#]*)').exec(probe_url);
+      var value = m ? m[1] : '';
+      if (!value && name === 'account_email') {
+        try { value = encodeURIComponent(Lampa.Storage.get('account_email', '')); } catch (e) {}
+      }
+      if (value) target += (target.indexOf('?') < 0 ? '?' : '&') + name + '=' + value;
+    });
+    return target;
   }
 
   function probeStop() {
@@ -1652,13 +1729,9 @@
     if (!body && answer && typeof answer === 'object') {
       try { body = JSON.stringify(answer); } catch (e) {}
     }
-
-    // HTTP 200 is not proof of playback. Kinobase may return geo-blocking.
     var rejected = !body ||
       /"rch"|"accsdb"|"blocked"|"player"\s*:\s*false|player\s*[=:]\s*false|online-empty__title|видео недоступно|недоступно для просмотра в вашей стране|not available in your country/i.test(body);
-    var found = rejected ? 0 : ((body.match(/videos__item/g) || []).length ||
-      (body.match(/"method"\s*:\s*"(play|call|link)"/g) || []).length);
-
+    var found = rejected ? 0 : probePlayable(answer);
     if (found) {
       var best = '';
       var marks = body.match(/(2160|1440|1080|720|576|480|360)\s*p/gi) || [];
@@ -1679,8 +1752,6 @@
       }
       return;
     }
-
-    // Errors and unrecognized answers remain invisible until rechecked.
     probeSave(movie.id, key, 'empty', 0);
     probeMark(key, 'empty');
   }
@@ -1688,62 +1759,45 @@
   function probeRun() {
     if (!probeAllowed() || !probe_url || !movie) return false;
     var list = groups.sort || [];
-    if (list.length < 2) return false;
-
+    if (!list.length) return false;
     probeStop();
     probe_busy = true;
     probe_queue = {};
     var epoch = probe_epoch;
     var target = movieIdentity(movie);
-
     var known = probeCache(movie.id).list || {};
-    var here = currentSourceKey();
     var queue = [];
 
     list.forEach(function (item) {
       var key = item.source || item.title;
-      if (!key || key === here) return;
+      if (!key) return;
       if (known[key]) return probeMark(key, known[key].s);
       if (!probeUrlFor(key)) return;
       queue.push({ item: item, key: key, rank: sourceRank(item) });
     });
-
-    queue.sort(function (a, b) {
-      return a.rank - b.rank;
-    });
+    queue.sort(function (a, b) { return a.rank - b.rank; });
     queue = queue.slice(0, PROBE_LIMIT);
     if (!queue.length) {
       probe_busy = false;
       return true;
     }
-
     queue.forEach(function (entry) {
       probe_queue[entry.key] = true;
       var chip = probeChip(entry.key);
       if (chip) chip.addClass('nova-chip--checking');
     });
-
     var deadline = Date.now() + PROBE_BUDGET;
-    var index = 0;
-    var completed = 0;
+    var index = 0, completed = 0;
     probe_watchdog = setTimeout(function () {
       if (probe_busy && epoch === probe_epoch) probeStop();
     }, PROBE_BUDGET);
 
-    var step = function () {
+    function step() {
       if (!probe_busy || index >= queue.length) return;
       if (Date.now() > deadline) return probeStop();
-
       var entry = queue[index++];
-      var net = null;
-      try { net = new Lampa.Reguest(); } catch (e) { net = null; }
-      if (!net) return probeStop();
-
-      probe_nets.push(net);
-      try { net.timeout(PROBE_TIMEOUT); } catch (e) {}
-
-      var finished = false;
-      var done = function (answer) {
+      var finished = false, seen = {};
+      function done(answer) {
         if (finished) return;
         finished = true;
         if (!probe_busy || epoch !== probe_epoch || !movie ||
@@ -1758,17 +1812,27 @@
           return;
         }
         step();
-      };
-
-      try {
-        net['native'](probeUrlFor(entry.key), done, function () {
-          done('');
-        }, false, { dataType: 'text' });
-      } catch (e) {
-        done('');
       }
-    };
-
+      function request(url, depth) {
+        if (finished || !probe_busy || epoch !== probe_epoch) return;
+        if (!url || depth > 4 || seen[url] || Date.now() > deadline) return done('');
+        seen[url] = true;
+        var net = null;
+        try { net = new Lampa.Reguest(); } catch (e) { return done(''); }
+        probe_nets.push(net);
+        try { net.timeout(Math.min(PROBE_TIMEOUT, Math.max(1000, deadline - Date.now()))); } catch (e) {}
+        try {
+          net['native'](url, function (answer) {
+            if (finished || !probe_busy || epoch !== probe_epoch) return;
+            if (probePlayable(answer)) return done(answer);
+            var next = probeNextUrl(answer);
+            if (next && depth < 4) return request(next, depth + 1);
+            done('');
+          }, function () { done(''); }, false, { dataType: 'text' });
+        } catch (e) { done(''); }
+      }
+      request(probeUrlFor(entry.key), 0);
+    }
     for (var worker = 0; worker < PROBE_PARALLEL; worker++) step();
     return true;
   }
@@ -3240,7 +3304,7 @@
     var hidden = [];
     sort.forEach(function (item) {
       var key = item.source || item.title;
-      var state = probe[key] ? probe[key].s : (life && !item.ghost ? 'ok' : '');
+      var state = probe[key] ? probe[key].s : '';
       if (sourceActive(item, key, state, graded)) visible.push(item);
       else hidden.push(item);
     });
@@ -3251,7 +3315,7 @@
     visible.forEach(function (item, order) {
       var key = item.source || item.title;
       var parts = splitSourceName(item.title);
-      var state = probe[key] ? probe[key].s : (life ? (item.ghost ? 'empty' : 'ok') : '');
+      var state = probe[key] ? probe[key].s : '';
       var box = chip(focusKey(item), parts.name, {
         badge: knownQuality(key) || parts.badge,
         active: !!item.selected,
