@@ -1589,7 +1589,7 @@
     if (!probe_url || !key) return '';
     var prefix = probe_url.split('?')[0];
     var base = prefix.replace(/(\/lite\/)[^\/?&]+/, '$1' + encodeURIComponent(key));
-    if (base === prefix) return '';
+    if (!/\/lite\/[^\/?&]+/.test(prefix)) return '';
     var allowed = /^(title|original_title|year|serial|kinopoisk_id|imdb_id|tmdb_id|original_language|account_email|uid|nws_id|token|cub_id)$/;
     var args = [], used = {};
     function add(k, val) {
