@@ -33,7 +33,8 @@
   var LOGO_CACHE_KEY = 'nova_skin_logo_cache2';
   var LOGO_RETRY = 6 * 60 * 60 * 1000;
   var LEAVE_GRACE = 2500;
-  var SEARCH_TIMEOUT = 30000;
+  var SEARCH_TIMEOUT = 15000;
+  var EARLY_SWITCH_AFTER = 5500;
   var LOGO_WARM = {};
   var LOGO_BLIND = {};
 
@@ -175,7 +176,7 @@
     nova_skin_loading_start: { ru: 'Опрашиваем источники', uk: 'Опитуємо джерела', en: 'Checking sources' },
     nova_skin_loading_remaining: { ru: 'осталось {sec} с', uk: 'залишилося {sec} с', en: '{sec}s left' },
     nova_skin_loading_timeout_title: { ru: 'Время поиска истекло', uk: 'Час пошуку вичерпано', en: 'Search timed out' },
-    nova_skin_loading_timeout_text: { ru: 'Источник не ответил за 30 секунд. Попробуйте повторить поиск или выбрать другой источник.', uk: 'Джерело не відповіло за 30 секунд. Спробуйте ще раз або виберіть інше джерело.', en: 'The source did not respond within 30 seconds. Retry or choose another source.' },
+    nova_skin_loading_timeout_text: { ru: 'Источник не ответил за 15 секунд. Попробуйте повторить поиск или выбрать другой источник.', uk: 'Джерело не відповіло за 15 секунд. Спробуйте ще раз або виберіть інше джерело.', en: 'The source did not respond within 15 seconds. Retry or choose another source.' },
     nova_skin_sec: { ru: ' с', uk: ' с', en: ' s' },
     nova_skin_episode: { ru: 'Серия', uk: 'Серія', en: 'Episode' },
     nova_skin_action: { ru: 'Действие', uk: 'Дія', en: 'Action' },
@@ -314,8 +315,8 @@
   }
 
   var QUALITY_RANK = { '4K': 4, FHD: 3, HD: 2, SD: 1 };
-  var PROBE_TTL_OK = 21600000;
-  var PROBE_TTL_EMPTY = 1800000;
+  var PROBE_TTL_OK = 3 * 60 * 1000;
+  var PROBE_TTL_EMPTY = 90 * 1000;
 
   var QUALITY_TTL = 604800000;
 
@@ -391,7 +392,7 @@
       all[id] = mine;
     }
     var list = mine.list || {};
-    var ally = probeAlly(id);
+    var ally = liveOnly() ? {} : probeAlly(id);
     for (var name in ally) {
       if (!list[name]) list[name] = ally[name];
     }
@@ -574,7 +575,10 @@
     var value = String(url == null ? '' : url);
     if (!/\/lite\/[^\/?&]+/.test(value)) return;
     if (value.indexOf('lite/events') !== -1) return;
+    if (probe_busy) return;
+    var changed = probe_url !== value;
     probe_url = value;
+    if (changed && movie) probeSchedule();
   }
 
   function hookRequest() {
@@ -981,6 +985,9 @@
   // kept it alive while its network request was pending.
   function resetForNextMovie() {
     switchDone();
+    probeStop();
+    probe_url = '';
+    probe_done_for = '';
     loadingReset();
     try { if (ui.root) ui.root.remove(); } catch (e) {}
     try {
@@ -1396,14 +1403,15 @@
   var probe_timer = null;
   var probe_busy = false;
   var probe_nets = [];
-  var probe_done_for = 0;
+  var probe_done_for = '';
+  var probe_epoch = 0;
 
   var probe_queue = {};
-  var PROBE_TIMEOUT = 7000;
-  var PROBE_PARALLEL = 2;
-  var PROBE_LIMIT = 12;
-  var PROBE_BUDGET = 20000;
-  var PROBE_DELAY = 1500;
+  var PROBE_TIMEOUT = 5000;
+  var PROBE_PARALLEL = 4;
+  var PROBE_LIMIT = 16;
+  var PROBE_BUDGET = 21000;
+  var PROBE_DELAY = 200;
 
   function componentNow() {
     try {
@@ -1425,6 +1433,10 @@
     return get('nova_skin_auto_switch', true) !== false;
   }
 
+  function liveOnly() {
+    return get('nova_skin_live_only', true) !== false;
+  }
+
   function lifeKnown() {
     var list = groups.sort || [];
     for (var i = 0; i < list.length; i++) {
@@ -1443,6 +1455,7 @@
     var key = item.source || item.title;
     var state = sourceState(key);
     if (state === 'ok') return 0;
+    if (liveOnly()) return 3;
     if (state === 'empty') return 3;
     if (item.ghost) return 3;
     if (lifeKnown()) return 0;
@@ -1559,6 +1572,8 @@
   }
 
   function probeAllowed() {
+    // Check the actual per-title endpoint even when the host has a ghost flag.
+    if (liveOnly()) return probeHook() !== 'disabled';
     return probeMode() === 'legacy' && probeOn();
   }
 
@@ -1575,6 +1590,7 @@
   }
 
   function probeStop() {
+    probe_epoch++;
     probe_busy = false;
     probe_queue = {};
     clearTimeout(probe_timer);
@@ -1595,7 +1611,10 @@
   function probeMark(key, state) {
     delete probe_queue[key];
     var chip = probeChip(key);
-    if (!chip) return;
+    if (!chip) {
+      if (ui_open === 'source' && ui.rows) refreshVerifiedSourceMenu();
+      return;
+    }
 
     chip.removeClass('nova-chip--checking nova-chip--empty');
     chip.find('.nova-chip__dot').remove();
@@ -1609,20 +1628,33 @@
 
     if (state === 'empty') chip.addClass('nova-chip--empty');
     else if (state === 'ok') chip.append('<span class="nova-chip__dot"></span>');
+    if (ui_open === 'source' && ui.rows) refreshVerifiedSourceMenu();
+  }
+
+  function refreshVerifiedSourceMenu() {
+    if (ui_open !== 'source' || !ui.rows || !ui.root || !ui.root.parent().length) return;
+    var previous = ui_focus;
+    buildRows();
+    refreshCollection();
+    if (previous && !seek(previous)) {
+      var first = dropEntry();
+      if (first) focusNode($(first), true);
+      else focusChip('source');
+    }
   }
 
   function probeAnswer(key, answer) {
-    if (!probe_busy) return;
+    if (!probe_busy || !movie) return;
     var body = typeof answer === 'string' ? answer : '';
-
-    if (!body) return probeMark(key, 'skip');
-    if (body.indexOf('"rch"') !== -1) return probeMark(key, 'skip');
-    if (body.indexOf('"accsdb"') !== -1 || body.indexOf('"blocked"') !== -1) {
-      return probeMark(key, 'skip');
+    if (!body && answer && typeof answer === 'object') {
+      try { body = JSON.stringify(answer); } catch (e) {}
     }
 
-    var found = (body.match(/videos__item/g) || []).length ||
-      (body.match(/"method"\s*:\s*"(play|call|link)"/g) || []).length;
+    // HTTP 200 is not proof of playback. Kinobase may return geo-blocking.
+    var rejected = !body ||
+      /"rch"|"accsdb"|"blocked"|"player"\s*:\s*false|player\s*[=:]\s*false|online-empty__title|видео недоступно|недоступно для просмотра в вашей стране|not available in your country/i.test(body);
+    var found = rejected ? 0 : ((body.match(/videos__item/g) || []).length ||
+      (body.match(/"method"\s*:\s*"(play|call|link)"/g) || []).length);
 
     if (found) {
       var best = '';
@@ -1633,24 +1665,33 @@
       });
       if (/4k|uhd/i.test(body)) best = '4K';
       if (best) rememberQuality(key, best);
-      if (movie) probeSave(movie.id, key, 'ok', found);
-      return probeMark(key, 'ok');
+      probeSave(movie.id, key, 'ok', found);
+      probeMark(key, 'ok');
+      if (autoSwitchOn() && ui.list && ui.list.find('.nova-note').length && !ui_open) {
+        setTimeout(function () {
+          if (!inSkin() || !ui.list || !ui.list.find('.nova-note').length) return;
+          var ready = nextSource();
+          if (ready) chooseSource(ready);
+        }, 0);
+      }
+      return;
     }
 
-    if (!/videos__|"method"|online-prestige|"data"/i.test(body)) return probeMark(key, 'skip');
-    if (movie) probeSave(movie.id, key, 'empty', 0);
+    // Errors and unrecognized answers remain invisible until rechecked.
+    probeSave(movie.id, key, 'empty', 0);
     probeMark(key, 'empty');
   }
 
   function probeRun() {
-    if (!probeAllowed() || !probe_url || !movie) return;
-    if (lifeKnown()) return;
+    if (!probeAllowed() || !probe_url || !movie) return false;
     var list = groups.sort || [];
-    if (list.length < 2) return;
+    if (list.length < 2) return false;
 
     probeStop();
     probe_busy = true;
     probe_queue = {};
+    var epoch = probe_epoch;
+    var target = movieIdentity(movie);
 
     var known = probeCache(movie.id).list || {};
     var here = currentSourceKey();
@@ -1670,7 +1711,7 @@
     queue = queue.slice(0, PROBE_LIMIT);
     if (!queue.length) {
       probe_busy = false;
-      return;
+      return true;
     }
 
     queue.forEach(function (entry) {
@@ -1694,34 +1735,37 @@
       probe_nets.push(net);
       try { net.timeout(PROBE_TIMEOUT); } catch (e) {}
 
+      var finished = false;
       var done = function (answer) {
+        if (finished) return;
+        finished = true;
+        if (!probe_busy || epoch !== probe_epoch || !movie ||
+            target !== movieIdentity(movie)) return;
         probeAnswer(entry.key, answer);
         step();
       };
 
       try {
         net['native'](probeUrlFor(entry.key), done, function () {
-          probeAnswer(entry.key, '');
-          step();
+          done('');
         }, false, { dataType: 'text' });
       } catch (e) {
-        probeAnswer(entry.key, '');
-        step();
+        done('');
       }
     };
 
     for (var worker = 0; worker < PROBE_PARALLEL; worker++) step();
+    return true;
   }
 
   function probeSchedule() {
-    if (!probeAllowed() || !movie) return;
-    if (probe_done_for === movie.id) return;
-    clearTimeout(probe_timer);
+    if (!probeAllowed() || !movie || probe_busy || probe_timer) return;
+    var stamp = movieIdentity(movie) + ':' + Math.floor(Date.now() / 300000);
+    if (probe_done_for === stamp) return;
     probe_timer = setTimeout(function () {
       probe_timer = null;
-      if (!inSkin() || !movie) return;
-      probe_done_for = movie.id;
-      probeRun();
+      if (!inSkin() || !movie || probe_busy) return;
+      if (probeRun()) probe_done_for = stamp;
     }, PROBE_DELAY);
   }
 
@@ -3062,6 +3106,7 @@
     inplaceStart();
     hopReset();
     probeStop();
+    probe_done_for = '';
     hop.tried[item.source || item.title] = true;
     keepAlive(function () {
       host_filter.onSelect('sort', item);
@@ -3157,6 +3202,7 @@
   }
 
   function sourceActive(item, key, state, graded) {
+    if (liveOnly()) return state === 'ok';
     if (state === 'empty') return false;
     if (item.selected || state === 'ok') return true;
     if (knownQuality(key)) return true;
@@ -3183,7 +3229,7 @@
       if (sourceActive(item, key, state, graded)) visible.push(item);
       else hidden.push(item);
     });
-    if (ui_all_sources) visible = visible.concat(hidden);
+    if (ui_all_sources && !liveOnly()) visible = visible.concat(hidden);
 
     var row = $('<div class="nova-drop"></div>');
 
@@ -3207,7 +3253,7 @@
       row.append(box);
     });
 
-    if (!ui_all_sources && hidden.length) {
+    if (!liveOnly() && !ui_all_sources && hidden.length) {
       var more = chip('src:more', text('nova_more_sources', 'nova_skin_more_sources')
         .replace('{count}', hidden.length), { plain: true });
       more.addClass('nova-chip--more');
@@ -3229,6 +3275,10 @@
       row.append(more);
     }
 
+    if (!visible.length && liveOnly()) {
+      row.append($('<div class="nova-drop__status"></div>').text(
+        probe_busy ? 'Проверяем источники…' : 'Нет подтверждённых источников'));
+    }
     ui.rows.append(row);
   }
 
@@ -3372,8 +3422,10 @@
         if (item.selected) current = item;
       });
       var key = current ? (current.source || current.title) : '';
-      addChip('source', text('nova_source', 'nova_skin_source'), parts.name, {
-        badge: knownQuality(key) || parts.badge
+      var verified = !liveOnly() || sourceState(key) === 'ok';
+      addChip('source', text('nova_source', 'nova_skin_source'),
+        verified ? parts.name : (probe_busy ? 'Проверяем…' : 'Выбрать источник'), {
+        badge: verified ? (knownQuality(key) || parts.badge) : ''
       });
     }
 
@@ -3872,6 +3924,7 @@
     if (loading_timed_out) return;
     if (!loading_started) loading_started = Date.now();
     if (!loading_timer) loading_timer = setInterval(loadingText, 1000);
+    probeSchedule();
     note_sig = '';
 
     // Repeated Life Events updates must never clear the previous cards.
@@ -3916,6 +3969,18 @@
     if (!loading_started || !ui.root || !ui.root.parent().length) return loadingStop();
     var elapsed = Date.now() - loading_started;
     if (elapsed >= SEARCH_TIMEOUT) return loadingExpired();
+    if (liveOnly() && autoSwitchOn() && elapsed >= EARLY_SWITCH_AFTER &&
+        !ui_open && (!ui.list || !ui.list.find('.nova-card').length)) {
+      hopReset();
+      var ready = nextSource();
+      if (ready) {
+        var slow = currentSourceKey();
+        if (slow) hop.tried[slow] = true;
+        loadingReset();
+        chooseSource(ready);
+        return;
+      }
+    }
     // The loader may be hidden while source/voice changes; its watchdog must remain active.
     if (!ui.load || !ui.load.parent().length) return;
     var remain = Math.max(0, Math.ceil((SEARCH_TIMEOUT - elapsed) / 1000));
@@ -3942,6 +4007,19 @@
     loading_timed_out = true;
     loadingStop();
     if (!root || !host || !ui.root || !ui.root.parent().length) return;
+
+    var slowKey = currentSourceKey();
+    if (slowKey && movie) probeSave(movie.id, slowKey, 'empty', 0);
+    if (liveOnly() && autoSwitchOn()) {
+      hopReset();
+      if (slowKey) hop.tried[slowKey] = true;
+      var verified = nextSource();
+      if (verified) {
+        loadingReset();
+        chooseSource(verified);
+        return;
+      }
+    }
 
     // Keep previously loaded playable cards when only the newly selected
     // source is slow. Its completion can still replace the list later.
@@ -4010,6 +4088,8 @@
     lockRelease();
     switchDone();
     ui_open = '';
+    var dead = currentSourceKey();
+    if (dead && movie) probeSave(movie.id, dead, 'empty', 0);
     buildHero();
     ui.hero_preloading = false;
     buildRows();
@@ -4017,9 +4097,6 @@
     var note = $('<div class="nova-note"><div class="nova-note__main">' +
       '<div class="nova-note__title"></div><div class="nova-note__text"></div>' +
       '<div class="nova-note__actions"></div></div></div>');
-
-    var dead = currentSourceKey();
-    if (dead && movie && !timeout) probeSave(movie.id, dead, 'empty', 0);
 
     note.find('.nova-note__title').text(native.node.find('.online-empty__title').text().trim());
     note.find('.nova-note__text').text(native.node.find('.online-empty__time').text().trim());
@@ -4270,14 +4347,14 @@
     root.addClass('nova-skin-scope nova-skin-chips');
     uiFrame();
 
-    if (!nav) {
+    if (list.length) {
       var current = null;
       (groups.sort || []).forEach(function (entry) {
         if (entry.selected) current = entry;
       });
       var key = current ? (current.source || current.title) : '';
       if (key) {
-        probeSave(movie.id, key, 'ok', files.length);
+        probeSave(movie.id, key, 'ok', files.length || list.length);
         var best = '';
         files.forEach(function (item) {
           var label = shortQuality(item.quality);
@@ -5122,7 +5199,7 @@
       start();
       fastBoot.status = 'ready';
       window.nova_skin_fast_ready = true;
-      window.__novaSkinFastBuild = '2026.10.30-timeout2';
+      window.__novaSkinFastBuild = '2026.11.16-liveonly1';
       if (fastBoot.sharedSkinWasPresent) {
         try { console.warn('[Nova Skin Fast] Another Nova Skin instance was initialized before Fast. Disable the duplicate if menus conflict.'); } catch (err) {}
       }
