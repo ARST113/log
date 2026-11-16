@@ -417,7 +417,7 @@
     var old = mine.list[name];
     var amount = count || 0;
     // A redraw is not a new source check. Avoid rewriting the full cache each time.
-    if (old && old.s === state && old.c === amount && now - (old.t || 0) < 60000) return;
+    // A completed network check always renews the TTL, even if state is unchanged.
     probe_saves++;
     mine.list[name] = { s: state, c: amount, t: now };
     all[id] = mine;
@@ -1409,7 +1409,7 @@
 
   var probe_queue = {};
   var PROBE_TIMEOUT = 17000;
-  var PROBE_PARALLEL = 3;
+  var PROBE_PARALLEL = 2;
   var PROBE_LIMIT = 24;
   var PROBE_BUDGET = 80000;
   var PROBE_DELAY = 200;
@@ -1839,7 +1839,7 @@
 
   function probeSchedule() {
     if (!probeAllowed() || !movie || probe_busy || probe_timer) return;
-    var stamp = movieIdentity(movie) + ':' + Math.floor(Date.now() / 300000);
+    var stamp = movieIdentity(movie) + ':' + Math.floor(Date.now() / 45000);
     if (probe_done_for === stamp) return;
     probe_timer = setTimeout(function () {
       probe_timer = null;
