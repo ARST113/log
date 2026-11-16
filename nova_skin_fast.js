@@ -1438,7 +1438,9 @@
   }
 
   function autoSwitchOn() {
-    return get('nova_skin_auto_switch', true) !== false;
+    // The modern online component owns automatic source selection and
+    // preserves the user's manual choice. Nova must not race that logic.
+    return get('nova_skin_auto_switch', true) !== false && !lifeKnown();
   }
 
   function liveOnly() {
@@ -3236,8 +3238,7 @@
       if (seat) ui_focus = seat;
     }
 
-    // The source menu only displays the already collected results.
-    if (opening && key === 'source') probeSchedule();
+    // Menu interactions never start or cancel checks.
 
     lockFocus(ui_focus, opening ? 0 : 900);
 
@@ -3463,7 +3464,7 @@
         restoreFocus(false);
         contentEnable();
         dropShowSoon();
-        probeRun();
+        probeSchedule();
       });
       row.append(more);
     }
@@ -4432,6 +4433,13 @@
     ].join('\u001e');
   }
 
+  function sourcesStatusStamp() {
+    return (groups.sort || []).map(function (item) {
+      return (item.source || item.title || '') + ':' +
+        (item.ghost === true ? 'dead' : item.ghost === false ? 'ready' : 'unknown');
+    }).join(',');
+  }
+
   function rowsRenderKey() {
     var jump = (!nav && items.length > JUMP_FROM)
       ? pageTitle(pageAt(pages(items.length), ui_page > 0 ? ui_page : 0))
@@ -4441,6 +4449,7 @@
       groups.season ? groups.season.subtitle : '',
       groups.voice ? groups.voice.subtitle : '',
       extrasStamp(),
+      sourcesStatusStamp(),
       ui_all_sources ? 1 : 0,
       ui_open,
       jump,
@@ -4531,7 +4540,21 @@
     items = list;
     var mark = stamp();
 
-    if (signature === mark && ui.list && ui.list.children().length) return;
+    if (signature === mark && ui.list && ui.list.children().length) {
+      // Live Events may add newly verified sources without changing the
+      // episode list. Repaint only the dropdown, preserving its focus.
+      if (ui_open === 'source' && ui.rows_key !== rowsRenderKey()) {
+        busy = true;
+        buildRows();
+        refreshCollection();
+        if (ui_focus && !seek(ui_focus)) {
+          var entry = dropEntry();
+          if (entry) focusNode($(entry), true);
+        }
+        busy = false;
+      }
+      return;
+    }
 
     busy = true;
     signature = mark;
@@ -5396,7 +5419,7 @@
       start();
       fastBoot.status = 'ready';
       window.nova_skin_fast_ready = true;
-      window.__novaSkinFastBuild = '2026.11.16-lifeevents-once1';
+      window.__novaSkinFastBuild = '2026.11.16-lifeevents-once2';
       if (fastBoot.sharedSkinWasPresent) {
         try { console.warn('[Nova Skin Fast] Another Nova Skin instance was initialized before Fast. Disable the duplicate if menus conflict.'); } catch (err) {}
       }
