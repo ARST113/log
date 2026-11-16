@@ -399,6 +399,10 @@
     var now = Date.now();
     for (var key in list) {
       var entry = list[key] || {};
+      if (key.toLowerCase() === 'kinobase' && entry.s === 'ok' && entry.v !== 1) {
+        delete list[key];
+        continue;
+      }
       var stamp = entry.t || mine.time || 0;
       var ttl = entry.s === 'ok' ? PROBE_TTL_OK : PROBE_TTL_EMPTY;
       if (now - stamp > ttl) delete list[key];
@@ -419,7 +423,10 @@
     // A redraw is not a new source check. Avoid rewriting the full cache each time.
     // A completed network check always renews the TTL, even if state is unchanged.
     probe_saves++;
-    mine.list[name] = { s: state, c: amount, t: now };
+    mine.list[name] = {
+      s: state, c: amount, t: now,
+      v: name.toLowerCase() === 'kinobase' && state === 'ok' ? 1 : 0
+    };
     all[id] = mine;
     save('nova_probe', all);
   }
@@ -1637,6 +1644,73 @@
     return count;
   }
 
+  function probeKinobaseMedia(answer, callback) {
+    // A Kinobase "play" result alone does not prove that its MP4 proxy serves bytes.
+    var items = probeItems(answer);
+    var stream = '';
+    for (var i = 0; i < items.length; i++) {
+      if (items[i] && items[i].method === 'play' && typeof items[i].url === 'string') {
+        stream = items[i].url;
+        break;
+      }
+    }
+    var origin = String(probe_url || '').match(/^https?:\/\/[^/]+/i);
+    if (!origin || stream.indexOf(origin[0] + '/proxy/') !== 0 ||
+        !window || typeof window.fetch !== 'function') {
+      callback(false);
+      return;
+    }
+    var finished = false;
+    var controller = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = setTimeout(function () { finish(false); }, 12500);
+
+    function finish(ok) {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      if (controller) {
+        try { controller.abort(); } catch (e) {}
+      }
+      callback(!!ok);
+    }
+
+    var options = {
+      method: 'GET',
+      headers: { Range: 'bytes=0-4095' },
+      credentials: 'omit',
+      cache: 'no-store'
+    };
+    if (controller) options.signal = controller.signal;
+
+    window.fetch(stream, options).then(function (response) {
+      if (finished) return;
+      if (response.status !== 200 && response.status !== 206) return finish(false);
+      var mime = (response.headers && response.headers.get('content-type') || '').toLowerCase();
+      if (/text\/html|application\/json|mpegurl/i.test(mime)) return finish(false);
+      if (response.body && typeof response.body.getReader === 'function') {
+        var reader = response.body.getReader();
+        var bytes = 0;
+        function readSample() {
+          reader.read().then(function (part) {
+            if (finished) return;
+            if (part.done) return finish(bytes >= 256);
+            bytes += part.value ? part.value.byteLength || part.value.length || 0 : 0;
+            if (bytes >= 256) {
+              try { reader.cancel().catch(function () {}); } catch (e) {}
+              return finish(true);
+            }
+            readSample();
+          }).catch(function () { finish(false); });
+        }
+        readSample();
+      } else {
+        response.arrayBuffer().then(function (data) {
+          finish(data.byteLength >= 256);
+        }).catch(function () { finish(false); });
+      }
+    }).catch(function () { finish(false); });
+  }
+
   function probeNextUrl(answer) {
     var items = probeItems(answer);
     var target = '';
@@ -1824,7 +1898,14 @@
         try {
           net['native'](url, function (answer) {
             if (finished || !probe_busy || epoch !== probe_epoch) return;
-            if (probePlayable(answer)) return done(answer);
+            if (probePlayable(answer)) {
+              if (entry.key.toLowerCase() === 'kinobase') {
+                return probeKinobaseMedia(answer, function (ok) {
+                  done(ok ? answer : '');
+                });
+              }
+              return done(answer);
+            }
             var next = probeNextUrl(answer);
             if (next && depth < 4) return request(next, depth + 1);
             done('');
