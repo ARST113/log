@@ -315,7 +315,7 @@
   }
 
   var QUALITY_RANK = { '4K': 4, FHD: 3, HD: 2, SD: 1 };
-  var PROBE_TTL_OK = 3 * 60 * 1000;
+  var PROBE_TTL_OK = 60 * 1000;
   var PROBE_TTL_EMPTY = 90 * 1000;
 
   var QUALITY_TTL = 604800000;
@@ -1401,6 +1401,7 @@
   var hop_timer = null;
   var probe_url = '';
   var probe_timer = null;
+  var probe_watchdog = null;
   var probe_busy = false;
   var probe_nets = [];
   var probe_done_for = '';
@@ -1595,6 +1596,8 @@
     probe_queue = {};
     clearTimeout(probe_timer);
     probe_timer = null;
+    clearTimeout(probe_watchdog);
+    probe_watchdog = null;
     probe_nets.forEach(function (net) {
       try { net.clear(); } catch (e) {}
     });
@@ -1722,6 +1725,10 @@
 
     var deadline = Date.now() + PROBE_BUDGET;
     var index = 0;
+    var completed = 0;
+    probe_watchdog = setTimeout(function () {
+      if (probe_busy && epoch === probe_epoch) probeStop();
+    }, PROBE_BUDGET);
 
     var step = function () {
       if (!probe_busy || index >= queue.length) return;
@@ -1742,6 +1749,14 @@
         if (!probe_busy || epoch !== probe_epoch || !movie ||
             target !== movieIdentity(movie)) return;
         probeAnswer(entry.key, answer);
+        completed++;
+        if (completed >= queue.length) {
+          probe_busy = false;
+          clearTimeout(probe_watchdog);
+          probe_watchdog = null;
+          if (ui_open === 'source') refreshVerifiedSourceMenu();
+          return;
+        }
         step();
       };
 
@@ -4093,6 +4108,7 @@
     buildHero();
     ui.hero_preloading = false;
     buildRows();
+    probeSchedule();
 
     var note = $('<div class="nova-note"><div class="nova-note__main">' +
       '<div class="nova-note__title"></div><div class="nova-note__text"></div>' +
@@ -5199,7 +5215,7 @@
       start();
       fastBoot.status = 'ready';
       window.nova_skin_fast_ready = true;
-      window.__novaSkinFastBuild = '2026.11.16-liveonly1';
+      window.__novaSkinFastBuild = '2026.11.16-liveonly2';
       if (fastBoot.sharedSkinWasPresent) {
         try { console.warn('[Nova Skin Fast] Another Nova Skin instance was initialized before Fast. Disable the duplicate if menus conflict.'); } catch (err) {}
       }
